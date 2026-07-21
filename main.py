@@ -2,7 +2,7 @@ import logging
 import time
 import requests
 import pandas as pd
-import pandas_ta as ta
+import ta
 import atexit
 import pytz
 from datetime import datetime
