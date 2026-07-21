@@ -1,6 +1,6 @@
 pandas
-pandas-ta
 requests
 pytz
 flask
-websocket-client
+git+https://github.com/twopirllc/pandas-ta.git@development
+git+https://github.com/iqoptionapi/iqoptionapi.git
