@@ -4,3 +4,4 @@ requests
 pytz
 flask
 websocket-client
+https://github.com/iqoptionapi/iqoptionapi/archive/refs/heads/master.zip
