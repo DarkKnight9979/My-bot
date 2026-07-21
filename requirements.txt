@@ -1,5 +1,5 @@
-pandas
-pandas-ta
+pandas==2.2.2
+pandas-ta==0.3.14b0
 requests
 iqoptionapi
 pytz
