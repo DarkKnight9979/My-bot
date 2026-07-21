@@ -3,4 +3,4 @@ pandas-ta
 requests
 pytz
 flask
-git+https://github.com/iqoptionapi/iqoptionapi.git
+websocket-client
