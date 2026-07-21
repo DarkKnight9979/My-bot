@@ -1,6 +1,5 @@
-pandas==2.2.2
-pandas-ta==0.3.14b0
+pandas
 requests
-iqoptionapi
 pytz
 flask
+git+https://github.com/iqoptionapi/iqoptionapi.git
