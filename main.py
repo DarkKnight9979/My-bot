@@ -1,3 +1,5 @@
+import os
+import threading
 import logging
 import time
 import requests
@@ -6,7 +8,19 @@ import numpy as np
 import atexit
 import pytz
 from datetime import datetime
+from flask import Flask
 from iqoptionapi.stable_api import IQ_Option
+
+# --- إنشاء سيرفر خفيف لإرضاء Render (Port Binding) ---
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is Running Successfully!"
+
+def run_web_server():
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
 
 # --- إغلاق سجلات الـ DEBUG المزعجة ليعمل البوت بشكل صامت ---
 logging.getLogger('iqoptionapi').setLevel(logging.ERROR)
@@ -318,7 +332,7 @@ def analyze_pair(pair, timeframe="5m"):
 
     return None
 
-# --- 7. تشغيل البوت ---
+# --- تشغيل البوت ---
 def run_bot():
     pairs = [
         "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF", "EURJPY",
@@ -352,4 +366,8 @@ def run_bot():
         on_shutdown()
 
 if __name__ == "__main__":
+    # تشغيل سيرفر الويب في Thread مستقل لإرضاء Render
+    threading.Thread(target=run_web_server, daemon=True).start()
+    
+    # تشغيل البوت الأساسي
     run_bot()
