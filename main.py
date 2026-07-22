@@ -2,13 +2,13 @@ import logging
 import time
 import requests
 import pandas as pd
-import pandas_ta as ta
+import numpy as np
 import atexit
 import pytz
 from datetime import datetime
 from iqoptionapi.stable_api import IQ_Option
 
-# --- إغلاق سجلات الـ DEBUG المزعجة ليعمل البوت بشكل صامت (Silent Mode) ---
+# --- إغلاق سجلات الـ DEBUG المزعجة ليعمل البوت بشكل صامت ---
 logging.getLogger('iqoptionapi').setLevel(logging.ERROR)
 logging.getLogger('urllib3').setLevel(logging.ERROR)
 
@@ -31,9 +31,30 @@ CHAT_ID = "1462370563"
 alerted_pairs = {}
 active_trades = []
 
+# --- دوال حساب المؤشرات الرياضية بنقاء 100% ---
+def calculate_rsi(series, period=14):
+    delta = series.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+    rs = gain / loss
+    return 100 - (100 / (1 + rs))
+
+def calculate_stoch(df, k_period=14, d_period=3):
+    low_min = df['Low'].rolling(window=k_period).min()
+    high_max = df['High'].rolling(window=k_period).max()
+    stoch_k = 100 * ((df['Close'] - low_min) / (high_max - low_min))
+    stoch_d = stoch_k.rolling(window=d_period).mean()
+    return stoch_k, stoch_d
+
+def calculate_bollinger(series, period=20, std_dev=2):
+    sma = series.rolling(window=period).mean()
+    std = series.rolling(window=period).std()
+    bbu = sma + (std * std_dev)
+    bbl = sma - (std * std_dev)
+    return bbu, bbl
+
 # --- دالة إرسال الرسائل والتنبيهات ---
 def send_telegram_message(message):
-    """إرسال رسالة نصية إلى التليجرام"""
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "Markdown"}
     try:
@@ -63,7 +84,7 @@ else:
     send_telegram_message(f"❌ *فشل الاتصال بالمنصة:* `{reason}`")
     exit()
 
-# --- دالة تحليل المضاعفة عالية الدقة (High Confidence Martingale) ---
+# --- دالة تحليل المضاعفة عالية الدقة ---
 def analyze_martingale_direction(pair, original_direction):
     try:
         raw_candles = API.get_candles(pair, 300, 15, time.time())
@@ -73,19 +94,15 @@ def analyze_martingale_direction(pair, original_direction):
         df = pd.DataFrame(raw_candles)
         df.rename(columns={'open': 'Open', 'max': 'High', 'min': 'Low', 'close': 'Close', 'volume': 'Volume'}, inplace=True)
         
-        df['EMA_9'] = ta.ema(df['Close'], length=9)
-        stoch = ta.stoch(df['High'], df['Low'], df['Close'], k=14, d=3)
-        df = pd.concat([df, stoch], axis=1)
+        df['EMA_9'] = df['Close'].ewm(span=9, adjust=False).mean()
+        df['Stoch_K'], df['Stoch_D'] = calculate_stoch(df, 14, 3)
 
         last = df.iloc[-1]
-        k_col = [c for c in df.columns if 'STOCHk' in c or 'STK' in c][0]
-        d_col = [c for c in df.columns if 'STOCHd' in c or 'STKd' in c][0]
-
         price = last['Close']
         open_price = last['Open']
         ema = last['EMA_9']
-        stoch_k = last[k_col]
-        stoch_d = last[d_col]
+        stoch_k = last['Stoch_K']
+        stoch_d = last['Stoch_D']
 
         body = abs(price - open_price)
         total_range = last['High'] - last['Low']
@@ -191,12 +208,10 @@ def analyze_pair(pair, timeframe="5m"):
     df = pd.DataFrame(raw_candles)
     df.rename(columns={'open': 'Open', 'max': 'High', 'min': 'Low', 'close': 'Close', 'volume': 'Volume'}, inplace=True)
 
-    df['EMA_9'] = ta.ema(df['Close'], length=9)
-    df['RSI'] = ta.rsi(df['Close'], length=14)
-    bbands = ta.bbands(df['Close'], length=20, std=2)
-    df = pd.concat([df, bbands], axis=1)
-    stoch = ta.stoch(df['High'], df['Low'], df['Close'], k=14, d=3)
-    df = pd.concat([df, stoch], axis=1)
+    df['EMA_9'] = df['Close'].ewm(span=9, adjust=False).mean()
+    df['RSI'] = calculate_rsi(df['Close'], 14)
+    df['BBU'], df['BBL'] = calculate_bollinger(df['Close'], 20, 2)
+    df['Stoch_K'], df['Stoch_D'] = calculate_stoch(df, 14, 3)
     df['Vol_MA'] = df['Volume'].rolling(window=20).mean()
     df['Resistance'] = df['High'].shift(1).rolling(window=20).max()
     df['Support'] = df['Low'].shift(1).rolling(window=20).min()
@@ -204,11 +219,6 @@ def analyze_pair(pair, timeframe="5m"):
     df['Shadow'] = df['High'] - df['Low']
 
     last = df.iloc[-2]
-    cols = df.columns
-    bbl_col = [c for c in cols if c.startswith('BBL')][0]
-    bbu_col = [c for c in cols if c.startswith('BBU')][0]
-    k_col = [c for c in cols if 'STOCHk' in c or 'STK' in c][0]
-    d_col = [c for c in cols if 'STOCHd' in c or 'STKd' in c][0]
 
     price = last['Close']
     open_price = last['Open']
@@ -216,10 +226,10 @@ def analyze_pair(pair, timeframe="5m"):
     high = last['High']
     ema = last['EMA_9']
     rsi = last['RSI']
-    stoch_k = last[k_col]
-    stoch_d = last[d_col]
-    bbl = last[bbl_col]
-    bbu = last[bbu_col]
+    stoch_k = last['Stoch_K']
+    stoch_d = last['Stoch_D']
+    bbl = last['BBL']
+    bbu = last['BBU']
     support = last['Support']
     resistance = last['Resistance']
     volume = last['Volume']
@@ -266,7 +276,7 @@ def analyze_pair(pair, timeframe="5m"):
 
     # 2. نظام التجهيز المسبق (مع منع الرسائل المتكررة)
     curr_candle = df.iloc[-1]
-    curr_k = curr_candle[k_col]
+    curr_k = curr_candle['Stoch_K']
     curr_rsi = curr_candle['RSI']
     curr_price = curr_candle['Close']
     curr_ema = curr_candle['EMA_9']
