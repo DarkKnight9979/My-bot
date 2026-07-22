@@ -45,7 +45,7 @@ CHAT_ID = "1462370563"
 alerted_pairs = {}
 active_trades = []
 
-# --- دوال حساب المؤشرات الرياضية بنقاء 100% ---
+# --- دوال حساب المؤشرات الرياضية ---
 def calculate_rsi(series, period=14):
     delta = series.diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
@@ -121,19 +121,19 @@ def analyze_martingale_direction(pair, original_direction):
         body = abs(price - open_price)
         total_range = last['High'] - last['Low']
 
-        is_strong_reversal = body > (total_range * 0.6)
+        is_strong_reversal = body > (total_range * 0.5)
 
         if original_direction == "CALL":
             if is_strong_reversal and price < open_price and price < ema:
                 return "PUT"
-            elif price > ema and stoch_k > stoch_d and stoch_k < 40:
+            elif price > ema and stoch_k > stoch_d:
                 return "CALL"
             else:
                 return None
         else:
             if is_strong_reversal and price > open_price and price > ema:
                 return "CALL"
-            elif price < ema and stoch_k < stoch_d and stoch_k > 60:
+            elif price < ema and stoch_k < stoch_d:
                 return "PUT"
             else:
                 return None
@@ -226,39 +226,15 @@ def analyze_pair(pair, timeframe="5m"):
     df['RSI'] = calculate_rsi(df['Close'], 14)
     df['BBU'], df['BBL'] = calculate_bollinger(df['Close'], 20, 2)
     df['Stoch_K'], df['Stoch_D'] = calculate_stoch(df, 14, 3)
-    df['Vol_MA'] = df['Volume'].rolling(window=20).mean()
-    df['Resistance'] = df['High'].shift(1).rolling(window=20).max()
-    df['Support'] = df['Low'].shift(1).rolling(window=20).min()
-    df['Body'] = abs(df['Close'] - df['Open'])
-    df['Shadow'] = df['High'] - df['Low']
 
     last = df.iloc[-2]
 
     price = last['Close']
     open_price = last['Open']
-    low = last['Low']
-    high = last['High']
     ema = last['EMA_9']
     rsi = last['RSI']
     stoch_k = last['Stoch_K']
     stoch_d = last['Stoch_D']
-    bbl = last['BBL']
-    bbu = last['BBU']
-    support = last['Support']
-    resistance = last['Resistance']
-    volume = last['Volume']
-    vol_ma = last['Vol_MA']
-
-    is_strong_candle = last['Body'] > (last['Shadow'] * 0.3)
-    
-    is_green_candle = price > open_price
-    is_red_candle = price < open_price
-    
-    valid_call_volume = (volume > vol_ma) and is_green_candle and (volume <= vol_ma * 2.5)
-    valid_put_volume = (volume > vol_ma) and is_red_candle and (volume <= vol_ma * 2.5)
-
-    near_support = (price - support) <= (resistance - support) * 0.15 or low <= bbl
-    near_resistance = (resistance - price) <= (resistance - support) * 0.15 or high >= bbu
 
     pair_key = f"{pair}_5m"
     cairo_now = get_cairo_time()
@@ -270,33 +246,24 @@ def analyze_pair(pair, timeframe="5m"):
     final_signal = None
     direction = None
 
-    # 1. شروط إشارات الدخول النهائية
-    if is_strong_candle:
-        if price > ema and stoch_k > stoch_d and rsi >= 35 and valid_call_volume:
-            if stoch_k < 25 and near_support and rsi <= 45:
-                direction = "CALL"
-                final_signal = f"🔥 *إشارة (CALL) - القوة: ماكس*\nالزوج: `{pair}` (IQ Option) [5m]\n⏱️ *مدة الصفقة:* {duration_text}\n⏰ *وقت الإشارة:* `{current_time_str}`"
-            elif stoch_k < 35 and rsi <= 55:
-                direction = "CALL"
-                final_signal = f"🚀 *إشارة (CALL) - القوة: قوية جداً*\nالزوج: `{pair}` (IQ Option) [5m]\n⏱️ *مدة الصفقة:* {duration_text}\n⏰ *وقت الإشارة:* `{current_time_str}`"
+    # 1. شروط إشارات الدخول النهائية (مرنة ومباشرة)
+    if price > ema and stoch_k > stoch_d and rsi >= 35 and stoch_k <= 70:
+        direction = "CALL"
+        final_signal = f"🚀 *إشارة (CALL) - قوية*\nالزوج: `{pair}` (IQ Option) [5m]\n⏱️ *مدة الصفقة:* {duration_text}\n⏰ *وقت الإشارة:* `{current_time_str}`"
 
-        elif price < ema and stoch_k < stoch_d and rsi <= 65 and valid_put_volume:
-            if stoch_k > 75 and near_resistance and rsi >= 55:
-                direction = "PUT"
-                final_signal = f"🔥 *إشارة (PUT) - القوة: ماكس*\nالزوج: `{pair}` (IQ Option) [5m]\n⏱️ *مدة الصفقة:* {duration_text}\n⏰ *وقت الإشارة:* `{current_time_str}`"
-            elif stoch_k > 65 and rsi >= 45:
-                direction = "PUT"
-                final_signal = f"📉 *إشارة (PUT) - القوة: قوية جداً*\nالزوج: `{pair}` (IQ Option) [5m]\n⏱️ *مدة الصفقة:* {duration_text}\n⏰ *وقت الإشارة:* `{current_time_str}`"
+    elif price < ema and stoch_k < stoch_d and rsi <= 65 and stoch_k >= 30:
+        direction = "PUT"
+        final_signal = f"📉 *إشارة (PUT) - قوية*\nالزوج: `{pair}` (IQ Option) [5m]\n⏱️ *مدة الصفقة:* {duration_text}\n⏰ *وقت الإشارة:* `{current_time_str}`"
 
-    # 2. نظام التجهيز المسبق (مع منع الرسائل المتكررة)
+    # 2. نظام التجهيز المسبق (في آخر 30 ثانية من الشمعة)
     curr_candle = df.iloc[-1]
     curr_k = curr_candle['Stoch_K']
     curr_rsi = curr_candle['RSI']
     curr_price = curr_candle['Close']
     curr_ema = curr_candle['EMA_9']
 
-    high_potential_call = (curr_price > curr_ema) and (curr_k <= 35) and (curr_rsi <= 50)
-    high_potential_put = (curr_price < curr_ema) and (curr_k >= 65) and (curr_rsi >= 50)
+    high_potential_call = (curr_price > curr_ema) and (curr_k <= 40) and (curr_rsi <= 55)
+    high_potential_put = (curr_price < curr_ema) and (curr_k >= 60) and (curr_rsi >= 45)
 
     if candle_minute == 4 and candle_seconds >= 30:
         if high_potential_call and pair_key not in alerted_pairs:
@@ -306,9 +273,9 @@ def analyze_pair(pair, timeframe="5m"):
             send_telegram_message(f"⚠️ *تجهّز! فرصة هبوط (PUT) قريبة جداً*\nالزوج: `{pair}` [5m]\nيرجى فتح الشارت وتجهيز الصفقة!")
             alerted_pairs[pair_key] = "PUT"
 
-    # 3. إرسال الإشارة النهائية عند فتح الشمعة
+    # 3. إرسال الإشارة النهائية عند فتح الشمعة (توسيع وقت التأكيد لـ 10 ثوانٍ)
     if final_signal:
-        if candle_seconds <= 5:
+        if candle_seconds <= 10:
             if pair_key in alerted_pairs:
                 del alerted_pairs[pair_key]
                 entry_p = df.iloc[-1]['Open']
@@ -326,7 +293,7 @@ def analyze_pair(pair, timeframe="5m"):
     else:
         if pair_key in alerted_pairs:
             prev_dir = alerted_pairs[pair_key]
-            if (prev_dir == "CALL" and curr_k > 50) or (prev_dir == "PUT" and curr_k < 50):
+            if (prev_dir == "CALL" and curr_k > 60) or (prev_dir == "PUT" and curr_k < 40):
                 send_telegram_message(f"❌ *تم إلغاء التنبيه*\nالزوج: `{pair}` [5m]\nالسبب: الشروط لم تعد متوافقة.")
                 del alerted_pairs[pair_key]
 
@@ -341,7 +308,7 @@ def run_bot():
     timeframe = "5m"
 
     print("🚀 البوت يعمل الآن ويحلل الـ 14 زوج...")
-    send_telegram_message("🤖 *تم تشغيل بوت IQ Option بنجاح على السيرفر!*\n⏱️ *الفريم المعتمد:* 5 دقائق حصراً\n⚡ *الدخول:* في أول 5 ثوانٍ مع نقطة الافتتاح\n🇪🇬 *التوقيت:* توقيت مصر الرسمي\nجاري الفحص...")
+    send_telegram_message("🤖 *تم تحديث وتشغيل البوت بنجاح!*\n⏱️ *الفريم المعتمد:* 5 دقائق حصراً\n⚡ *توسيع نافذة التأكيد لـ 10 ثوانٍ*\nجاري التداول...")
 
     try:
         while True:
@@ -366,8 +333,5 @@ def run_bot():
         on_shutdown()
 
 if __name__ == "__main__":
-    # تشغيل سيرفر الويب في Thread مستقل لإرضاء Render
     threading.Thread(target=run_web_server, daemon=True).start()
-    
-    # تشغيل البوت الأساسي
     run_bot()
