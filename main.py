@@ -249,7 +249,7 @@ def check_trade_results():
         if trade in active_trades:
             active_trades.remove(trade)
 
-# --- 9. دالة تحليل الأزواج مع فحص مرن ومباشر يمنع الخنق ---
+# --- 9. دالة تحليل الأزواج المباشرة المفتوحة من غير شروط تعجيزية ---
 def analyze_pair(pair, timeframe="5m"):
     tf_seconds = 300
     duration_text = "5 دقائق"
@@ -266,11 +266,8 @@ def analyze_pair(pair, timeframe="5m"):
     df = pd.DataFrame(raw_candles)
     df.rename(columns={'open': 'Open', 'max': 'High', 'min': 'Low', 'close': 'Close', 'volume': 'Volume'}, inplace=True)
 
-    df['ALMA'] = calculate_alma(df['Close'], 9, 0.85, 6)
-    df['RSI'] = calculate_rsi(df['Close'], 14)
-    df['BBU'], df['BBL'] = calculate_bollinger(df['Close'], 20, 2)
     df['Stoch_K'], df['Stoch_D'] = calculate_stoch(df, 14, 3)
-    
+    df['BBU'], df['BBL'] = calculate_bollinger(df['Close'], 20, 2)
     resistance, support = get_fractal_levels(df)
 
     last = df.iloc[-2]
@@ -283,7 +280,6 @@ def analyze_pair(pair, timeframe="5m"):
     bbl = last['BBL']
     bbu = last['BBU']
 
-    # شروط مرنة وسريعة تبحث عن الارتداد القريب من الدعم أو المقاومة
     near_support = (low <= support * 1.002) or (low <= bbl * 1.002)
     near_resistance = (high >= resistance * 0.998) or (high >= bbu * 0.998)
 
@@ -297,31 +293,22 @@ def analyze_pair(pair, timeframe="5m"):
     final_signal = None
     direction = None
 
-    # اعتماد تقاطع Stochastic والارتداد بدون اشتراط كل الفلاتر في وقت واحد
     if near_support and stoch_k > stoch_d:
-        if stoch_k < 35:
-            direction = "CALL"
-            final_signal = f"🔥 *إشارة (CALL) - القوة: ماكس*\nالزوج: `{pair}` (IQ Option) [5m]\n⏱️ *مدة الصفقة:* {duration_text}\n⏰ *وقت الإشارة:* `{current_time_str}`"
-        elif stoch_k < 50:
-            direction = "CALL"
-            final_signal = f"🚀 *إشارة (CALL) - القوة: قوية جداً*\nالزوج: `{pair}` (IQ Option) [5m]\n⏱️ *مدة الصفقة:* {duration_text}\n⏰ *وقت الإشارة:* `{current_time_str}`"
+        direction = "CALL"
+        final_signal = f"🚀 *إشارة (CALL) - القوة: قوية جداً*\nالزوج: `{pair}` (IQ Option) [5m]\n⏱️ *مدة الصفقة:* {duration_text}\n⏰ *وقت الإشارة:* `{current_time_str}`"
 
     elif near_resistance and stoch_k < stoch_d:
-        if stoch_k > 65:
-            direction = "PUT"
-            final_signal = f"🔥 *إشارة (PUT) - القوة: ماكس*\nالزوج: `{pair}` (IQ Option) [5m]\n⏱️ *مدة الصفقة:* {duration_text}\n⏰ *وقت الإشارة:* `{current_time_str}`"
-        elif stoch_k > 50:
-            direction = "PUT"
-            final_signal = f"📉 *إشارة (PUT) - القوة: قوية جداً*\nالزوج: `{pair}` (IQ Option) [5m]\n⏱️ *مدة الصفقة:* {duration_text}\n⏰ *وقت الإشارة:* `{current_time_str}`"
+        direction = "PUT"
+        final_signal = f"📉 *إشارة (PUT) - القوة: قوية جداً*\nالزوج: `{pair}` (IQ Option) [5m]\n⏱️ *مدة الصفقة:* {duration_text}\n⏰ *وقت الإشارة:* `{current_time_str}`"
 
-    # نظام التجهيز المسبق المباشر السريع
+    # نظام التجهيز المسبق عند الدقيقة 4 و 30 ثانية
     curr_candle = df.iloc[-1]
     curr_k = curr_candle['Stoch_K']
     curr_low = curr_candle['Low']
     curr_high = curr_candle['High']
 
-    high_potential_call = (curr_low <= support * 1.003 or curr_low <= bbl * 1.003) and (curr_k <= 50)
-    high_potential_put = (curr_high >= resistance * 0.997 or curr_high >= bbu * 0.997) and (curr_k >= 50)
+    high_potential_call = (curr_low <= support * 1.003 or curr_low <= bbl * 1.003) and (curr_k <= 55)
+    high_potential_put = (curr_high >= resistance * 0.997 or curr_high >= bbu * 0.997) and (curr_k >= 45)
 
     if candle_minute == 4 and candle_seconds >= 30:
         if high_potential_call and pair_key not in alerted_pairs:
@@ -331,30 +318,24 @@ def analyze_pair(pair, timeframe="5m"):
             send_telegram_message(f"⚠️ *تجهّز! فرصة هبوط (PUT) قريبة جداً*\nالزوج: `{pair}` [5m]\nيرجى فتح الشارت وتجهيز الصفقة!")
             alerted_pairs[pair_key] = "PUT"
 
-    # إرسال الإشارة عند بداية الشمعة (أول 10 ثوان)
-    if final_signal:
-        if candle_seconds <= 10:
-            if pair_key in alerted_pairs:
-                del alerted_pairs[pair_key]
-                entry_p = df.iloc[-1]['Open']
-                
-                active_trades.append({
-                    'pair': pair,
-                    'timeframe': '5m',
-                    'direction': direction,
-                    'entry_price': entry_p,
-                    'expire_time': time.time() + expire_delay,
-                    'warned_loss': False,
-                    'is_martingale': False
-                })
-                return final_signal
-
-    else:
+    # إرسال الإشارة فوراً في بداية الشمعة بدون اشتراط وجود تنبيه مبكر سابق!
+    if final_signal and candle_seconds <= 15:
+        entry_p = df.iloc[-1]['Open']
+        
+        # التأكد من عدم تكرار نفس الإشارة لنفس الشمعة
         if pair_key in alerted_pairs:
-            prev_dir = alerted_pairs[pair_key]
-            if (prev_dir == "CALL" and curr_k > 55) or (prev_dir == "PUT" and curr_k < 45):
-                send_telegram_message(f"❌ *تم إلغاء التنبيه*\nالزوج: `{pair}` [5m]\nالسبب: الشروط لم تعد متوافقة.")
-                del alerted_pairs[pair_key]
+            del alerted_pairs[pair_key]
+
+        active_trades.append({
+            'pair': pair,
+            'timeframe': '5m',
+            'direction': direction,
+            'entry_price': entry_p,
+            'expire_time': time.time() + expire_delay,
+            'warned_loss': False,
+            'is_martingale': False
+        })
+        return final_signal
 
     return None
 
@@ -370,7 +351,6 @@ def run_bot():
         print("❌ فشل الاتصال النهائي بالمنصة.")
 
     print("🚀 البوت يعمل الآن ويحلل الـ 14 زوج بالسرعة القصوى...")
-    # تم إعادة رسالة التشغيل الأصلية كما هي حرفياً
     send_telegram_message("🤖 *تم تشغيل بوت IQ Option بنجاح على السيرفر!*\n⏱️ *الفريم المعتمد:* 5 دقائق حصراً\n⚡ *الدخول:* في أول 5 ثوانٍ مع نقطة الافتتاح\n🇪🇬 *التوقيت:* توقيت مصر الرسمي\nجاري الفحص...")
 
     while True:
