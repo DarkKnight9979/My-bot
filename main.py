@@ -249,7 +249,7 @@ def check_trade_results():
         if trade in active_trades:
             active_trades.remove(trade)
 
-# --- 9. دالة تحليل الأزواج بمرونة وحساسية عالية ---
+# --- 9. دالة تحليل الأزواج مع فحص مرن ومباشر يمنع الخنق ---
 def analyze_pair(pair, timeframe="5m"):
     tf_seconds = 300
     duration_text = "5 دقائق"
@@ -270,26 +270,22 @@ def analyze_pair(pair, timeframe="5m"):
     df['RSI'] = calculate_rsi(df['Close'], 14)
     df['BBU'], df['BBL'] = calculate_bollinger(df['Close'], 20, 2)
     df['Stoch_K'], df['Stoch_D'] = calculate_stoch(df, 14, 3)
-    df['Vol_MA'] = df['Volume'].rolling(window=20).mean()
     
     resistance, support = get_fractal_levels(df)
 
     last = df.iloc[-2]
 
     price = last['Close']
-    open_price = last['Open']
     low = last['Low']
     high = last['High']
-    alma = last['ALMA']
-    rsi = last['RSI']
     stoch_k = last['Stoch_K']
     stoch_d = last['Stoch_D']
     bbl = last['BBL']
     bbu = last['BBU']
 
-    # تليين شروط الاقتراب لتصبح مرنة وسريعة في التقاط المناطق
-    near_support = (price <= support * 1.001) or (low <= bbl * 1.002)
-    near_resistance = (price >= resistance * 0.999) or (high >= bbu * 0.998)
+    # شروط مرنة وسريعة تبحث عن الارتداد القريب من الدعم أو المقاومة
+    near_support = (low <= support * 1.002) or (low <= bbl * 1.002)
+    near_resistance = (high >= resistance * 0.998) or (high >= bbu * 0.998)
 
     pair_key = f"{pair}_5m"
     cairo_now = get_cairo_time()
@@ -301,32 +297,31 @@ def analyze_pair(pair, timeframe="5m"):
     final_signal = None
     direction = None
 
-    # مرونة في الشروط لإعادة إرسال الإشارات بانتظام
-    if price > alma and stoch_k > stoch_d and rsi <= 55 and near_support:
+    # اعتماد تقاطع Stochastic والارتداد بدون اشتراط كل الفلاتر في وقت واحد
+    if near_support and stoch_k > stoch_d:
         if stoch_k < 35:
             direction = "CALL"
             final_signal = f"🔥 *إشارة (CALL) - القوة: ماكس*\nالزوج: `{pair}` (IQ Option) [5m]\n⏱️ *مدة الصفقة:* {duration_text}\n⏰ *وقت الإشارة:* `{current_time_str}`"
-        elif stoch_k < 45:
+        elif stoch_k < 50:
             direction = "CALL"
             final_signal = f"🚀 *إشارة (CALL) - القوة: قوية جداً*\nالزوج: `{pair}` (IQ Option) [5m]\n⏱️ *مدة الصفقة:* {duration_text}\n⏰ *وقت الإشارة:* `{current_time_str}`"
 
-    elif price < alma and stoch_k < stoch_d and rsi >= 45 and near_resistance:
+    elif near_resistance and stoch_k < stoch_d:
         if stoch_k > 65:
             direction = "PUT"
             final_signal = f"🔥 *إشارة (PUT) - القوة: ماكس*\nالزوج: `{pair}` (IQ Option) [5m]\n⏱️ *مدة الصفقة:* {duration_text}\n⏰ *وقت الإشارة:* `{current_time_str}`"
-        elif stoch_k > 55:
+        elif stoch_k > 50:
             direction = "PUT"
             final_signal = f"📉 *إشارة (PUT) - القوة: قوية جداً*\nالزوج: `{pair}` (IQ Option) [5m]\n⏱️ *مدة الصفقة:* {duration_text}\n⏰ *وقت الإشارة:* `{current_time_str}`"
 
-    # نظام التجهيز المسبق السريع والشفاف (عند الدقيقة 4 والتانية 30)
+    # نظام التجهيز المسبق المباشر السريع
     curr_candle = df.iloc[-1]
     curr_k = curr_candle['Stoch_K']
-    curr_rsi = curr_candle['RSI']
-    curr_price = curr_candle['Close']
-    curr_alma = curr_candle['ALMA']
+    curr_low = curr_candle['Low']
+    curr_high = curr_candle['High']
 
-    high_potential_call = (curr_price >= curr_alma * 0.999) and (curr_k <= 45)
-    high_potential_put = (curr_price <= curr_alma * 1.001) and (curr_k >= 55)
+    high_potential_call = (curr_low <= support * 1.003 or curr_low <= bbl * 1.003) and (curr_k <= 50)
+    high_potential_put = (curr_high >= resistance * 0.997 or curr_high >= bbu * 0.997) and (curr_k >= 50)
 
     if candle_minute == 4 and candle_seconds >= 30:
         if high_potential_call and pair_key not in alerted_pairs:
@@ -336,7 +331,7 @@ def analyze_pair(pair, timeframe="5m"):
             send_telegram_message(f"⚠️ *تجهّز! فرصة هبوط (PUT) قريبة جداً*\nالزوج: `{pair}` [5m]\nيرجى فتح الشارت وتجهيز الصفقة!")
             alerted_pairs[pair_key] = "PUT"
 
-    # إرسال الإشارة فوراً عند بداية الشمعة
+    # إرسال الإشارة عند بداية الشمعة (أول 10 ثوان)
     if final_signal:
         if candle_seconds <= 10:
             if pair_key in alerted_pairs:
@@ -363,7 +358,7 @@ def analyze_pair(pair, timeframe="5m"):
 
     return None
 
-# --- 10. تشغيل البوت مع الحماية الكلية لبيئة Render ---
+# --- 10. تشغيل البوت ورسالة الترحيب الأصلية المطلوبة ---
 def run_bot():
     pairs = [
         "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF", "EURJPY",
@@ -375,7 +370,8 @@ def run_bot():
         print("❌ فشل الاتصال النهائي بالمنصة.")
 
     print("🚀 البوت يعمل الآن ويحلل الـ 14 زوج بالسرعة القصوى...")
-    send_telegram_message("🤖 *تم تحديث البوت بمرونية عالية وحساسية أسرع للاختبار الآن!*")
+    # تم إعادة رسالة التشغيل الأصلية كما هي حرفياً
+    send_telegram_message("🤖 *تم تشغيل بوت IQ Option بنجاح على السيرفر!*\n⏱️ *الفريم المعتمد:* 5 دقائق حصراً\n⚡ *الدخول:* في أول 5 ثوانٍ مع نقطة الافتتاح\n🇪🇬 *التوقيت:* توقيت مصر الرسمي\nجاري الفحص...")
 
     while True:
         try:
