@@ -292,8 +292,9 @@ def analyze_pair(pair, timeframe="5m"):
     is_strong_candle = abs(price - open_price) > ((high - low) * 0.25)
     valid_volume = volume > (vol_ma * 0.8)
 
-    near_support = abs(price - support) <= (price * 0.0005) or low <= (bbl * 1.001)
-    near_resistance = abs(price - resistance) <= (price * 0.0005) or high >= (bbu * 0.999)
+    # مرونة نطاق الدعم والمقاومة لعدم خنق الفرص (0.002 = 0.2%)
+    near_support = abs(price - support) <= (price * 0.002) or low <= (bbl * 1.002)
+    near_resistance = abs(price - resistance) <= (price * 0.002) or high >= (bbu * 0.998)
 
     pair_key = f"{pair}_5m"
     cairo_now = get_cairo_time()
@@ -305,8 +306,9 @@ def analyze_pair(pair, timeframe="5m"):
     final_signal = None
     direction = None
 
+    # شروط دخول الصفقات بدون تضارب في RSI
     if is_strong_candle and valid_volume:
-        if price > alma and stoch_k > stoch_d and rsi <= 50 and near_support:
+        if price > alma and stoch_k > stoch_d and (40 <= rsi <= 65) and near_support:
             if stoch_k < 30:
                 direction = "CALL"
                 final_signal = f"🔥 *إشارة (CALL) - القوة: ماكس*\nالزوج: `{pair}` (IQ Option) [5m]\n⏱️ *مدة الصفقة:* {duration_text}\n⏰ *وقت الإشارة:* `{current_time_str}`"
@@ -314,7 +316,7 @@ def analyze_pair(pair, timeframe="5m"):
                 direction = "CALL"
                 final_signal = f"🚀 *إشارة (CALL) - القوة: قوية جداً*\nالزوج: `{pair}` (IQ Option) [5m]\n⏱️ *مدة الصفقة:* {duration_text}\n⏰ *وقت الإشارة:* `{current_time_str}`"
 
-        elif price < alma and stoch_k < stoch_d and rsi >= 50 and near_resistance:
+        elif price < alma and stoch_k < stoch_d and (35 <= rsi <= 60) and near_resistance:
             if stoch_k > 70:
                 direction = "PUT"
                 final_signal = f"🔥 *إشارة (PUT) - القوة: ماكس*\nالزوج: `{pair}` (IQ Option) [5m]\n⏱️ *مدة الصفقة:* {duration_text}\n⏰ *وقت الإشارة:* `{current_time_str}`"
@@ -328,9 +330,10 @@ def analyze_pair(pair, timeframe="5m"):
     curr_price = curr_candle['Close']
     curr_alma = curr_candle['ALMA']
 
-    high_potential_call = (curr_price > curr_alma) and (curr_k <= 40) and (curr_rsi <= 50)
-    high_potential_put = (curr_price < curr_alma) and (curr_k >= 60) and (curr_rsi >= 50)
+    high_potential_call = (curr_price > curr_alma) and (curr_k <= 40) and (40 <= curr_rsi <= 65)
+    high_potential_put = (curr_price < curr_alma) and (curr_k >= 60) and (35 <= curr_rsi <= 60)
 
+    # التنبيه المسبق عند الدقيقة 4 والثانية 30
     if candle_minute == 4 and candle_seconds >= 30:
         if high_potential_call and pair_key not in alerted_pairs:
             send_telegram_message(f"⚠️ *تجهّز! فرصة صعود (CALL) قريبة جداً*\nالزوج: `{pair}` [5m]\nيرجى فتح الشارت وتجهيز الصفقة!")
@@ -339,22 +342,24 @@ def analyze_pair(pair, timeframe="5m"):
             send_telegram_message(f"⚠️ *تجهّز! فرصة هبوط (PUT) قريبة جداً*\nالزوج: `{pair}` [5m]\nيرجى فتح الشارت وتجهيز الصفقة!")
             alerted_pairs[pair_key] = "PUT"
 
+    # إرسال الإشارة فوراً عند بداية الشمعة بدون خنق التنبيه المسبق
     if final_signal:
         if candle_seconds <= 10:
             if pair_key in alerted_pairs:
                 del alerted_pairs[pair_key]
-                entry_p = df.iloc[-1]['Open']
-                
-                active_trades.append({
-                    'pair': pair,
-                    'timeframe': '5m',
-                    'direction': direction,
-                    'entry_price': entry_p,
-                    'expire_time': time.time() + expire_delay,
-                    'warned_loss': False,
-                    'is_martingale': False
-                })
-                return final_signal
+
+            entry_p = df.iloc[-1]['Open']
+            
+            active_trades.append({
+                'pair': pair,
+                'timeframe': '5m',
+                'direction': direction,
+                'entry_price': entry_p,
+                'expire_time': time.time() + expire_delay,
+                'warned_loss': False,
+                'is_martingale': False
+            })
+            return final_signal
 
     else:
         if pair_key in alerted_pairs:
