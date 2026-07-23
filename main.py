@@ -41,7 +41,7 @@ CHAT_ID = "1462370563"
 alerted_pairs = {}
 active_trades = []
 
-# --- 4. دوال الحسابات الفنية المحدثة بكفاءة ---
+# --- 4. دوال الحسابات الفنية ---
 def calculate_alma(series, window=9, offset=0.85, sigma=6):
     m = offset * (window - 1)
     s = window / sigma
@@ -70,7 +70,7 @@ def calculate_bollinger(series, period=20, std_dev=2):
     bbl = sma - (std * std_dev)
     return bbu, bbl
 
-# إصلاح دالة الفراكتال الآمنة لمنع KeyError: 2
+# دالة الفراكتال المصلحة آمنة لمنع الكراش KeyError
 def get_fractal_levels(df):
     try:
         highs = df['High'].values
@@ -173,7 +173,7 @@ def analyze_martingale_direction(pair, original_direction):
         print(f"⚠️ خطأ مضاعفة: {e}")
         return None
 
-# --- 8. متابعة الصفقات ---
+# --- 8. متابعة الصفقات وحساب النتيجة بالتفصيل الفريح ---
 def check_trade_results():
     current_time = time.time()
     trades_to_remove = []
@@ -182,8 +182,8 @@ def check_trade_results():
         time_left = trade['expire_time'] - current_time
 
         try:
-            candles = API.get_candles(trade['pair'], 300, 1, time.time())
-            if not candles:
+            candles = API.get_candles(trade['pair'], 300, 2, time.time())
+            if not candles or len(candles) < 2:
                 continue
             
             current_price = candles[-1]['close']
@@ -191,6 +191,7 @@ def check_trade_results():
             direction = trade['direction']
             is_martingale = trade.get('is_martingale', False)
 
+            # التنبيه المبكر قبل النهاية بـ 20 ثانية
             if 0 < time_left <= 20 and not trade.get('warned_loss', False) and not is_martingale:
                 is_losing_now = (direction == "CALL" and current_price < entry_price) or (direction == "PUT" and current_price > entry_price)
 
@@ -205,37 +206,49 @@ def check_trade_results():
                     send_telegram_message(msg)
                     trade['warned_loss'] = True
 
+            # عند انتهاء الـ 5 دقائق بالتمام
             if time_left <= 0:
-                is_win = (direction == "CALL" and current_price > entry_price) or (direction == "PUT" and current_price < entry_price)
+                closed_candle_price = candles[-2]['close'] if time_left < -3 else candles[-1]['close']
+                
+                # المقارنة المباشرة الصريحة حسب الاتجاه
+                if direction == "PUT":
+                    is_win = closed_candle_price < entry_price
+                elif direction == "CALL":
+                    is_win = closed_candle_price > entry_price
+                else:
+                    is_win = False
+
                 time_str = get_cairo_time().strftime('%I:%M %p')
                 
+                print(f"📊 [نتيجة صفقة] الزوج: {trade['pair']} | الاتجاه: {direction} | دخول: {entry_price} | إغلاق: {closed_candle_price} | النتيجة: {'WIN' if is_win else 'LOSS'}")
+
                 if is_martingale:
                     status = "رابحة (WIN) 🎯" if is_win else "خاسرة (LOSS)"
-                    msg = f"✅ *نتيجة المضاعفة: {status}*\nالزوج: `{trade['pair']}` [5m]\nسعر الدخول: `{entry_price}` | سعر الإغلاق: `{current_price}`\n⏰ الوقت: `{time_str}`"
+                    msg = f"✅ *نتيجة المضاعفة: {status}*\nالزوج: `{trade['pair']}` [5m]\nسعر الدخول: `{entry_price}` | سعر الإغلاق: `{closed_candle_price}`\n⏰ الوقت: `{time_str}`"
                     send_telegram_message(msg)
                     trades_to_remove.append(trade)
                 else:
                     if is_win:
-                        msg = f"✅ *نتيجة الصفقة: رابحة (WIN)* 🎯\nالزوج: `{trade['pair']}` [5m]\nنوع الاتجاه: {direction}\nسعر الدخول: `{entry_price}`\nسعر الإغلاق: `{current_price}`\n⏰ الوقت: `{time_str}`"
+                        msg = f"✅ *نتيجة الصفقة: رابحة (WIN)* 🎯\nالزوج: `{trade['pair']}` [5m]\nنوع الاتجاه: {direction}\nسعر الدخول: `{entry_price}`\nسعر الإغلاق: `{closed_candle_price}`\n⏰ الوقت: `{time_str}`"
                         send_telegram_message(msg)
                         trades_to_remove.append(trade)
                     else:
                         martingale_dir = analyze_martingale_direction(trade['pair'], direction)
                         if martingale_dir:
                             dir_ar = "صعود (CALL)" if martingale_dir == "CALL" else "هبوط (PUT)"
-                            msg = f"❌ *نتيجة الصفقة الأساسية: خاسرة (LOSS)*\nالزوج: `{trade['pair']}` [5m]\nسعر الدخول: `{entry_price}` | سعر الإغلاق: `{current_price}`\n⏰ الوقت: `{time_str}`\n\n🔄 *توجيه المضاعفة المؤكدة:* ادخل مضاعفة الآن باتجاه *{dir_ar}*"
+                            msg = f"❌ *نتيجة الصفقة الأساسية: خاسرة (LOSS)*\nالزوج: `{trade['pair']}` [5m]\nسعر الدخول: `{entry_price}` | سعر الإغلاق: `{closed_candle_price}`\n⏰ الوقت: `{time_str}`\n\n🔄 *توجيه المضاعفة المؤكدة:* ادخل مضاعفة الآن باتجاه *{dir_ar}*"
                             
                             active_trades.append({
                                 'pair': trade['pair'],
                                 'timeframe': '5m',
                                 'direction': martingale_dir,
-                                'entry_price': current_price,
+                                'entry_price': closed_candle_price,
                                 'expire_time': time.time() + 300,
                                 'warned_loss': True,
                                 'is_martingale': True
                             })
                         else:
-                            msg = f"❌ *نتيجة الصفقة: خاسرة (LOSS)*\nالزوج: `{trade['pair']}` [5m]\nسعر الدخول: `{entry_price}` | سعر الإغلاق: `{current_price}`\n⏰ الوقت: `{time_str}`\n\n🛑 *تنبيه:* عدم دخول مضاعفة لأن حركة السوق غير واضحة!"
+                            msg = f"❌ *نتيجة الصفقة: خاسرة (LOSS)*\nالزوج: `{trade['pair']}` [5m]\nسعر الدخول: `{entry_price}` | سعر الإغلاق: `{closed_candle_price}`\n⏰ الوقت: `{time_str}`\n\n🛑 *تنبيه:* عدم دخول مضاعفة لأن حركة السوق غير واضحة!"
                         
                         send_telegram_message(msg)
                         trades_to_remove.append(trade)
@@ -247,7 +260,7 @@ def check_trade_results():
         if trade in active_trades:
             active_trades.remove(trade)
 
-# --- 9. دالة التحليل الآمنة ---
+# --- 9. دالة التحليل ---
 def analyze_pair(pair, timeframe="5m"):
     try:
         raw_candles = API.get_candles(pair, 300, 50, time.time())
@@ -363,7 +376,7 @@ def run_bot():
         print("❌ فشل الاتصال المبدئي، سيعاد المحاولة...")
 
     print("🚀 البوت يعمل الآن ويحلل الأزواج...")
-    send_telegram_message("🤖 *تم تحديث وإصلاح البوت بنجاح!* \nجاري التحليل السلس بدون كراش...")
+    send_telegram_message("🤖 *تم تشغيل بوت IQ Option بنجاح على السيرفر!*\n⏱️ *الفريم المعتمد:* 5 دقائق حصراً\n⚡ *الدخول:* في أول 5 ثوانٍ مع نقطة الافتتاح\n🇪🇬 *التوقيت:* توقيت مصر الرسمي\nجاري الفحص...")
 
     while True:
         try:
