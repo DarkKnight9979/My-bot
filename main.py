@@ -3,6 +3,7 @@ import threading
 import logging
 import time
 import requests
+import traceback
 import pandas as pd
 import numpy as np
 import atexit
@@ -41,6 +42,7 @@ CHAT_ID = "1462370563"
 
 alerted_pairs = {}
 active_trades = []
+sent_signals_in_candle = {}
 
 # --- 4. دوال حساب المؤشرات الرياضية ---
 def calculate_alma(series, window=9, offset=0.85, sigma=6):
@@ -71,14 +73,18 @@ def calculate_bollinger(series, period=20, std_dev=2):
     bbl = sma - (std * std_dev)
     return bbu, bbl
 
+# --- تصحيح دالة الفراكتل بـ raw=True لإلغاء KeyError: 2 نهائياً ---
 def get_fractal_levels(df):
     highs = df['High']
     lows = df['Low']
-    resistance = highs.rolling(window=5, center=True).apply(lambda x: x[2] if max(x) == x[2] else np.nan)
-    support = lows.rolling(window=5, center=True).apply(lambda x: x[2] if min(x) == x[2] else np.nan)
+    resistance = highs.rolling(window=5, center=True).apply(lambda x: x[2] if max(x) == x[2] else np.nan, raw=True)
+    support = lows.rolling(window=5, center=True).apply(lambda x: x[2] if min(x) == x[2] else np.nan, raw=True)
     
-    last_res = resistance.dropna().iloc[-1] if not resistance.dropna().empty else df['High'].max()
-    last_sup = support.dropna().iloc[-1] if not support.dropna().empty else df['Low'].min()
+    res_clean = resistance.dropna()
+    sup_clean = support.dropna()
+
+    last_res = res_clean.iloc[-1] if not res_clean.empty else df['High'].max()
+    last_sup = sup_clean.iloc[-1] if not sup_clean.empty else df['Low'].min()
     return last_res, last_sup
 
 # --- 5. دالة إرسال الرسائل لـ Telegram ---
@@ -120,7 +126,7 @@ def connect_iq_option():
 def analyze_martingale_direction(pair, original_direction):
     try:
         raw_candles = API.get_candles(pair, 300, 20, time.time())
-        if not raw_candles or len(raw_candles) < 10:
+        if not raw_candles or len(raw_candles) < 5:
             return None
 
         df = pd.DataFrame(raw_candles)
@@ -249,18 +255,18 @@ def check_trade_results():
         if trade in active_trades:
             active_trades.remove(trade)
 
-# --- 9. دالة تحليل الأزواج المباشرة المفتوحة من غير شروط تعجيزية ---
+# --- 9. دالة تحليل الأزواج ---
 def analyze_pair(pair, timeframe="5m"):
     tf_seconds = 300
     duration_text = "5 دقائق"
     expire_delay = 300
 
     try:
-        raw_candles = API.get_candles(pair, tf_seconds, 50, time.time())
+        raw_candles = API.get_candles(pair, tf_seconds, 30, time.time())
     except Exception as e:
         return None
 
-    if not raw_candles or len(raw_candles) < 35:
+    if not raw_candles or len(raw_candles) < 15:
         return None
 
     df = pd.DataFrame(raw_candles)
@@ -280,15 +286,15 @@ def analyze_pair(pair, timeframe="5m"):
     bbl = last['BBL']
     bbu = last['BBU']
 
-    near_support = (low <= support * 1.002) or (low <= bbl * 1.002)
-    near_resistance = (high >= resistance * 0.998) or (high >= bbu * 0.998)
+    near_support = (low <= support * 1.003) or (low <= bbl * 1.003)
+    near_resistance = (high >= resistance * 0.997) or (high >= bbu * 0.997)
 
-    pair_key = f"{pair}_5m"
     cairo_now = get_cairo_time()
     current_time_str = cairo_now.strftime('%I:%M %p')
 
     candle_seconds = (cairo_now.minute % 5) * 60 + cairo_now.second
     candle_minute = cairo_now.minute % 5
+    candle_id = f"{pair}_{cairo_now.hour}_{cairo_now.minute // 5}"
 
     final_signal = None
     direction = None
@@ -307,39 +313,40 @@ def analyze_pair(pair, timeframe="5m"):
     curr_low = curr_candle['Low']
     curr_high = curr_candle['High']
 
-    high_potential_call = (curr_low <= support * 1.003 or curr_low <= bbl * 1.003) and (curr_k <= 55)
-    high_potential_put = (curr_high >= resistance * 0.997 or curr_high >= bbu * 0.997) and (curr_k >= 45)
+    high_potential_call = (curr_low <= support * 1.004 or curr_low <= bbl * 1.004) and (curr_k <= 55)
+    high_potential_put = (curr_high >= resistance * 0.996 or curr_high >= bbu * 0.996) and (curr_k >= 45)
 
     if candle_minute == 4 and candle_seconds >= 30:
-        if high_potential_call and pair_key not in alerted_pairs:
+        if high_potential_call and f"{pair}_alert" not in alerted_pairs:
             send_telegram_message(f"⚠️ *تجهّز! فرصة صعود (CALL) قريبة جداً*\nالزوج: `{pair}` [5m]\nيرجى فتح الشارت وتجهيز الصفقة!")
-            alerted_pairs[pair_key] = "CALL"
-        elif high_potential_put and pair_key not in alerted_pairs:
+            alerted_pairs[f"{pair}_alert"] = "CALL"
+        elif high_potential_put and f"{pair}_alert" not in alerted_pairs:
             send_telegram_message(f"⚠️ *تجهّز! فرصة هبوط (PUT) قريبة جداً*\nالزوج: `{pair}` [5m]\nيرجى فتح الشارت وتجهيز الصفقة!")
-            alerted_pairs[pair_key] = "PUT"
+            alerted_pairs[f"{pair}_alert"] = "PUT"
 
-    # إرسال الإشارة فوراً في بداية الشمعة بدون اشتراط وجود تنبيه مبكر سابق!
-    if final_signal and candle_seconds <= 15:
-        entry_p = df.iloc[-1]['Open']
-        
-        # التأكد من عدم تكرار نفس الإشارة لنفس الشمعة
-        if pair_key in alerted_pairs:
-            del alerted_pairs[pair_key]
+    # إرسال الإشارة خلال أول 45 ثانية من الشمعة
+    if final_signal and candle_seconds <= 45:
+        if candle_id not in sent_signals_in_candle:
+            sent_signals_in_candle[candle_id] = True
+            entry_p = df.iloc[-1]['Open']
 
-        active_trades.append({
-            'pair': pair,
-            'timeframe': '5m',
-            'direction': direction,
-            'entry_price': entry_p,
-            'expire_time': time.time() + expire_delay,
-            'warned_loss': False,
-            'is_martingale': False
-        })
-        return final_signal
+            if f"{pair}_alert" in alerted_pairs:
+                del alerted_pairs[f"{pair}_alert"]
+
+            active_trades.append({
+                'pair': pair,
+                'timeframe': '5m',
+                'direction': direction,
+                'entry_price': entry_p,
+                'expire_time': time.time() + expire_delay,
+                'warned_loss': False,
+                'is_martingale': False
+            })
+            return final_signal
 
     return None
 
-# --- 10. تشغيل البوت ورسالة الترحيب الأصلية المطلوبة ---
+# --- 10. تشغيل البوت ورسالة الترحيب الأصلية ---
 def run_bot():
     pairs = [
         "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF", "EURJPY",
@@ -367,6 +374,7 @@ def run_bot():
             check_trade_results()
         except Exception as e:
             print(f"⚠️ خطأ في اللوب الرئيسي: {e}")
+            traceback.print_exc()
         
         time.sleep(1)
 
