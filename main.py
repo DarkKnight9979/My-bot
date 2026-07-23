@@ -40,6 +40,7 @@ CHAT_ID = "1462370563"
 
 alerted_pairs = {}
 active_trades = []
+processed_candles = {} # لمنع تكرار الإشارات في نفس الشمعة
 
 # --- 4. دوال الحسابات الفنية ---
 def calculate_alma(series, window=9, offset=0.85, sigma=6):
@@ -70,7 +71,6 @@ def calculate_bollinger(series, period=20, std_dev=2):
     bbl = sma - (std * std_dev)
     return bbu, bbl
 
-# دالة الفراكتال المصلحة آمنة لمنع الكراش KeyError
 def get_fractal_levels(df):
     try:
         highs = df['High'].values
@@ -173,7 +173,7 @@ def analyze_martingale_direction(pair, original_direction):
         print(f"⚠️ خطأ مضاعفة: {e}")
         return None
 
-# --- 8. متابعة الصفقات وحساب النتيجة بالتفصيل الفريح ---
+# --- 8. متابعة الصفقات وحساب النتيجة ---
 def check_trade_results():
     current_time = time.time()
     trades_to_remove = []
@@ -191,7 +191,6 @@ def check_trade_results():
             direction = trade['direction']
             is_martingale = trade.get('is_martingale', False)
 
-            # التنبيه المبكر قبل النهاية بـ 20 ثانية
             if 0 < time_left <= 20 and not trade.get('warned_loss', False) and not is_martingale:
                 is_losing_now = (direction == "CALL" and current_price < entry_price) or (direction == "PUT" and current_price > entry_price)
 
@@ -206,11 +205,9 @@ def check_trade_results():
                     send_telegram_message(msg)
                     trade['warned_loss'] = True
 
-            # عند انتهاء الـ 5 دقائق بالتمام
             if time_left <= 0:
                 closed_candle_price = candles[-2]['close'] if time_left < -3 else candles[-1]['close']
                 
-                # المقارنة المباشرة الصريحة حسب الاتجاه
                 if direction == "PUT":
                     is_win = closed_candle_price < entry_price
                 elif direction == "CALL":
@@ -260,8 +257,19 @@ def check_trade_results():
         if trade in active_trades:
             active_trades.remove(trade)
 
-# --- 9. دالة التحليل ---
+# --- 9. دالة التحليل المفلترة والأمنة من التكرار ---
 def analyze_pair(pair, timeframe="5m"):
+    global active_trades, processed_candles, alerted_pairs
+
+    # شرط أمان 1: منع فتح أكثر من صفقتين نشطتين في الوقت نفسه
+    if len(active_trades) >= 2:
+        return None
+
+    # شرط أمان 2: التأكد من أن الزوج ليس لديه صفقة مفتوحة بالفعل
+    for trade in active_trades:
+        if trade['pair'] == pair:
+            return None
+
     try:
         raw_candles = API.get_candles(pair, 300, 50, time.time())
         if not raw_candles or len(raw_candles) < 35:
@@ -305,6 +313,9 @@ def analyze_pair(pair, timeframe="5m"):
 
         candle_seconds = (cairo_now.minute % 5) * 60 + cairo_now.second
         candle_minute = cairo_now.minute % 5
+        
+        # معرّف فريد للشمعة الحالية لمنع التكرار
+        candle_id = f"{pair}_{cairo_now.hour}_{cairo_now.minute - (cairo_now.minute % 5)}"
 
         final_signal = None
         direction = None
@@ -335,7 +346,8 @@ def analyze_pair(pair, timeframe="5m"):
         high_potential_call = (curr_price > curr_alma) and (curr_k <= 40) and (40 <= curr_rsi <= 65)
         high_potential_put = (curr_price < curr_alma) and (curr_k >= 60) and (35 <= curr_rsi <= 60)
 
-        if candle_minute == 4 and candle_seconds >= 30:
+        # توسيع فترة التنبيه المسبق لتظهر بدقة (من الدقيقة 4:15 حتى 4:50)
+        if candle_minute == 4 and 15 <= (cairo_now.second) <= 50:
             if high_potential_call and pair_key not in alerted_pairs:
                 send_telegram_message(f"⚠️ *تجهّز! فرصة صعود (CALL) قريبة جداً*\nالزوج: `{pair}` [5m]\nيرجى فتح الشارت وتجهيز الصفقة!")
                 alerted_pairs[pair_key] = "CALL"
@@ -343,21 +355,25 @@ def analyze_pair(pair, timeframe="5m"):
                 send_telegram_message(f"⚠️ *تجهّز! فرصة هبوط (PUT) قريبة جداً*\nالزوج: `{pair}` [5m]\nيرجى فتح الشارت وتجهيز الصفقة!")
                 alerted_pairs[pair_key] = "PUT"
 
+        # إرسال الإشارة مرة واحدة فقط في أول 10 ثوانٍ مع قفل لمنع التكرار
         if final_signal and candle_seconds <= 10:
-            if pair_key in alerted_pairs:
-                del alerted_pairs[pair_key]
+            if processed_candles.get(pair_key) != candle_id:
+                processed_candles[pair_key] = candle_id
+                
+                if pair_key in alerted_pairs:
+                    del alerted_pairs[pair_key]
 
-            entry_p = df.iloc[-1]['Open']
-            active_trades.append({
-                'pair': pair,
-                'timeframe': '5m',
-                'direction': direction,
-                'entry_price': entry_p,
-                'expire_time': time.time() + 300,
-                'warned_loss': False,
-                'is_martingale': False
-            })
-            return final_signal
+                entry_p = df.iloc[-1]['Open']
+                active_trades.append({
+                    'pair': pair,
+                    'timeframe': '5m',
+                    'direction': direction,
+                    'entry_price': entry_p,
+                    'expire_time': time.time() + 300,
+                    'warned_loss': False,
+                    'is_martingale': False
+                })
+                return final_signal
 
     except Exception as e:
         print(f"⚠️ خطأ تحليل {pair}: {e}")
