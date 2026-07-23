@@ -81,7 +81,7 @@ def send_telegram_message(message):
 # --- 6. التنبيه التلقائي عند إيقاف البوت ---
 def on_shutdown():
     print("⚠️ البوت يتوقف الآن...")
-    send_telegram_message("🔴 *تنبيه: تم إيقاف بوت IQ Option!*")
+    send_telegram_message("🛑 تم ايقاف تشغيل البوت")
 
 atexit.register(on_shutdown)
 
@@ -149,7 +149,7 @@ def analyze_martingale_direction(pair, original_direction):
         print(f"⚠️ خطأ أثناء تحليل المضاعفة: {e}")
         return None
 
-# --- 9. دالة فحص نتائج الصفقات والمضاعفة المبكرة ---
+# --- 9. دالة فحص نتائج الصفقات والمضاعفة المبكرة والتأكيدية ---
 def check_trade_results():
     current_time = time.time()
     trades_to_remove = []
@@ -165,6 +165,7 @@ def check_trade_results():
             current_price = candles[-1]['close']
             entry_price = trade['entry_price']
             direction = trade['direction']
+            is_martingale = trade.get('is_martingale', False)
 
             if 0 < time_left <= 20 and not trade.get('warned_loss', False):
                 is_losing_now = False
@@ -191,16 +192,37 @@ def check_trade_results():
                 elif direction == "PUT" and current_price < entry_price:
                     is_win = True
 
+                # الوقت بالساعة والدقيقة فقط بدون ثواني
                 time_str = get_cairo_time().strftime('%I:%M %p')
-                if is_win:
-                    msg = f"✅ *نتيجة الصفقة: رابحة (WIN)* 🎯\nالزوج: `{trade['pair']}` [5m]\nنوع الاتجاه: {direction}\nسعر الدخول: `{entry_price}`\nسعر الإغلاق: `{current_price}`\n⏰ الوقت: `{time_str}`"
-                else:
-                    martingale_dir = analyze_martingale_direction(trade['pair'], direction)
-                    if martingale_dir:
-                        dir_ar = "صعود (CALL)" if martingale_dir == "CALL" else "هبوط (PUT)"
-                        msg = f"❌ *نتيجة الصفقة: خاسرة (LOSS)*\nالزوج: `{trade['pair']}` [5m]\nسعر الدخول: `{entry_price}` | سعر الإغلاق: `{current_price}`\n⏰ الوقت: `{time_str}`\n\n🔄 *توجيه المضاعفة المؤكدة:* ادخل مضاعفة الآن باتجاه *{dir_ar}*"
+
+                if is_martingale:
+                    # تقرير نتيجة صفقة المضاعفة
+                    if is_win:
+                        msg = f"✅ *نتيجة صفقة المضاعفة (Martingale): رابحة (WIN)* 🎯\nالزوج: `{trade['pair']}` [5m]\nالاتجاه: {direction}\nسعر الدخول: `{entry_price}` | سعر الإغلاق: `{current_price}`\n⏰ الوقت: `{time_str}`"
                     else:
-                        msg = f"❌ *نتيجة الصفقة: خاسرة (LOSS)*\nالزوج: `{trade['pair']}` [5m]\nسعر الدخول: `{entry_price}` | سعر الإغلاق: `{current_price}`\n⏰ الوقت: `{time_str}`\n\n🛑 *تنبيه:* عدم دخول مضاعفة لأن حركة السوق غير واضحة!"
+                        msg = f"❌ *نتيجة صفقة المضاعفة (Martingale): خاسرة (LOSS)*\nالزوج: `{trade['pair']}` [5m]\nالاتجاه: {direction}\nسعر الدخول: `{entry_price}` | سعر الإغلاق: `{current_price}`\n⏰ الوقت: `{time_str}`"
+                else:
+                    # تقرير نتيجة الصفقة الأساسية
+                    if is_win:
+                        msg = f"✅ *نتيجة الصفقة: رابحة (WIN)* 🎯\nالزوج: `{trade['pair']}` [5m]\nنوع الاتجاه: {direction}\nسعر الدخول: `{entry_price}`\nسعر الإغلاق: `{current_price}`\n⏰ الوقت: `{time_str}`"
+                    else:
+                        martingale_dir = analyze_martingale_direction(trade['pair'], direction)
+                        if martingale_dir:
+                            dir_ar = "صعود (CALL)" if martingale_dir == "CALL" else "هبوط (PUT)"
+                            msg = f"❌ *نتيجة الصفقة: خاسرة (LOSS)*\nالزوج: `{trade['pair']}` [5m]\nسعر الدخول: `{entry_price}` | سعر الإغلاق: `{current_price}`\n⏰ الوقت: `{time_str}`\n\n🔄 *توجيه المضاعفة المؤكدة:* ادخل مضاعفة الآن باتجاه *{dir_ar}*"
+                            
+                            # إضافة صفقة المضاعفة لتتبعها فوراً
+                            active_trades.append({
+                                'pair': trade['pair'],
+                                'timeframe': '5m',
+                                'direction': martingale_dir,
+                                'entry_price': current_price,
+                                'expire_time': time.time() + 300,
+                                'warned_loss': False,
+                                'is_martingale': True
+                            })
+                        else:
+                            msg = f"❌ *نتيجة الصفقة: خاسرة (LOSS)*\nالزوج: `{trade['pair']}` [5m]\nسعر الدخول: `{entry_price}` | سعر الإغلاق: `{current_price}`\n⏰ الوقت: `{time_str}`\n\n🛑 *تنبيه:* عدم دخول مضاعفة لأن حركة السوق غير واضحة!"
 
                 send_telegram_message(msg)
                 trades_to_remove.append(trade)
@@ -209,7 +231,8 @@ def check_trade_results():
             print(f"⚠️ خطأ في متابعة نتيجة {trade['pair']}: {e}")
 
     for trade in trades_to_remove:
-        active_trades.remove(trade)
+        if trade in active_trades:
+            active_trades.remove(trade)
 
 # --- 10. دالة تحليل الأزواج المرتكزة على مناطق الارتداد القوية ---
 def analyze_pair(pair, timeframe="5m"):
@@ -320,7 +343,8 @@ def analyze_pair(pair, timeframe="5m"):
                     'direction': direction,
                     'entry_price': entry_p,
                     'expire_time': time.time() + expire_delay,
-                    'warned_loss': False
+                    'warned_loss': False,
+                    'is_martingale': False
                 })
                 return final_signal
 
