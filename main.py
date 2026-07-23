@@ -26,10 +26,9 @@ def run_web_server():
 logging.getLogger('iqoptionapi').setLevel(logging.ERROR)
 logging.getLogger('urllib3').setLevel(logging.ERROR)
 
-# --- 2. ضبط التوقيت الزمني الرسمي (القاهرة UTC+3 / UTC+2) ---
+# --- 2. ضبط التوقيت الزمني الرسمي (القاهرة UTC+3) ---
 def get_cairo_time():
-    """جلب الوقت الحالي بتوقيت مصر المدمج بدون مكتبات خارجية"""
-    cairo_tz = timezone(timedelta(hours=3)) # توقيت القاهرة الصيفي UTC+3
+    cairo_tz = timezone(timedelta(hours=3))
     return datetime.now(cairo_tz)
 
 # --- 3. بيانات الحساب والتليجرام ---
@@ -40,13 +39,11 @@ ACCOUNT_TYPE = "PRACTICE"
 TELEGRAM_TOKEN = "8794920089:AAFnRnoudkdPrlMtDaijlaQgczrTkaM0MU4"
 CHAT_ID = "1462370563"
 
-# قواميس لمتابعة حالة التنبيهات والصفقات المعلقة
 alerted_pairs = {}
 active_trades = []
 
-# --- 4. دوال حساب المؤشرات الرياضية بنقاء 100% ---
+# --- 4. دوال حساب المؤشرات الرياضية ---
 def calculate_alma(series, window=9, offset=0.85, sigma=6):
-    """حساب مؤشر ALMA لإلغاء التأخير تماماً وتنقية الشارت"""
     m = offset * (window - 1)
     s = window / sigma
     w = np.exp(-((np.arange(window) - m) ** 2) / (2 * s * s))
@@ -75,7 +72,6 @@ def calculate_bollinger(series, period=20, std_dev=2):
     return bbu, bbl
 
 def get_fractal_levels(df):
-    """حساب مستويات الدعوم والمقاومات الحقيقية الناتجة عن الارتدادات الفعالية"""
     highs = df['High']
     lows = df['Low']
     resistance = highs.rolling(window=5, center=True).apply(lambda x: x[2] if max(x) == x[2] else np.nan)
@@ -96,27 +92,31 @@ def send_telegram_message(message):
         print(f"❌ خطأ في إرسال التليجرام: {e}")
         return False
 
-# --- 6. التنبيه التلقائي عند إيقاف البوت ---
 def on_shutdown():
     print("⚠️ البوت يتوقف الآن...")
     send_telegram_message("🔴 *تنبيه: تم إيقاف بوت IQ Option!*")
 
 atexit.register(on_shutdown)
 
-# --- 7. الاتصال بـ IQ Option ---
+# --- 6. اتصال آمن ومتكرر بمنصة IQ Option تمنع السقوط على Render ---
 print("🔌 جاري الاتصال بمنصة IQ Option...")
 API = IQ_Option(IQ_EMAIL, IQ_PASSWORD)
-check, reason = API.connect()
 
-if check:
-    print("✅ تم الاتصال بنجاح بالمنصة!")
-    API.change_balance(ACCOUNT_TYPE)
-else:
-    print(f"❌ فشل الاتصال بالمنصة: {reason}")
-    send_telegram_message(f"❌ *فشل الاتصال بالمنصة:* `{reason}`")
-    exit()
+def connect_iq_option():
+    for attempt in range(1, 6):
+        try:
+            check, reason = API.connect()
+            if check:
+                print("✅ تم الاتصال بنجاح بالمنصة!")
+                API.change_balance(ACCOUNT_TYPE)
+                return True
+            print(f"⚠️ محاولة الاتصال {attempt} فشلت: {reason}")
+        except Exception as e:
+            print(f"⚠️ خطأ أثناء محاولة الاتصال {attempt}: {e}")
+        time.sleep(3)
+    return False
 
-# --- 8. دالة تحليل المضاعفة الذكية (معدلة لقراءة الانعكاس والتحليل الذكي) ---
+# --- 7. دالة تحليل المضاعفة الذكية ---
 def analyze_martingale_direction(pair, original_direction):
     try:
         raw_candles = API.get_candles(pair, 300, 20, time.time())
@@ -145,7 +145,6 @@ def analyze_martingale_direction(pair, original_direction):
         is_reversal_up = (price > open_price) or (lower_shadow > total_range * 0.35)
         is_reversal_down = (price < open_price) or (upper_shadow > total_range * 0.35)
 
-        # تحليل ذكي: التحول للاتجاه العكسي المضمون في حالة كسر الاتجاه الأصلي
         if original_direction == "CALL":
             if is_reversal_down and price < alma:
                 return "PUT"
@@ -165,7 +164,7 @@ def analyze_martingale_direction(pair, original_direction):
         print(f"⚠️ خطأ أثناء تحليل المضاعفة: {e}")
         return None
 
-# --- 9. دالة فحص نتائج الصفقات والمضاعفة المبكرة ---
+# --- 8. دالة فحص نتائج الصفقات والمضاعفة المبكرة ---
 def check_trade_results():
     current_time = time.time()
     trades_to_remove = []
@@ -211,7 +210,6 @@ def check_trade_results():
                 time_str = get_cairo_time().strftime('%I:%M %p')
                 
                 if is_martingale:
-                    # تقرير نتيجة المضاعفة
                     if is_win:
                         msg = f"✅ *نتيجة المضاعفة: رابحة (WIN)* 🎯\nالزوج: `{trade['pair']}` [5m]\nسعر الدخول: `{entry_price}` | سعر الإغلاق: `{current_price}`\n⏰ الوقت: `{time_str}`"
                     else:
@@ -219,7 +217,6 @@ def check_trade_results():
                     send_telegram_message(msg)
                     trades_to_remove.append(trade)
                 else:
-                    # تقرير نتيجة الصفقة الأساسية
                     if is_win:
                         msg = f"✅ *نتيجة الصفقة: رابحة (WIN)* 🎯\nالزوج: `{trade['pair']}` [5m]\nنوع الاتجاه: {direction}\nسعر الدخول: `{entry_price}`\nسعر الإغلاق: `{current_price}`\n⏰ الوقت: `{time_str}`"
                         send_telegram_message(msg)
@@ -230,7 +227,6 @@ def check_trade_results():
                             dir_ar = "صعود (CALL)" if martingale_dir == "CALL" else "هبوط (PUT)"
                             msg = f"❌ *نتيجة الصفقة الأساسية: خاسرة (LOSS)*\nالزوج: `{trade['pair']}` [5m]\nسعر الدخول: `{entry_price}` | سعر الإغلاق: `{current_price}`\n⏰ الوقت: `{time_str}`\n\n🔄 *توجيه المضاعفة المؤكدة (واحدة فقط):* ادخل مضاعفة الآن باتجاه *{dir_ar}*"
                             
-                            # تسجيل صفقة المضاعفة للمتابعة وإرسال النتيجة
                             active_trades.append({
                                 'pair': trade['pair'],
                                 'timeframe': '5m',
@@ -253,7 +249,7 @@ def check_trade_results():
         if trade in active_trades:
             active_trades.remove(trade)
 
-# --- 10. دالة تحليل الأزواج المرتكزة على مناطق الارتداد القوية ---
+# --- 9. دالة تحليل الأزواج المرتكزة ---
 def analyze_pair(pair, timeframe="5m"):
     tf_seconds = 300
     duration_text = "5 دقائق"
@@ -262,7 +258,6 @@ def analyze_pair(pair, timeframe="5m"):
     try:
         raw_candles = API.get_candles(pair, tf_seconds, 50, time.time())
     except Exception as e:
-        print(f"⚠️ خطأ أثناء جلب شموع {pair}: {e}")
         return None
 
     if not raw_candles or len(raw_candles) < 35:
@@ -297,7 +292,6 @@ def analyze_pair(pair, timeframe="5m"):
     is_strong_candle = abs(price - open_price) > ((high - low) * 0.25)
     valid_volume = volume > (vol_ma * 0.8)
 
-    # تحديد الشراء قرب الدعم/البولنجر السفلي والبيع قرب المقاومة/البولنجر العلوي
     near_support = abs(price - support) <= (price * 0.0005) or low <= (bbl * 1.001)
     near_resistance = abs(price - resistance) <= (price * 0.0005) or high >= (bbu * 0.999)
 
@@ -311,7 +305,6 @@ def analyze_pair(pair, timeframe="5m"):
     final_signal = None
     direction = None
 
-    # شروط إشارات الدخول المربوطة بمناطق الارتداد ومؤشر ALMA والمرونة في RSI و Stoch
     if is_strong_candle and valid_volume:
         if price > alma and stoch_k > stoch_d and rsi <= 50 and near_support:
             if stoch_k < 30:
@@ -329,7 +322,6 @@ def analyze_pair(pair, timeframe="5m"):
                 direction = "PUT"
                 final_signal = f"📉 *إشارة (PUT) - القوة: قوية جداً*\nالزوج: `{pair}` (IQ Option) [5m]\n⏱️ *مدة الصفقة:* {duration_text}\n⏰ *وقت الإشارة:* `{current_time_str}`"
 
-    # نظام التجهيز المسبق (عند الدقيقة 4 والتانية 30)
     curr_candle = df.iloc[-1]
     curr_k = curr_candle['Stoch_K']
     curr_rsi = curr_candle['RSI']
@@ -347,7 +339,6 @@ def analyze_pair(pair, timeframe="5m"):
             send_telegram_message(f"⚠️ *تجهّز! فرصة هبوط (PUT) قريبة جداً*\nالزوج: `{pair}` [5m]\nيرجى فتح الشارت وتجهيز الصفقة!")
             alerted_pairs[pair_key] = "PUT"
 
-    # إرسال الإشارة عند بداية الشمعة (نافذة 10 ثوانٍ)
     if final_signal:
         if candle_seconds <= 10:
             if pair_key in alerted_pairs:
@@ -374,7 +365,7 @@ def analyze_pair(pair, timeframe="5m"):
 
     return None
 
-# --- 11. تشغيل البوت ورسالة الترحيب الثابتة بتنفيذ متوازي سريح جداً ---
+# --- 10. تشغيل البوت مع الحماية الكلية لبيئة Render ---
 def run_bot():
     pairs = [
         "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF", "EURJPY",
@@ -382,16 +373,19 @@ def run_bot():
     ]
     timeframe = "5m"
 
+    if not connect_iq_option():
+        print("❌ فشل الاتصال النهائي بالمنصة. سيستمر السيرفر في العمل لإعادة المحاولة.")
+        send_telegram_message("❌ *فشل الاتصال بالمنصة بعد عدة محاولات، جاري إعادة المحاولة...*")
+
     print("🚀 البوت يعمل الآن ويحلل الـ 14 زوج بالسرعة القصوى...")
     send_telegram_message("🤖 *تم تشغيل بوت IQ Option بنجاح على السيرفر!*\n⏱️ *الفريم المعتمد:* 5 دقائق حصراً\n⚡ *الدخول:* في أول 5 ثوانٍ مع نقطة الافتتاح\n🇪🇬 *التوقيت:* توقيت مصر الرسمي\nجاري الفحص...")
 
-    try:
-        while True:
+    while True:
+        try:
             if not API.check_connect():
                 print("⚠️ انقطع الاتصال، جاري إعادة الاتصال...")
-                API.connect()
+                connect_iq_option()
 
-            # جلب وتحليل الـ 14 زوج بالتوازي في أقل من 0.5 ثانية
             with ThreadPoolExecutor(max_workers=14) as executor:
                 results = executor.map(lambda p: (p, analyze_pair(p, timeframe)), pairs)
                 for pair, signal in results:
@@ -400,12 +394,12 @@ def run_bot():
                         send_telegram_message(signal)
 
             check_trade_results()
-            time.sleep(1)
-    except KeyboardInterrupt:
-        print("🛑 تم إيقاف البوت يدوياً.")
-    finally:
-        on_shutdown()
+        except Exception as e:
+            print(f"⚠️ خطأ في اللوب الرئيسي: {e}")
+        
+        time.sleep(1)
 
 if __name__ == "__main__":
+    # تشغيل سيرفر الويب أولاً لمنع سقوط Render
     threading.Thread(target=run_web_server, daemon=True).start()
     run_bot()
