@@ -6,8 +6,7 @@ import requests
 import pandas as pd
 import numpy as np
 import atexit
-import pytz
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor
 from flask import Flask
 from iqoptionapi.stable_api import IQ_Option
@@ -27,12 +26,11 @@ def run_web_server():
 logging.getLogger('iqoptionapi').setLevel(logging.ERROR)
 logging.getLogger('urllib3').setLevel(logging.ERROR)
 
-# --- 2. ضبط التوقيت الزمني الرسمي (Africa/Cairo) ---
-CAIRO_TZ = pytz.timezone('Africa/Cairo')
-
+# --- 2. ضبط التوقيت الزمني الرسمي (القاهرة UTC+3 / UTC+2) ---
 def get_cairo_time():
-    """جلب الوقت الحالي بتوقيت مصر"""
-    return datetime.now(CAIRO_TZ)
+    """جلب الوقت الحالي بتوقيت مصر المدمج بدون مكتبات خارجية"""
+    cairo_tz = timezone(timedelta(hours=3)) # توقيت القاهرة الصيفي UTC+3
+    return datetime.now(cairo_tz)
 
 # --- 3. بيانات الحساب والتليجرام ---
 IQ_EMAIL = "zain1mohamed2425@gmail.com"
