@@ -7,6 +7,7 @@ import pandas as pd
 import numpy as np
 import atexit
 import pytz
+import traceback
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from flask import Flask
@@ -80,8 +81,9 @@ def get_fractal_levels(df):
     """حساب مستويات الدعوم والمقاومات الحقيقية الناتجة عن الارتدادات الفعالية"""
     highs = df['High']
     lows = df['Low']
-    resistance = highs.rolling(window=5, center=True).apply(lambda x: x[2] if max(x) == x[2] else np.nan)
-    support = lows.rolling(window=5, center=True).apply(lambda x: x[2] if min(x) == x[2] else np.nan)
+    # التعديل الحصري هنا: إضافة raw=True لتجنب مشكلة KeyError واللوب
+    resistance = highs.rolling(window=5, center=True).apply(lambda x: x[2] if max(x) == x[2] else np.nan, raw=True)
+    support = lows.rolling(window=5, center=True).apply(lambda x: x[2] if min(x) == x[2] else np.nan, raw=True)
     
     last_res = resistance.dropna().iloc[-1] if not resistance.dropna().empty else df['High'].max()
     last_sup = support.dropna().iloc[-1] if not support.dropna().empty else df['Low'].min()
@@ -376,7 +378,7 @@ def analyze_pair(pair, timeframe="5m"):
 
     return None
 
-# --- 11. تشغيل البوت ورسالة الترحيب الثابتة بتنفيذ متوازي سريح جداً ---
+# --- 11. تشغيل البوت ورسالة الترحيب الثابتة بتنفيذ متوازي سريع جداً ---
 def run_bot():
     pairs = [
         "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF", "EURJPY",
@@ -389,19 +391,24 @@ def run_bot():
 
     try:
         while True:
-            if not API.check_connect():
-                print("⚠️ انقطع الاتصال، جاري إعادة الاتصال...")
-                API.connect()
+            try:
+                if not API.check_connect():
+                    print("⚠️ انقطع الاتصال، جاري إعادة الاتصال...")
+                    API.connect()
 
-            # جلب وتحليل الـ 14 زوج بالتوازي في أقل من 0.5 ثانية
-            with ThreadPoolExecutor(max_workers=14) as executor:
-                results = executor.map(lambda p: (p, analyze_pair(p, timeframe)), pairs)
-                for pair, signal in results:
-                    if signal:
-                        print(f"✅ إشارة جديدة لـ {pair}")
-                        send_telegram_message(signal)
+                # جلب وتحليل الـ 14 زوج بالتوازي في أقل من 0.5 ثانية
+                with ThreadPoolExecutor(max_workers=14) as executor:
+                    results = executor.map(lambda p: (p, analyze_pair(p, timeframe)), pairs)
+                    for pair, signal in results:
+                        if signal:
+                            print(f"✅ إشارة جديدة لـ {pair}")
+                            send_telegram_message(signal)
 
-            check_trade_results()
+                check_trade_results()
+            except Exception as e:
+                print(f"⚠️ خطأ أثناء الحلقة الرئيسية: {e}")
+                print(traceback.format_exc())
+
             time.sleep(1)
     except KeyboardInterrupt:
         print("🛑 تم إيقاف البوت يدوياً.")
