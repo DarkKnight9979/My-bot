@@ -265,13 +265,15 @@ def analyze_pair(pair, timeframe="5m"):
             send_telegram_message(f"❌ *تم إلغاء فرصة المضاعفة*\nالزوج: `{pair}` [5m]\nالسبب: لم يتم العثور على إشارة قوية.")
             del martingale_queue[pair]
 
-    # التجهيز المسبق مع توقع نوع الإشارة
+    # ========== التجهيز المسبق مع توقع نوع الإشارة ==========
     crp, crk, crs, cra = curr['Close'], curr['Stoch_K'], curr['RSI'], curr['ALMA']
     crd = curr['Stoch_D']
     ca9, ca50 = curr['ALMA'], curr['ALMA_50']
     pa9, pa50 = last['ALMA'], last['ALMA_50']
     
     predicted_type = None
+    
+    # توقع النوع بناءً على الشمعة الحية
     if (pa9 <= pa50 and ca9 > ca50 and crk > crd) or (pa9 >= pa50 and ca9 < ca50 and crk < crd):
         predicted_type = "👑 سوبر ماكس"
     elif crp > cra and crk > crd and crs <= 50:
@@ -307,8 +309,8 @@ def analyze_pair(pair, timeframe="5m"):
                 return final_signal
     else:
         if pair_key in alerted_pairs:
-            prev_alert_dir = alerted_pairs[pair_key]  # <-- غيرت pd لـ prev_alert_dir
-            if (prev_alert_dir == "CALL" and crk > 60) or (prev_alert_dir == "PUT" and crk < 40):
+            prev_dir = alerted_pairs[pair_key]  # تم تغيير الاسم هنا لمنع التضارب مع pd
+            if (prev_dir == "CALL" and crk > 60) or (prev_dir == "PUT" and crk < 40):
                 send_telegram_message(f"❌ *تم إلغاء التنبيه*\nالزوج: `{pair}` [5m]\nالسبب: الشروط لم تعد متوافقة.")
                 del alerted_pairs[pair_key]
     return None
