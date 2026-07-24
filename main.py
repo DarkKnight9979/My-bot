@@ -782,7 +782,7 @@ def analyze_pair_wrapper(pair):
 
 def run_bot():
     global cycle_count
-    pairs = ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF", "EURJPY", "EURGBP", "AUDCAD", "AUDJPY", "CADJPY", "EURAUD", "GBPJPY", "EURCAD"]
+    pairs = ["EURUSD-otc", "GBPUSD-otc", "USDJPY-otc", "AUDUSD-otc", "USDCAD-otc", "USDCHF-otc", "EURJPY-otc", "EURGBP-otc", "AUDCAD-otc", "AUDJPY-otc", "CADJPY-otc", "EURAUD-otc", "GBPJPY-otc", "EURCAD-otc"]
     logger.info("🚀 البوت يعمل بالنسخة V5.1 (وضع المضاعفة على كل الأزواج)...")
     send_telegram_message(
         "🤖 *تم تشغيل بوت IQ Option V5.1!*\n"
