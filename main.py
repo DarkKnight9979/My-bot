@@ -42,7 +42,7 @@ logging.getLogger('urllib3').setLevel(logging.WARNING)
 # --- 2. التوقيت وزامنته مع سيرفر المنصة ---
 CAIRO_TZ = pytz.timezone('Africa/Cairo')
 UTC_TZ = pytz.utc
-server_time_offset = 0  # الفارق الزمني بين سيرفر البوت وسيرفر IQ Option
+server_time_offset = 0
 
 def get_cairo_time():
     return datetime.now(CAIRO_TZ)
@@ -76,14 +76,15 @@ if not TELEGRAM_TOKEN or not CHAT_ID:
 alerted_pairs = {}
 active_trades = []
 martingale_queue = {}
-recent_signals = {}       
-sent_signals = {}         
-candles_cache = {}        
-ht_trend_cache = {}       
-df_cache = {}             
+recent_signals = {}
+sent_signals = {}
+candles_cache = {}
+ht_trend_cache = {}
+df_cache = {}
 news_data = []
 last_news_update = 0
-news_fetch_failed = False  # وضع الأمان في حال فشل الأخبار
+news_fetch_failed = False
+hunt_mode_announced = {}
 
 cycle_count = 0
 stats = defaultdict(lambda: {"win": 0, "loss": 0, "total": 0})
@@ -199,7 +200,7 @@ def get_cached_df(pair, tf, count):
 
 def cleanup_memory():
     now = get_iq_time()
-    global sent_signals, recent_signals, candles_cache, df_cache, ht_trend_cache
+    global sent_signals, recent_signals, candles_cache, df_cache, ht_trend_cache, hunt_mode_announced
     sent_signals = {k:v for k,v in sent_signals.items() if now - v < 600}
     recent_signals = {k:v for k,v in recent_signals.items() if now - v[0] < 1200}
     for k in list(candles_cache.keys()):
@@ -211,6 +212,9 @@ def cleanup_memory():
     for k in list(ht_trend_cache.keys()):
         if now - ht_trend_cache[k][1] > 1800:
             del ht_trend_cache[k]
+    for k in list(hunt_mode_announced.keys()):
+        if now - hunt_mode_announced[k] > 1200:
+            del hunt_mode_announced[k]
 
 # --- 7. فلتر الأخبار المزدوَج مع خيار الأمان ---
 CURRENCY_PAIRS = {
@@ -227,8 +231,6 @@ def update_news():
     global news_data, last_news_update, news_fetch_failed
     if get_iq_time() - last_news_update < 1800:
         return
-
-    # محاولة المصدر الأول (FairEconomy)
     try:
         r = requests.get("https://nfs.faireconomy.media/ff_calendar_thisweek.json", timeout=8)
         if r.status_code == 200:
@@ -239,8 +241,6 @@ def update_news():
             return
     except Exception as e:
         logger.warning(f"⚠️ فشل المصدر الرئيسي للأخبار: {e}")
-
-    # محاولة المصدر الثاني الاحتياطي (ForexFactory API Alternative)
     try:
         r2 = requests.get("https://forexfactory-api.herokuapp.com/get_this_week", timeout=8)
         if r2.status_code == 200:
@@ -251,8 +251,6 @@ def update_news():
             return
     except Exception as e:
         logger.warning(f"⚠️ فشل المصدر الاحتياطي للأخبار: {e}")
-
-    # إذا فشل المصدران معاً، تفعل حماية وضع الأمان
     news_fetch_failed = True
     logger.error("❌ فشل المصدران في جلب الأخبار! تفعيل وضع الحماية.")
 
@@ -260,8 +258,7 @@ def is_news_for_pair(pair):
     update_news()
     if news_fetch_failed:
         logger.warning("🛡️ إيقاف الإشارة لوجود عطل في شبكة الأخبار (وضع الأمان)")
-        return True  # يمنع الصفقات كإجراء وقائي
-
+        return True
     now = datetime.now(UTC_TZ)
     for ev in news_data:
         try:
@@ -271,11 +268,10 @@ def is_news_for_pair(pair):
             curr = str(ev.get('country', ev.get('currency', ''))).upper()
             if curr not in CURRENCY_PAIRS or pair not in CURRENCY_PAIRS[curr]:
                 continue
-
             ev_date = ev.get('date')
             et = datetime.fromtimestamp(ev_date, tz=UTC_TZ) if isinstance(ev_date, (int, float)) else pd.to_datetime(ev_date).tz_localize(UTC_TZ)
             diff = abs((now - et).total_seconds())
-            if diff <= 900:  # 15 دقيقة قبل/بعد الخبر
+            if diff <= 900:
                 return True
         except:
             continue
@@ -289,7 +285,7 @@ def is_market_open_chaos():
         return True
     return False
 
-# --- 9. فلتر فريم الساعة المحسّن (يقرأ الشمعة الحالية والسابقة) ---
+# --- 9. فلتر فريم الساعة المحسّن ---
 def get_higher_tf_trend(pair):
     if pair in ht_trend_cache and get_iq_time() - ht_trend_cache[pair][1] < 900:
         return ht_trend_cache[pair][0]
@@ -301,19 +297,14 @@ def get_higher_tf_trend(pair):
         df_h.rename(columns={'close':'Close'}, inplace=True)
         df_h['ALMA_9'] = calculate_alma(df_h['Close'], 9, 0.85, 6)
         df_h['ALMA_50'] = calculate_alma(df_h['Close'], 50, 0.85, 6)
-
-        # الاعتماد على الشمعة الحالية السارية لعدم إهمال الانعكاس اللحظي
         curr_h = df_h.iloc[-1]
         prev_h = df_h.iloc[-2]
-
-        # إذا كان الاتجاه ثابت في الشمعتين
         if curr_h['ALMA_9'] > curr_h['ALMA_50'] and prev_h['ALMA_9'] > prev_h['ALMA_50']:
             trend = "CALL"
         elif curr_h['ALMA_9'] < curr_h['ALMA_50'] and prev_h['ALMA_9'] < prev_h['ALMA_50']:
             trend = "PUT"
         else:
-            trend = None # وضع تذبذب أو كسر جديد
-
+            trend = None
         ht_trend_cache[pair] = (trend, get_iq_time())
         return trend
     except Exception as e:
@@ -349,36 +340,20 @@ def already_sent_this_candle(pair):
     sent_signals[key] = get_iq_time()
     return False
 
-# ========== NEW: نظام تقييم قوة الإشارة ==========
-"""
-مستويات الإشارة:
-3 = سوبر ماكس (Super Max) - نادرة جداً، شروط صارمة، نسبة فوز ممتازة
-2 = ماكس (Max) - أقل ندرة، شروط قوية، نسبة فوز عالية
-1 = قوية جداً (Very Strong) - أكثر تكراراً، شروط محترمة، نسبة فوز جيدة
-0 = لا إشارة
-"""
-
-def evaluate_signal_strength(direction, curr, prev, df, price, alma9, alma50, 
-                                stoch_k, stoch_d, rsi, volume, vol_ma, 
+# ========== نظام تقييم قوة الإشارة ==========
+def evaluate_signal_strength(direction, curr, prev, df, price, alma9, alma50,
+                                stoch_k, stoch_d, rsi, volume, vol_ma,
                                 atr, adx, bbw, roc, near_sup, near_res):
-    """
-    تقييم قوة الإشارة بناءً على الشروط المتراكمة.
-    كلما زادت الشروط الاحترافية، زاد المستوى.
-    """
     a9p, a50p = prev['ALMA_9'], prev['ALMA_50']
     a9c, a50c = alma9, alma50
-
-    # هل حصل تقاطع حقيقي؟
     bullish_cross = (a9p <= a50p) and (a9c > a50c)
     bearish_cross = (a9p >= a50p) and (a9c < a50c)
     has_cross = (direction == "CALL" and bullish_cross) or (direction == "PUT" and bearish_cross)
-
-    # قوة الشمعة
     body = abs(curr['Close'] - curr['Open'])
     rng = curr['High'] - curr['Low']
     body_pct = body / rng if rng > 0 else 0
 
-    # --- مستوى 3: سوبر ماكس (الأقوى والأندر) ---
+    # --- مستوى 3: سوبر ماكس ---
     if has_cross:
         if direction == "CALL":
             cond_stoch = stoch_k > stoch_d
@@ -386,22 +361,19 @@ def evaluate_signal_strength(direction, curr, prev, df, price, alma9, alma50,
         else:
             cond_stoch = stoch_k < stoch_d
             cond_price = price < alma9
-
-        if (cond_stoch and cond_price and 
+        if (cond_stoch and cond_price and
             body_pct >= 0.25 and
             volume >= vol_ma * 1.0 and
             adx >= 25 and
             bbw >= 0.002 and
             atr >= (price * 0.0004) and
             abs(roc) >= 0.05):
-
-            # قرب من الدعم/مقاومة + فلتر RSI محدد
             if direction == "CALL" and near_sup and rsi <= 45:
                 return 3
             if direction == "PUT" and near_res and rsi >= 55:
                 return 3
 
-    # --- مستوى 2: ماكس (قوية جداً، أقل ندرة من سوبر) ---
+    # --- مستوى 2: ماكس ---
     if has_cross:
         if direction == "CALL":
             cond_stoch = stoch_k > stoch_d
@@ -409,21 +381,19 @@ def evaluate_signal_strength(direction, curr, prev, df, price, alma9, alma50,
         else:
             cond_stoch = stoch_k < stoch_d
             cond_price = price < alma9
-
-        if (cond_stoch and cond_price and 
+        if (cond_stoch and cond_price and
             body_pct >= 0.20 and
             volume >= vol_ma * 0.9 and
             adx >= 20 and
             bbw >= 0.0015 and
             atr >= (price * 0.0003) and
             abs(roc) >= 0.04):
-
             if direction == "CALL" and near_sup and rsi <= 50:
                 return 2
             if direction == "PUT" and near_res and rsi >= 50:
                 return 2
 
-    # --- مستوى 1: قوية جداً (أكثر تكراراً، شروط مرنة نسبياً) ---
+    # --- مستوى 1: قوية جداً ---
     if direction == "CALL":
         cond_base = (price > alma9) and (stoch_k > stoch_d)
         cond_rsi = rsi <= 60
@@ -432,7 +402,6 @@ def evaluate_signal_strength(direction, curr, prev, df, price, alma9, alma50,
         cond_base = (price < alma9) and (stoch_k < stoch_d)
         cond_rsi = rsi >= 40
         cond_zone = near_res or (price >= curr['BBL'] * 0.999)
-
     if (cond_base and cond_rsi and cond_zone and
         body_pct >= 0.15 and
         volume >= vol_ma * 0.8 and
@@ -441,7 +410,6 @@ def evaluate_signal_strength(direction, curr, prev, df, price, alma9, alma50,
         atr >= (price * 0.00025) and
         abs(roc) >= 0.02):
         return 1
-
     return 0
 
 SIGNAL_NAMES = {
@@ -449,10 +417,9 @@ SIGNAL_NAMES = {
     2: ("ماكس 🔥", "MAX"),
     1: ("قوية جداً 🚀", "VERY STRONG")
 }
-
 SIGNAL_EMOJIS = {3: "👑", 2: "🔥", 1: "🚀"}
 
-# --- 11. Telegram Queue (Thread منفصل) ---
+# --- 11. Telegram Queue ---
 def telegram_worker():
     while True:
         if telegram_queue:
@@ -483,7 +450,7 @@ def on_shutdown():
 
 atexit.register(on_shutdown)
 
-# --- 13. الاتصال وفحص الاستجابة (Ping Check) ---
+# --- 13. الاتصال وفحص الاستجابة ---
 def connect_iqoption():
     logger.info("🔌 جاري الاتصال بالمنصة ومزامنة التوقيت...")
     api = IQ_Option(IQ_EMAIL, IQ_PASSWORD)
@@ -511,52 +478,10 @@ def check_connection_health():
         logger.warning("🔄 تم اكتشاف انقطاع، جاري إعادة الاتصال...")
         API = connect_iqoption()
     else:
-        # فحص البطء في الاستجابة Ping
         if (time.time() - start) > 0.5:
             logger.warning("⚠️ بطء في استجابة الاتصال (High Latency)")
 
-# --- 14. تحليل المضاعفة (Super Max فقط) ---
-def analyze_martingale(pair, original_direction):
-    try:
-        df = get_cached_df(pair, 300, 60)
-        if df is None or len(df) < 55:
-            return None
-        last, prev = df.iloc[-1], df.iloc[-2]
-        price, open_price, low, high = last['Close'], last['Open'], last['Low'], last['High']
-        alma9, alma50 = last['ALMA_9'], last['ALMA_50']
-        stoch_k, stoch_d = last['Stoch_K'], last['Stoch_D']
-        volume, vol_ma = last['Volume'], last['Vol_MA']
-        atr = calculate_atr_wilder(df, 14)
-        adx, _, _ = calculate_adx(df, 14)
-        bbw = bollinger_bandwidth(df, 20)
-        roc = last['ROC']
-        rsi = last['RSI']
-        resistance, support = get_fractal_levels(df, lookback=20)
-        near_sup = abs(price - support) <= (price * 0.0005) or low <= (last['BBL'] * 1.001)
-        near_res = abs(price - resistance) <= (price * 0.0005) or high >= (last['BBU'] * 0.999)
-
-        strength = evaluate_signal_strength(
-            original_direction, last, prev, df, price, alma9, alma50,
-            stoch_k, stoch_d, rsi, volume, vol_ma, atr, adx, bbw, roc, near_sup, near_res
-        )
-
-        # المضاعفة ناخدها لو مستوى 2 (ماكس) أو أعلى، وفي اتجاه معاكس
-        if strength >= 2:
-            # ندور على اتجاه معاكس
-            opp = "PUT" if original_direction == "CALL" else "CALL"
-            # نعيد التقييم للاتجاه المعاكس
-            opp_strength = evaluate_signal_strength(
-                opp, last, prev, df, price, alma9, alma50,
-                stoch_k, stoch_d, rsi, volume, vol_ma, atr, adx, bbw, roc, near_sup, near_res
-            )
-            if opp_strength >= 1:
-                return opp
-        return None
-    except Exception as e:
-        logger.error(f"خطأ تحليل المضاعفة: {e}")
-        return None
-
-# --- 15. متابعة الصفقات والنتائج ---
+# --- 14. متابعة الصفقات والنتائج ---
 def check_trade_results():
     current_time = get_iq_time()
     trades_to_remove = []
@@ -565,12 +490,12 @@ def check_trade_results():
         try:
             if 0 < time_left <= 20 and not trade.get('warned_loss', False) and not trade.get('is_martingale', False):
                 candles = get_cached_candles(trade['pair'], 300, 1, max_age=5)
-                if not candles: continue
+                if not candles:
+                    continue
                 cp, ep, d = candles[-1]['close'], trade['entry_price'], trade['direction']
                 losing = (d == "CALL" and cp < ep) or (d == "PUT" and cp > ep)
                 if losing:
-                    send_telegram_message(f"⏳ *تنبيه مبكر*\nالزوج: `{trade['pair']}` [5m]\nالصفقة تتجه للخسارة..\n🔍 *جاري تحليل فرصة المضاعفة...*")
-                    martingale_queue[trade['pair']] = {'original_direction': d, 'entry_price': ep, 'time': get_iq_time()}
+                    send_telegram_message(f"⏳ *تنبيه مبكر*\nالزوج: `{trade['pair']}` [5m]\nالصفقة تتجه للخسارة..")
                     trade['warned_loss'] = True
 
             if time_left <= 0:
@@ -594,8 +519,17 @@ def check_trade_results():
                         send_telegram_message(f"✅ *نتيجة الصفقة: رابحة* 🎯\nالزوج: `{pair}` [5m]\n⏰ `{ts}`")
                         trades_to_remove.append(trade)
                     else:
-                        martingale_queue[pair] = {'original_direction': d, 'entry_price': ep, 'time': get_iq_time()}
-                        send_telegram_message(f"❌ *الصفقة خاسرة*\nالزوج: `{pair}` [5m]\n⏰ `{ts}`\n\n🔍 *جاري تحليل السوق لإيجاد أفضل فرصة مضاعفة...*")
+                        if pair not in martingale_queue:
+                            martingale_queue[pair] = {'original_direction': d, 'entry_price': ep, 'time': get_iq_time()}
+                        send_telegram_message(
+                            f"❌ *الصفقة خاسرة*\n"
+                            f"الزوج: `{pair}` [5m]\n"
+                            f"⏰ `{ts}`\n\n"
+                            f"🔴 *دخلنا وضع المضاعفة!*\n"
+                            f"🎯 البوت يبحث الآن في *كل الأزواج* عن إشارة *ماكس* 🔥 أو *سوبر ماكس* 👑.\n"
+                            f"⛔ *تم إيقاف إشارات (قوية جداً) مؤقتاً.*\n"
+                            f"⏳ جاري تحليل السوق..."
+                        )
                         trades_to_remove.append(trade)
         except Exception as e:
             logger.error(f"خطأ متابعة {trade['pair']}: {e}")
@@ -603,14 +537,13 @@ def check_trade_results():
         if trade in active_trades:
             active_trades.remove(trade)
 
-# --- 16. التحليل الرئيسي وتوقيت الإرسال المطور (الجهة المفصلية) ---
+# --- 15. التحليل الرئيسي ---
 def analyze_pair(pair, timeframe="5m"):
     tf_seconds, duration_text = 300, "5 دقائق"
     df = get_cached_df(pair, tf_seconds, 60)
     if df is None or len(df) < 55:
         return None
 
-    # نأخذ الشمعة الحالية السارية للتحليل والتنبيه المبكر
     curr = df.iloc[-1]
     prev = df.iloc[-2]
 
@@ -631,15 +564,29 @@ def analyze_pair(pair, timeframe="5m"):
     pair_key = f"{pair}_5m"
     cn = get_cairo_time()
     cts = cn.strftime('%I:%M %p')
-
-    # التوقيت الدقيق المستند إلى المنصة
     iq_now = get_iq_time()
-    csec = int(iq_now) % 300  # الثانية الحالية داخل الشمعة (0 إلى 299)
+    csec = int(iq_now) % 300
 
-    # ========== تقييم الاتجاه المحتمل ==========
-    # نحدد الاتجاه المحتمل أولاً (CALL أو PUT) بناءً على الشروط الأساسية
+    # ============================================================
+    # ========== وضع المضاعفة (MARTINGALE HUNT MODE) ==========
+    # ============================================================
+    in_hunt_mode = len(martingale_queue) > 0
+
+    if in_hunt_mode:
+        # Timeout: 3 ساعات (10800 ثانية)
+        oldest_mg_time = min(mg['time'] for mg in martingale_queue.values())
+        if get_iq_time() - oldest_mg_time > 10800:
+            send_telegram_message(
+                f"⏰ *انتهى وقت البحث عن مضاعفة*\n"
+                f"مرت 3 ساعات ولم يتم العثور على إشارة *ماكس* أو *سوبر ماكس*.\n"
+                f"🔄 العودة للوضع الطبيعي."
+            )
+            martingale_queue.clear()
+            alerted_pairs.clear()
+            return None
+
+    # تقييم الاتجاه المحتمل
     potential_direction = None
-
     a9p, a50p = prev['ALMA_9'], prev['ALMA_50']
     a9c, a50c = alma9, alma50
     bullish_cross = (a9p <= a50p) and (a9c > a50c)
@@ -654,11 +601,9 @@ def analyze_pair(pair, timeframe="5m"):
     elif price < alma9 and stoch_k < stoch_d and rsi >= 40:
         potential_direction = "PUT"
 
-    # لو مفيش اتجاه محتمل، نخرج بدري
     if potential_direction is None:
         return None
 
-    # نقيم قوة الإشارة للاتجاه المحتمل
     strength = evaluate_signal_strength(
         potential_direction, curr, prev, df, price, alma9, alma50,
         stoch_k, stoch_d, rsi, volume, vol_ma, atr, adx, bbw, roc, near_sup, near_res
@@ -667,38 +612,102 @@ def analyze_pair(pair, timeframe="5m"):
     if strength == 0:
         return None
 
-    signal_name_ar, signal_name_en = SIGNAL_NAMES[strength]
-    emoji = SIGNAL_EMOJIS[strength]
-
-    # ========== علاج المضاعفة ==========
-    if pair in martingale_queue:
-        mg = martingale_queue[pair]
-        if potential_direction and potential_direction != mg['original_direction']:
-            da = "صعود (CALL)" if potential_direction == "CALL" else "هبوط (PUT)"
-            send_telegram_message(f"🎯 *فرصة المضاعفة جاهزة!*\nالزوج: `{pair}` [5m]\nالاتجاه: *{da}*\n⏰ `{cts}`\n\n⚡ *ادخل الآن فوراً!*")
-            active_trades.append({'pair': pair, 'timeframe': '5m', 'direction': potential_direction, 'entry_price': curr['Close'], 'expire_time': get_iq_time() + 300, 'warned_loss': True, 'is_martingale': True})
-            del martingale_queue[pair]
+    # ========== لو في وضع مضاعفة ==========
+    if in_hunt_mode:
+        # نرفض إشارات "قوية جداً" تماماً في وضع المضاعفة
+        if strength < 2:
             return None
 
-    # ========== التنبيه المسبق (الدقيقة 4:15 إلى 4:45) ==========
-    # بنبعت التنبيه مع نوع الإشارة المتوقع
-    if 255 <= csec <= 285:
-        if pair_key not in alerted_pairs:
+        signal_name_ar, signal_name_en = SIGNAL_NAMES[strength]
+        emoji = SIGNAL_EMOJIS[strength]
+        da = "صعود (CALL)" if potential_direction == "CALL" else "هبوط (PUT)"
+
+        # التنبيه المسبق (نهاية الشمعة: 270-285)
+        if 270 <= csec <= 285 and pair_key not in alerted_pairs:
             send_telegram_message(
-                f"⚠️ *تجهّز! إشارة {signal_name_ar}* قريبة جداً\n"
+                f"⚠️ *تجهّز! مضاعفة {signal_name_ar}* قريبة جداً\n"
                 f"الزوج: `{pair}` [5m]\n"
+                f"الاتجاه: *{da}*\n"
                 f"💡 النوع: *{signal_name_en}* {emoji}\n"
                 f"📊 القوة: *{strength}/3*\n"
                 f"يرجى فتح الشارت استعداداً للدخول!"
             )
             alerted_pairs[pair_key] = potential_direction
 
-    # ========== الإشارة النهائية (آخر 10 ثوانٍ من الشمعة: 290 إلى 299) ==========
+        # الإرسال النهائي فقط في آخر 10 ثوانٍ (290-299)
+        if 290 <= csec <= 299:
+            if already_sent_this_candle(pair):
+                return None
+
+            if is_news_for_pair(pair):
+                logger.info(f"🛑 مضاعفة {pair} مرفوضة (فلتر الأخبار)")
+                return None
+            if is_market_open_chaos():
+                logger.info(f"🛑 مضاعفة {pair} مرفوضة (افتتاح السوق)")
+                return None
+
+            min_body = {3: 0.25, 2: 0.20}
+            if not check_candle_quality(curr, min_body_pct=min_body.get(strength, 0.20)):
+                logger.info(f"🛑 مضاعفة {pair} مرفوضة (شمعة ضعيفة)")
+                return None
+
+            ht = get_higher_tf_trend(pair)
+            if ht is not None and ht != potential_direction:
+                logger.info(f"🛑 مضاعفة {pair} مرفوضة (فريم الساعة عكس: {ht})")
+                return None
+
+            if not can_take_signal(pair, potential_direction):
+                logger.info(f"🛑 مضاعفة {pair} مرفوضة (إشارة متعاكسة قريبة)")
+                return None
+
+            if pair_key in alerted_pairs:
+                del alerted_pairs[pair_key]
+
+            final_signal = (
+                f"{emoji} *إشارة مضاعفة {signal_name_ar}* {emoji}\n"
+                f"الزوج: `{pair}` (IQ Option) [5m]\n"
+                f"الاتجاه: *{da}*\n"
+                f"⏱️ *مدة الصفقة:* {duration_text}\n"
+                f"📊 *مؤشرات:* ADX={adx:.1f} | BBW={bbw:.4f} | RSI={rsi:.1f}\n"
+                f"⚡ *ادخل فوراً مع بداية الشمعة التالية!*"
+            )
+
+            active_trades.append({
+                'pair': pair,
+                'timeframe': '5m',
+                'direction': potential_direction,
+                'entry_price': curr['Close'],
+                'expire_time': get_iq_time() + 300,
+                'warned_loss': True,
+                'is_martingale': True,
+                'signal_level': strength
+            })
+            return final_signal
+
+        return None
+
+    # ============================================================
+    # ========== وضع طبيعي (NORMAL MODE) ==========
+    # ============================================================
+    signal_name_ar, signal_name_en = SIGNAL_NAMES[strength]
+    emoji = SIGNAL_EMOJIS[strength]
+
+    # التنبيه المسبق (نهاية الشمعة: 270-285)
+    if 270 <= csec <= 285 and pair_key not in alerted_pairs:
+        send_telegram_message(
+            f"⚠️ *تجهّز! إشارة {signal_name_ar}* قريبة جداً\n"
+            f"الزوج: `{pair}` [5m]\n"
+            f"💡 النوع: *{signal_name_en}* {emoji}\n"
+            f"📊 القوة: *{strength}/3*\n"
+            f"يرجى فتح الشارت استعداداً للدخول!"
+        )
+        alerted_pairs[pair_key] = potential_direction
+
+    # الإرسال النهائي فقط في آخر 10 ثوانٍ (290-299)
     if 290 <= csec <= 299:
         if already_sent_this_candle(pair):
             return None
 
-        # فلاتر السلامة النهائية
         if is_news_for_pair(pair):
             logger.info(f"🛑 إشارة {pair} مرفوضة (فلتر الأخبار)")
             return None
@@ -706,10 +715,9 @@ def analyze_pair(pair, timeframe="5m"):
             logger.info(f"🛑 إشارة {pair} مرفوضة (افتتاح السوق)")
             return None
 
-        # فلتر جودة الشمعة حسب المستوى
         min_body = {3: 0.25, 2: 0.20, 1: 0.15}
         if not check_candle_quality(curr, min_body_pct=min_body.get(strength, 0.15)):
-            logger.info(f"🛑 إشارة {pair} مرفوضة (شمعة ضعيفة للمستوى {strength})")
+            logger.info(f"🛑 إشارة {pair} مرفوضة (شمعة ضعيفة)")
             return None
 
         if pair_key in alerted_pairs:
@@ -717,14 +725,13 @@ def analyze_pair(pair, timeframe="5m"):
 
         ht = get_higher_tf_trend(pair)
         if ht is not None and ht != potential_direction:
-            logger.info(f"🛑 إشارة {pair} مرفوضة (فريم الساعة عكس الاتجاه: {ht})")
+            logger.info(f"🛑 إشارة {pair} مرفوضة (فريم الساعة عكس: {ht})")
             return None
 
         if not can_take_signal(pair, potential_direction):
             logger.info(f"🛑 إشارة {pair} مرفوضة (إشارة متعاكسة قريبة)")
             return None
 
-        # بناء رسالة الإشارة النهائية حسب المستوى
         if strength == 3:
             final_signal = (
                 f"{emoji} *إشارة سوبر ماكس (SUPER MAX)* {emoji}\n"
@@ -741,7 +748,7 @@ def analyze_pair(pair, timeframe="5m"):
                 f"📊 *مؤشرات:* ADX={adx:.1f} | BBW={bbw:.4f} | RSI={rsi:.1f}\n"
                 f"⚡ *ادخل فوراً مع بداية الشمعة التالية!*"
             )
-        else:  # strength == 1
+        else:
             final_signal = (
                 f"{emoji} *إشارة قوية جداً (VERY STRONG)* {emoji}\n"
                 f"الزوج: `{pair}` (IQ Option) [5m]\n"
@@ -752,12 +759,12 @@ def analyze_pair(pair, timeframe="5m"):
 
         recent_signals[pair] = (get_iq_time(), potential_direction)
         active_trades.append({
-            'pair': pair, 
-            'timeframe': '5m', 
-            'direction': potential_direction, 
-            'entry_price': curr['Close'], 
-            'expire_time': get_iq_time() + 300, 
-            'warned_loss': False, 
+            'pair': pair,
+            'timeframe': '5m',
+            'direction': potential_direction,
+            'entry_price': curr['Close'],
+            'expire_time': get_iq_time() + 300,
+            'warned_loss': False,
             'is_martingale': False,
             'signal_level': strength
         })
@@ -765,7 +772,7 @@ def analyze_pair(pair, timeframe="5m"):
 
     return None
 
-# --- 17. تشغيل البوت ---
+# --- 16. تشغيل البوت ---
 def analyze_pair_wrapper(pair):
     try:
         return pair, analyze_pair(pair, "5m")
@@ -776,15 +783,19 @@ def analyze_pair_wrapper(pair):
 def run_bot():
     global cycle_count
     pairs = ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF", "EURJPY", "EURGBP", "AUDCAD", "AUDJPY", "CADJPY", "EURAUD", "GBPJPY", "EURCAD"]
-    logger.info("🚀 البوت يعمل بالنسخة المحسنة V4.0 (نظام قوة الإشارات)...")
+    logger.info("🚀 البوت يعمل بالنسخة V5.1 (وضع المضاعفة على كل الأزواج)...")
     send_telegram_message(
-        "🤖 *تم تشغيل بوت IQ Option V4.0 (نظام قوة الإشارات)!*\n"
+        "🤖 *تم تشغيل بوت IQ Option V5.1!*\n"
         "⏱️ *الفريم:* 5 دقائق\n"
         "📊 *مستويات الإشارات:*\n"
-        "  🚀 قوية جداً (Very Strong) - أكثر تكراراً\n"
-        "  🔥 ماكس (Max) - نادرة وقوية\n"
-        "  👑 سوبر ماكس (Super Max) - نادرة جداً ومضمونة\n"
-        "⚡ *التوقيت:* إرسال في آخر 10 ثوانٍ\n"
+        "  🚀 قوية جداً (Very Strong)\n"
+        "  🔥 ماكس (Max)\n"
+        "  👑 سوبر ماكس (Super Max)\n"
+        "🎯 *وضع المضاعفة:* مفعل على كل الأزواج\n"
+        "  ⛔ إيقاف (قوية جداً) أثناء البحث عن مضاعفة\n"
+        "  ✅ قبول (ماكس 🔥 و سوبر ماكس 👑) فقط\n"
+        "  ⏱️ Timeout: 3 ساعات\n"
+        "  ⏱️ دخول في آخر 10 ثوانٍ من الشمعة\n"
         "🌐 *مزامنة السيرفر:* مفعلة\n"
         "🛡️ *الحماية:* مصدران للأخبار + مراقبة الاتصال + فلتر الساعة"
     )
@@ -798,12 +809,36 @@ def run_bot():
             try:
                 check_connection_health()
 
+                # رسالة دورية أثناء وضع المضاعفة
+                if martingale_queue and (cycle_count % 25 == 0):
+                    send_telegram_message(
+                        f"🔍 *جاري تحليل السوق لإيجاد مضاعفة قوية...*\n"
+                        f"🎯 البوت يحلل *كل الأزواج الـ 14* بكل طاقته.\n\n"
+                        f"⏳ نبحث عن *ماكس* 🔥 أو *سوبر ماكس* 👑 فقط.\n"
+                        f"⛔ إشارات (قوية جداً) متوقفة مؤقتاً.\n"
+                        f"⏱️ الوقت المتبقي للبحث: 3 ساعات كحد أقصى."
+                    )
+
                 with ThreadPoolExecutor(max_workers=7) as executor:
                     results = executor.map(analyze_pair_wrapper, pairs)
-                    for pair, signal in results:
-                        if signal:
-                            logger.info(f"✅ إشارة ممتازة: {pair}")
-                            send_telegram_message(signal)
+
+                    if martingale_queue:
+                        # وضع المضاعفة: ناخد أول إشارة ماكس/سوبر ماكس نلاقيها
+                        martingale_found = False
+                        for pair, signal in results:
+                            if signal and not martingale_found:
+                                logger.info(f"✅ مضاعفة ممتازة: {pair}")
+                                send_telegram_message(signal)
+                                martingale_found = True
+                                # نمسح كل قائمة المضاعفات لأننا لقينا واحدة
+                                martingale_queue.clear()
+                                alerted_pairs.clear()
+                    else:
+                        # وضع طبيعي: نبعت كل الإشارات
+                        for pair, signal in results:
+                            if signal:
+                                logger.info(f"✅ إشارة ممتازة: {pair}")
+                                send_telegram_message(signal)
 
                 check_trade_results()
 
