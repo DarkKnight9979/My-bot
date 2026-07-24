@@ -81,7 +81,6 @@ def get_fractal_levels(df):
     """حساب مستويات الدعوم والمقاومات الحقيقية الناتجة عن الارتدادات الفعالية"""
     highs = df['High']
     lows = df['Low']
-    # التعديل الحصري هنا: إضافة raw=True لتجنب مشكلة KeyError واللوب
     resistance = highs.rolling(window=5, center=True).apply(lambda x: x[2] if max(x) == x[2] else np.nan, raw=True)
     support = lows.rolling(window=5, center=True).apply(lambda x: x[2] if min(x) == x[2] else np.nan, raw=True)
     
@@ -257,25 +256,29 @@ def check_trade_results():
         if trade in active_trades:
             active_trades.remove(trade)
 
-# --- 10. دالة تحليل الأزواج المرتكزة على مناطق الارتداد القوية ---
+# --- 10. دالة تحليل الأزواج المرتكزة على مناطق الارتداد القوية وإشارات السوبر ماكس ---
 def analyze_pair(pair, timeframe="5m"):
     tf_seconds = 300
     duration_text = "5 دقائق"
     expire_delay = 300
 
     try:
-        raw_candles = API.get_candles(pair, tf_seconds, 50, time.time())
+        raw_candles = API.get_candles(pair, tf_seconds, 60, time.time())
     except Exception as e:
         print(f"⚠️ خطأ أثناء جلب شموع {pair}: {e}")
         return None
 
-    if not raw_candles or len(raw_candles) < 35:
+    if not raw_candles or len(raw_candles) < 55:
         return None
 
     df = pd.DataFrame(raw_candles)
     df.rename(columns={'open': 'Open', 'max': 'High', 'min': 'Low', 'close': 'Close', 'volume': 'Volume'}, inplace=True)
 
+    # المؤشرات القديمة كما هي
     df['ALMA'] = calculate_alma(df['Close'], 9, 0.85, 6)
+    # إضافة المؤشر الجديد ALMA 50 لتقاطع السوبر ماكس
+    df['ALMA_50'] = calculate_alma(df['Close'], 50, 0.85, 6)
+    
     df['RSI'] = calculate_rsi(df['Close'], 14)
     df['BBU'], df['BBL'] = calculate_bollinger(df['Close'], 20, 2)
     df['Stoch_K'], df['Stoch_D'] = calculate_stoch(df, 14, 3)
@@ -284,6 +287,7 @@ def analyze_pair(pair, timeframe="5m"):
     resistance, support = get_fractal_levels(df)
 
     last = df.iloc[-2]
+    prev = df.iloc[-3]
 
     price = last['Close']
     open_price = last['Open']
@@ -315,8 +319,26 @@ def analyze_pair(pair, timeframe="5m"):
     final_signal = None
     direction = None
 
-    # شروط إشارات الدخول المربوطة بمناطق الارتداد ومؤشر ALMA والمرونة في RSI و Stoch
-    if is_strong_candle and valid_volume:
+    # --- أولاً: فحص تقاطع السوبر ماكس الجدبد (ALMA 9 x ALMA 50) ---
+    alma_9_prev = prev['ALMA']
+    alma_50_prev = prev['ALMA_50']
+    alma_9_curr = last['ALMA']
+    alma_50_curr = last['ALMA_50']
+
+    # شرط التقاطع الصاعد لسوبر ماكس
+    super_max_call = (alma_9_prev <= alma_50_prev) and (alma_9_curr > alma_50_curr) and (stoch_k > stoch_d) and is_strong_candle and valid_volume
+    # شرط التقاطع الهابط لسوبر ماكس
+    super_max_put = (alma_9_prev >= alma_50_prev) and (alma_9_curr < alma_50_curr) and (stoch_k < stoch_d) and is_strong_candle and valid_volume
+
+    if super_max_call:
+        direction = "CALL"
+        final_signal = f"👑 *إشارة سوبر ماكس (SUPER MAX) - تقاطع صاعد* 🔥\nالزوج: `{pair}` (IQ Option) [5m]\n⏱️ *مدة الصفقة:* {duration_text}\n⏰ *وقت الإشارة:* `{current_time_str}`"
+    elif super_max_put:
+        direction = "PUT"
+        final_signal = f"👑 *إشارة سوبر ماكس (SUPER MAX) - تقاطع هابط* 🔥\nالزوج: `{pair}` (IQ Option) [5m]\n⏱️ *مدة الصفقة:* {duration_text}\n⏰ *وقت الإشارة:* `{current_time_str}`"
+
+    # --- ثانياً: شروط الإشارات العادية القديمة كما هي تماماً ---
+    if not final_signal and is_strong_candle and valid_volume:
         if price > alma and stoch_k > stoch_d and rsi <= 50 and near_support:
             if stoch_k < 30:
                 direction = "CALL"
@@ -387,7 +409,7 @@ def run_bot():
     timeframe = "5m"
 
     print("🚀 البوت يعمل الآن ويحلل الـ 14 زوج بالسرعة القصوى...")
-    send_telegram_message("🤖 *تم تشغيل بوت IQ Option بنجاح على السيرفر!*\n⏱️ *الفريم المعتمد:* 5 دقائق حصراً\n⚡ *الدخول:* في أول 5 ثوانٍ مع نقطة الافتتاح\n🇪🇬 *التوقيت:* توقيت مصر الرسمي\nجاري الفحص...")
+    send_telegram_message("🤖 *تم تشغيل بوت IQ Option بنجاح على السيرفر!*\n⏱️ *الفريم المعتمد:* 5 دقائق حصراً\n⚡ *الدخول:* في أول 5 ثوانٍ مع نقطة الافتتاح\n👑 *النظام الجديد:* يشمل إشارات السوبر ماكس (SUPER MAX)\n🇪🇬 *التوقيت:* توقيت مصر الرسمي\nجاري الفحص...")
 
     try:
         while True:
