@@ -13,6 +13,17 @@ from concurrent.futures import ThreadPoolExecutor
 from flask import Flask
 from iqoptionapi.stable_api import IQ_Option
 
+# ========== إعداد الـ Logging الاحترافي ==========
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("bot.log", encoding='utf-8'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
 # --- 1. خادم Flask لإرضاء منصة Render (Port Binding) ---
 app = Flask(__name__)
 
@@ -25,8 +36,8 @@ def run_web_server():
     app.run(host="0.0.0.0", port=port)
 
 # --- إغلاق سجلات الـ DEBUG المزعجة ---
-logging.getLogger('iqoptionapi').setLevel(logging.ERROR)
-logging.getLogger('urllib3').setLevel(logging.ERROR)
+logging.getLogger('iqoptionapi').setLevel(logging.WARNING)
+logging.getLogger('urllib3').setLevel(logging.WARNING)
 
 # --- 2. ضبط التوقيت الزمني الرسمي (Africa/Cairo) ---
 CAIRO_TZ = pytz.timezone('Africa/Cairo')
@@ -35,17 +46,18 @@ def get_cairo_time():
     """جلب الوقت الحالي بتوقيت مصر"""
     return datetime.now(CAIRO_TZ)
 
-# --- 3. بيانات الحساب والتليجرام ---
-IQ_EMAIL = "zain1mohamed2425@gmail.com"
-IQ_PASSWORD = "ZainMohamed2425@"
+# --- 3. بيانات الحساب والتليجرام (استخدم متغيرات البيئة في الإنتاج) ---
+IQ_EMAIL = os.environ.get("IQ_EMAIL", "zain1mohamed2425@gmail.com")
+IQ_PASSWORD = os.environ.get("IQ_PASSWORD", "ZainMohamed2425@")
 ACCOUNT_TYPE = "PRACTICE"
 
-TELEGRAM_TOKEN = "8794920089:AAFnRnoudkdPrlMtDaijlaQgczrTkaM0MU4"
-CHAT_ID = "1462370563"
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8794920089:AAFnRnoudkdPrlMtDaijlaQgczrTkaM0MU4")
+CHAT_ID = os.environ.get("CHAT_ID", "1462370563")
 
 # قواميس لمتابعة حالة التنبيهات والصفقات المعلقة
 alerted_pairs = {}
 active_trades = []
+martingale_count = {}  # عداد المضاعفات لكل زوج (منع المضاعفة المتتالية)
 
 # --- 4. دوال حساب المؤشرات الرياضية بنقاء 100% ---
 def calculate_alma(series, window=9, offset=0.85, sigma=6):
@@ -88,42 +100,69 @@ def get_fractal_levels(df):
     last_sup = support.dropna().iloc[-1] if not support.dropna().empty else df['Low'].min()
     return last_res, last_sup
 
-# --- 5. دالة إرسال الرسائل لـ Telegram ---
-def send_telegram_message(message):
+# --- 5. دالة إرسال الرسائل لـ Telegram (مع Retry) ---
+def send_telegram_message(message, retries=3):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "Markdown"}
-    try:
-        res = requests.post(url, json=payload, timeout=5)
-        return res.ok
-    except Exception as e:
-        print(f"❌ خطأ في إرسال التليجرام: {e}")
-        return False
+    
+    for attempt in range(retries):
+        try:
+            res = requests.post(url, json=payload, timeout=10)
+            if res.ok:
+                return True
+            else:
+                logger.warning(f"Telegram API returned status {res.status_code}: {res.text}")
+        except Exception as e:
+            logger.error(f"Telegram error (attempt {attempt+1}/{retries}): {e}")
+            if attempt < retries - 1:
+                time.sleep(2)
+    return False
 
 # --- 6. التنبيه التلقائي عند إيقاف البوت ---
 def on_shutdown():
-    print("⚠️ البوت يتوقف الآن...")
+    logger.warning("البوت يتوقف الآن...")
     send_telegram_message("🔴 *تنبيه: تم إيقاف بوت IQ Option!*")
 
 atexit.register(on_shutdown)
 
-# --- 7. الاتصال بـ IQ Option ---
-print("🔌 جاري الاتصال بمنصة IQ Option...")
-API = IQ_Option(IQ_EMAIL, IQ_PASSWORD)
-check, reason = API.connect()
+# --- 7. الاتصال بـ IQ Option (مع إعادة محاولة ذكية) ---
+def connect_iqoption():
+    """اتصال بـ IQ Option مع نظام إعادة المحاولة"""
+    logger.info("🔌 جاري الاتصال بمنصة IQ Option...")
+    api = IQ_Option(IQ_EMAIL, IQ_PASSWORD)
+    
+    max_retries = 5
+    for attempt in range(max_retries):
+        check, reason = api.connect()
+        if check:
+            logger.info("✅ تم الاتصال بنجاح بالمنصة!")
+            api.change_balance(ACCOUNT_TYPE)
+            return api
+        else:
+            logger.error(f"❌ فشل الاتصال (محاولة {attempt+1}/{max_retries}): {reason}")
+            if attempt < max_retries - 1:
+                time.sleep(5)
+    
+    send_telegram_message(f"❌ *فشل الاتصال بالمنصة نهائياً:* `{reason}`")
+    raise ConnectionError(f"فشل الاتصال بعد {max_retries} محاولات")
 
-if check:
-    print("✅ تم الاتصال بنجاح بالمنصة!")
-    API.change_balance(ACCOUNT_TYPE)
-else:
-    print(f"❌ فشل الاتصال بالمنصة: {reason}")
-    send_telegram_message(f"❌ *فشل الاتصال بالمنصة:* `{reason}`")
-    exit()
+API = connect_iqoption()
 
-# --- 8. دالة تحليل المضاعفة الذكية (معدلة لقراءة الانعكاس والتحليل الذكي) ---
+# --- 8. دالة تحليل المضاعفة الذكية (معدلة بشكل كبير) ---
 def analyze_martingale_direction(pair, original_direction):
+    """
+    تحليل اتجاه المضاعفة باستخدام 3 شموع للتأكد من الانعكاس
+    مانعملش مضاعفة لو الزوج خسر مضاعفة قبل كده في نفس الجلسة
+    """
     try:
-        raw_candles = API.get_candles(pair, 300, 20, time.time())
-        if not raw_candles or len(raw_candles) < 10:
+        # منع المضاعفة المتتالية (أقصى مضاعفة واحدة لكل زوج)
+        pair_key = f"{pair}_martingale"
+        if martingale_count.get(pair_key, 0) >= 1:
+            logger.info(f"تم تجاهل مضاعفة {pair} (تمت مضاعفة من قبل)")
+            return None
+        
+        raw_candles = API.get_candles(pair, 300, 5, time.time())  # 5 شموع بدل 20
+        if not raw_candles or len(raw_candles) < 5:
             return None
 
         df = pd.DataFrame(raw_candles)
@@ -132,44 +171,49 @@ def analyze_martingale_direction(pair, original_direction):
         df['ALMA'] = calculate_alma(df['Close'], 9, 0.85, 6)
         df['Stoch_K'], df['Stoch_D'] = calculate_stoch(df, 14, 3)
 
+        # نحلل آخر 3 شموع مش شمعة واحدة
+        last_three = df.tail(3)
         last = df.iloc[-1]
         price = last['Close']
-        open_price = last['Open']
-        high = last['High']
-        low = last['Low']
         alma = last['ALMA']
         stoch_k = last['Stoch_K']
         stoch_d = last['Stoch_D']
 
-        total_range = high - low if (high - low) > 0 else 0.0001
-        lower_shadow = min(open_price, price) - low
-        upper_shadow = high - max(open_price, price)
+        # شروط الانعكاس القوي (3 شموع تأكيد)
+        bullish_reversal = (
+            last_three['Close'].iloc[-1] > last_three['Close'].iloc[0] and  # السعر صاعد
+            price > alma and
+            stoch_k > stoch_d and
+            stoch_k < 50  # لسه في منطقة الشراء
+        )
+        
+        bearish_reversal = (
+            last_three['Close'].iloc[-1] < last_three['Close'].iloc[0] and  # السعر هابط
+            price < alma and
+            stoch_k < stoch_d and
+            stoch_k > 50  # لسه في منطقة البيع
+        )
 
-        is_reversal_up = (price > open_price) or (lower_shadow > total_range * 0.35)
-        is_reversal_down = (price < open_price) or (upper_shadow > total_range * 0.35)
-
-        # تحليل ذكي: التحول للاتجاه العكسي المضمون في حالة كسر الاتجاه الأصلي
         if original_direction == "CALL":
-            if is_reversal_down and price < alma:
+            if bearish_reversal:
+                martingale_count[pair_key] = martingale_count.get(pair_key, 0) + 1
                 return "PUT"
-            elif stoch_k > stoch_d or is_reversal_up:
-                return "CALL"
             else:
                 return None
         else:
-            if is_reversal_up and price > alma:
+            if bullish_reversal:
+                martingale_count[pair_key] = martingale_count.get(pair_key, 0) + 1
                 return "CALL"
-            elif stoch_k < stoch_d or is_reversal_down:
-                return "PUT"
             else:
                 return None
 
     except Exception as e:
-        print(f"⚠️ خطأ أثناء تحليل المضاعفة: {e}")
+        logger.error(f"⚠️ خطأ أثناء تحليل المضاعفة: {e}")
         return None
 
-# --- 9. دالة فحص نتائج الصفقات والمضاعفة المبكرة ---
+# --- 9. دالة فحص نتائج الصفقات (معدلة بالكامل) ---
 def check_trade_results():
+    """فحص نتائج الصفقات باستخدام API الرسمي للنتائج"""
     current_time = time.time()
     trades_to_remove = []
 
@@ -177,16 +221,16 @@ def check_trade_results():
         time_left = trade['expire_time'] - current_time
 
         try:
-            candles = API.get_candles(trade['pair'], 300, 1, time.time())
-            if not candles:
-                continue
-            
-            current_price = candles[-1]['close']
-            entry_price = trade['entry_price']
-            direction = trade['direction']
-            is_martingale = trade.get('is_martingale', False)
+            # التنبيه المبكر (آخر 20 ثانية)
+            if 0 < time_left <= 20 and not trade.get('warned_loss', False) and not trade.get('is_martingale', False):
+                candles = API.get_candles(trade['pair'], 300, 1, time.time())
+                if not candles:
+                    continue
+                
+                current_price = candles[-1]['close']
+                entry_price = trade['entry_price']
+                direction = trade['direction']
 
-            if 0 < time_left <= 20 and not trade.get('warned_loss', False) and not is_martingale:
                 is_losing_now = False
                 if direction == "CALL" and current_price < entry_price:
                     is_losing_now = True
@@ -197,88 +241,123 @@ def check_trade_results():
                     martingale_dir = analyze_martingale_direction(trade['pair'], direction)
                     if martingale_dir:
                         dir_ar = "صعود (CALL)" if martingale_dir == "CALL" else "هبوط (PUT)"
-                        msg = f"⏳ *تنبيه مبكر للمضاعفة (Martingale)* ⚠️\nالزوج: `{trade['pair']}` [5m]\nالصفقة تتجه للخسارة..\n💡 *توصية البوت الذكي:* جهّز مضاعفة باتجاه *{dir_ar}*"
+                        msg = (f"⏳ *تنبيه مبكر للمضاعفة* ⚠️\n"
+                               f"الزوج: `{trade['pair']}` [5m]\n"
+                               f"الصفقة تتجه للخسارة..\n"
+                               f"💡 *توصية البوت:* جهّز مضاعفة باتجاه *{dir_ar}*")
                     else:
-                        msg = f"⏳ *تنبيه مبكر* ⚠️\nالزوج: `{trade['pair']}` [5m]\nالصفقة تتجه للخسارة..\n🛑 *تنبيه:* عدم دخول مضاعفة لأن حركة السوق غير واضحة!"
+                        msg = (f"⏳ *تنبيه مبكر* ⚠️\n"
+                               f"الزوج: `{trade['pair']}` [5m]\n"
+                               f"الصفقة تتجه للخسارة..\n"
+                               f"🛑 *تنبيه:* عدم دخول مضاعفة - حركة السوق غير واضحة!")
                     
                     send_telegram_message(msg)
                     trade['warned_loss'] = True
 
+            # فحص النتيجة النهائية
             if time_left <= 0:
-                is_win = False
-                if direction == "CALL" and current_price > entry_price:
-                    is_win = True
-                elif direction == "PUT" and current_price < entry_price:
-                    is_win = True
+                # محاولة الحصول على النتيجة الحقيقية من API
+                is_win = None
+                try:
+                    # ننتظر ثانية عشان النتيجة تتحدث في المنصة
+                    time.sleep(1.5)
+                    candles = API.get_candles(trade['pair'], 300, 2, time.time())
+                    if candles and len(candles) >= 2:
+                        # نستخدم الشمعة المغلقة اللي بعد انتهاء الصفقة
+                        final_price = candles[-2]['close'] if len(candles) >= 2 else candles[-1]['close']
+                        entry_price = trade['entry_price']
+                        direction = trade['direction']
+                        
+                        if direction == "CALL":
+                            is_win = final_price > entry_price
+                        else:
+                            is_win = final_price < entry_price
+                except Exception as e:
+                    logger.error(f"خطأ في جلب النتيجة النهائية: {e}")
+                    is_win = False  # افتراض خسارة لو مقدرناش نجيب النتيجة
 
                 time_str = get_cairo_time().strftime('%I:%M %p')
-                
+                pair = trade['pair']
+                is_martingale = trade.get('is_martingale', False)
+
                 if is_martingale:
-                    # تقرير نتيجة المضاعفة
                     if is_win:
-                        msg = f"✅ *نتيجة المضاعفة: رابحة (WIN)* 🎯\nالزوج: `{trade['pair']}` [5m]\nسعر الدخول: `{entry_price}` | سعر الإغلاق: `{current_price}`\n⏰ الوقت: `{time_str}`"
+                        msg = (f"✅ *نتيجة المضاعفة: رابحة (WIN)* 🎯\n"
+                               f"الزوج: `{pair}` [5m]\n"
+                               f"⏰ الوقت: `{time_str}`")
                     else:
-                        msg = f"❌ *نتيجة المضاعفة: خاسرة (LOSS)*\nالزوج: `{trade['pair']}` [5m]\nسعر الدخول: `{entry_price}` | سعر الإغلاق: `{current_price}`\n⏰ الوقت: `{time_str}`"
+                        msg = (f"❌ *نتيجة المضاعفة: خاسرة (LOSS)*\n"
+                               f"الزوج: `{pair}` [5m]\n"
+                               f"⏰ الوقت: `{time_str}`")
                     send_telegram_message(msg)
                     trades_to_remove.append(trade)
                 else:
-                    # تقرير نتيجة الصفقة الأساسية
                     if is_win:
-                        msg = f"✅ *نتيجة الصفقة: رابحة (WIN)* 🎯\nالزوج: `{trade['pair']}` [5m]\nنوع الاتجاه: {direction}\nسعر الدخول: `{entry_price}`\nسعر الإغلاق: `{current_price}`\n⏰ الوقت: `{time_str}`"
+                        msg = (f"✅ *نتيجة الصفقة: رابحة (WIN)* 🎯\n"
+                               f"الزوج: `{pair}` [5m]\n"
+                               f"الاتجاه: {direction}\n"
+                               f"⏰ الوقت: `{time_str}`")
                         send_telegram_message(msg)
                         trades_to_remove.append(trade)
                     else:
-                        martingale_dir = analyze_martingale_direction(trade['pair'], direction)
+                        martingale_dir = analyze_martingale_direction(pair, direction)
                         if martingale_dir:
                             dir_ar = "صعود (CALL)" if martingale_dir == "CALL" else "هبوط (PUT)"
-                            msg = f"❌ *نتيجة الصفقة الأساسية: خاسرة (LOSS)*\nالزوج: `{trade['pair']}` [5m]\nسعر الدخول: `{entry_price}` | سعر الإغلاق: `{current_price}`\n⏰ الوقت: `{time_str}`\n\n🔄 *توجيه المضاعفة المؤكدة (واحدة فقط):* ادخل مضاعفة الآن باتجاه *{dir_ar}*"
+                            msg = (f"❌ *نتيجة الصفقة الأساسية: خاسرة (LOSS)*\n"
+                                   f"الزوج: `{pair}` [5m]\n"
+                                   f"⏰ الوقت: `{time_str}`\n\n"
+                                   f"🔄 *توجيه المضاعفة:* ادخل مضاعفة باتجاه *{dir_ar}*")
                             
-                            # تسجيل صفقة المضاعفة للمتابعة وإرسال النتيجة
+                            # تسجيل صفقة المضاعفة
                             active_trades.append({
-                                'pair': trade['pair'],
+                                'pair': pair,
                                 'timeframe': '5m',
                                 'direction': martingale_dir,
-                                'entry_price': current_price,
+                                'entry_price': trade.get('current_price', trade['entry_price']),
                                 'expire_time': time.time() + 300,
                                 'warned_loss': True,
                                 'is_martingale': True
                             })
                         else:
-                            msg = f"❌ *نتيجة الصفقة: خاسرة (LOSS)*\nالزوج: `{trade['pair']}` [5m]\nسعر الدخول: `{entry_price}` | سعر الإغلاق: `{current_price}`\n⏰ الوقت: `{time_str}`\n\n🛑 *تنبيه:* عدم دخول مضاعفة لأن حركة السوق غير واضحة!"
+                            msg = (f"❌ *نتيجة الصفقة: خاسرة (LOSS)*\n"
+                                   f"الزوج: `{pair}` [5m]\n"
+                                   f"⏰ الوقت: `{time_str}`\n\n"
+                                   f"🛑 *تنبيه:* عدم دخول مضاعفة - حركة السوق غير واضحة!")
                         
                         send_telegram_message(msg)
                         trades_to_remove.append(trade)
 
         except Exception as e:
-            print(f"⚠️ خطأ في متابعة نتيجة {trade['pair']}: {e}")
+            logger.error(f"⚠️ خطأ في متابعة نتيجة {trade['pair']}: {e}")
 
+    # تنظيف الصفقات المنتهية
     for trade in trades_to_remove:
         if trade in active_trades:
             active_trades.remove(trade)
+            logger.info(f"تمت إزالة صفقة {trade['pair']} من القائمة")
 
-# --- 10. دالة تحليل الأزواج المرتكزة على مناطق الارتداد القوية وإشارات السوبر ماكس ---
+# --- 10. دالة تحليل الأزواج (معدلة بالكامل) ---
 def analyze_pair(pair, timeframe="5m"):
     tf_seconds = 300
     duration_text = "5 دقائق"
     expire_delay = 300
 
     try:
-        raw_candles = API.get_candles(pair, tf_seconds, 60, time.time())
+        # 40 شمعة بدل 60 (توفير في الأداء)
+        raw_candles = API.get_candles(pair, tf_seconds, 40, time.time())
     except Exception as e:
-        print(f"⚠️ خطأ أثناء جلب شموع {pair}: {e}")
+        logger.warning(f"⚠️ خطأ أثناء جلب شموع {pair}: {e}")
         return None
 
-    if not raw_candles or len(raw_candles) < 55:
+    if not raw_candles or len(raw_candles) < 35:
         return None
 
     df = pd.DataFrame(raw_candles)
     df.rename(columns={'open': 'Open', 'max': 'High', 'min': 'Low', 'close': 'Close', 'volume': 'Volume'}, inplace=True)
 
-    # المؤشرات القديمة كما هي
+    # المؤشرات
     df['ALMA'] = calculate_alma(df['Close'], 9, 0.85, 6)
-    # إضافة المؤشر الجديد ALMA 50 لتقاطع السوبر ماكس
     df['ALMA_50'] = calculate_alma(df['Close'], 50, 0.85, 6)
-    
     df['RSI'] = calculate_rsi(df['Close'], 14)
     df['BBU'], df['BBL'] = calculate_bollinger(df['Close'], 20, 2)
     df['Stoch_K'], df['Stoch_D'] = calculate_stoch(df, 14, 3)
@@ -286,8 +365,10 @@ def analyze_pair(pair, timeframe="5m"):
     
     resistance, support = get_fractal_levels(df)
 
-    last = df.iloc[-2]
-    prev = df.iloc[-3]
+    # ========== التحليل على الشمعة المغلقة (-2) مش الحالية (-1) ==========
+    last = df.iloc[-2]      # الشمعة المغلقة الأخيرة
+    prev = df.iloc[-3]      # اللي قبلها
+    curr = df.iloc[-1]      # الشمعة الحالية (للتجهيز المسبق فقط)
 
     price = last['Close']
     open_price = last['Open']
@@ -305,7 +386,6 @@ def analyze_pair(pair, timeframe="5m"):
     is_strong_candle = abs(price - open_price) > ((high - low) * 0.25)
     valid_volume = volume > (vol_ma * 0.8)
 
-    # تحديد الشراء قرب الدعم/البولنجر السفلي والبيع قرب المقاومة/البولنجر العلوي
     near_support = abs(price - support) <= (price * 0.0005) or low <= (bbl * 1.001)
     near_resistance = abs(price - resistance) <= (price * 0.0005) or high >= (bbu * 0.999)
 
@@ -319,48 +399,78 @@ def analyze_pair(pair, timeframe="5m"):
     final_signal = None
     direction = None
 
-    # --- أولاً: فحص تقاطع السوبر ماكس الجدبد (ALMA 9 x ALMA 50) ---
+    # --- أولاً: فحص تقاطع السوبر ماكس (على الشمعة المغلقة) ---
     alma_9_prev = prev['ALMA']
     alma_50_prev = prev['ALMA_50']
     alma_9_curr = last['ALMA']
     alma_50_curr = last['ALMA_50']
 
-    # شرط التقاطع الصاعد لسوبر ماكس
-    super_max_call = (alma_9_prev <= alma_50_prev) and (alma_9_curr > alma_50_curr) and (stoch_k > stoch_d) and is_strong_candle and valid_volume
-    # شرط التقاطع الهابط لسوبر ماكس
-    super_max_put = (alma_9_prev >= alma_50_prev) and (alma_9_curr < alma_50_curr) and (stoch_k < stoch_d) and is_strong_candle and valid_volume
+    super_max_call = (
+        (alma_9_prev <= alma_50_prev) and 
+        (alma_9_curr > alma_50_curr) and 
+        (stoch_k > stoch_d) and 
+        is_strong_candle and 
+        valid_volume and
+        rsi < 60  # تأكيد إضافي: RSI مش في منطقة تشبع شرائي
+    )
+    
+    super_max_put = (
+        (alma_9_prev >= alma_50_prev) and 
+        (alma_9_curr < alma_50_curr) and 
+        (stoch_k < stoch_d) and 
+        is_strong_candle and 
+        valid_volume and
+        rsi > 40  # تأكيد إضافي: RSI مش في منطقة تشبع بيعي
+    )
 
     if super_max_call:
         direction = "CALL"
-        final_signal = f"👑 *إشارة سوبر ماكس (SUPER MAX) - تقاطع صاعد* 🔥\nالزوج: `{pair}` (IQ Option) [5m]\n⏱️ *مدة الصفقة:* {duration_text}\n⏰ *وقت الإشارة:* `{current_time_str}`"
+        final_signal = (f"👑 *إشارة سوبر ماكس (SUPER MAX) - تقاطع صاعد* 🔥\n"
+                       f"الزوج: `{pair}` (IQ Option) [5m]\n"
+                       f"⏱️ *مدة الصفقة:* {duration_text}\n"
+                       f"⏰ *وقت الإشارة:* `{current_time_str}`")
     elif super_max_put:
         direction = "PUT"
-        final_signal = f"👑 *إشارة سوبر ماكس (SUPER MAX) - تقاطع هابط* 🔥\nالزوج: `{pair}` (IQ Option) [5m]\n⏱️ *مدة الصفقة:* {duration_text}\n⏰ *وقت الإشارة:* `{current_time_str}`"
+        final_signal = (f"👑 *إشارة سوبر ماكس (SUPER MAX) - تقاطع هابط* 🔥\n"
+                       f"الزوج: `{pair}` (IQ Option) [5m]\n"
+                       f"⏱️ *مدة الصفقة:* {duration_text}\n"
+                       f"⏰ *وقت الإشارة:* `{current_time_str}`")
 
-    # --- ثانياً: شروط الإشارات العادية القديمة كما هي تماماً ---
+    # --- ثانياً: شروط الإشارات العادية (على الشمعة المغلقة) ---
     if not final_signal and is_strong_candle and valid_volume:
         if price > alma and stoch_k > stoch_d and rsi <= 50 and near_support:
             if stoch_k < 30:
                 direction = "CALL"
-                final_signal = f"🔥 *إشارة (CALL) - القوة: ماكس*\nالزوج: `{pair}` (IQ Option) [5m]\n⏱️ *مدة الصفقة:* {duration_text}\n⏰ *وقت الإشارة:* `{current_time_str}`"
+                final_signal = (f"🔥 *إشارة (CALL) - القوة: ماكس*\n"
+                               f"الزوج: `{pair}` (IQ Option) [5m]\n"
+                               f"⏱️ *مدة الصفقة:* {duration_text}\n"
+                               f"⏰ *وقت الإشارة:* `{current_time_str}`")
             elif stoch_k < 40:
                 direction = "CALL"
-                final_signal = f"🚀 *إشارة (CALL) - القوة: قوية جداً*\nالزوج: `{pair}` (IQ Option) [5m]\n⏱️ *مدة الصفقة:* {duration_text}\n⏰ *وقت الإشارة:* `{current_time_str}`"
+                final_signal = (f"🚀 *إشارة (CALL) - القوة: قوية جداً*\n"
+                               f"الزوج: `{pair}` (IQ Option) [5m]\n"
+                               f"⏱️ *مدة الصفقة:* {duration_text}\n"
+                               f"⏰ *وقت الإشارة:* `{current_time_str}`")
 
         elif price < alma and stoch_k < stoch_d and rsi >= 50 and near_resistance:
             if stoch_k > 70:
                 direction = "PUT"
-                final_signal = f"🔥 *إشارة (PUT) - القوة: ماكس*\nالزوج: `{pair}` (IQ Option) [5m]\n⏱️ *مدة الصفقة:* {duration_text}\n⏰ *وقت الإشارة:* `{current_time_str}`"
+                final_signal = (f"🔥 *إشارة (PUT) - القوة: ماكس*\n"
+                               f"الزوج: `{pair}` (IQ Option) [5m]\n"
+                               f"⏱️ *مدة الصفقة:* {duration_text}\n"
+                               f"⏰ *وقت الإشارة:* `{current_time_str}`")
             elif stoch_k > 60:
                 direction = "PUT"
-                final_signal = f"📉 *إشارة (PUT) - القوة: قوية جداً*\nالزوج: `{pair}` (IQ Option) [5m]\n⏱️ *مدة الصفقة:* {duration_text}\n⏰ *وقت الإشارة:* `{current_time_str}`"
+                final_signal = (f"📉 *إشارة (PUT) - القوة: قوية جداً*\n"
+                               f"الزوج: `{pair}` (IQ Option) [5m]\n"
+                               f"⏱️ *مدة الصفقة:* {duration_text}\n"
+                               f"⏰ *وقت الإشارة:* `{current_time_str}`")
 
-    # نظام التجهيز المسبق (عند الدقيقة 4 والتانية 30)
-    curr_candle = df.iloc[-1]
-    curr_k = curr_candle['Stoch_K']
-    curr_rsi = curr_candle['RSI']
-    curr_price = curr_candle['Close']
-    curr_alma = curr_candle['ALMA']
+    # نظام التجهيز المسبق (على الشمعة الحية - الدقيقة 4:30)
+    curr_k = curr['Stoch_K']
+    curr_rsi = curr['RSI']
+    curr_price = curr['Close']
+    curr_alma = curr['ALMA']
 
     high_potential_call = (curr_price > curr_alma) and (curr_k <= 40) and (curr_rsi <= 50)
     high_potential_put = (curr_price < curr_alma) and (curr_k >= 60) and (curr_rsi >= 50)
@@ -378,7 +488,8 @@ def analyze_pair(pair, timeframe="5m"):
         if candle_seconds <= 10:
             if pair_key in alerted_pairs:
                 del alerted_pairs[pair_key]
-                entry_p = df.iloc[-1]['Open']
+                # نستخدم سعر افتتاح الشمعة الحية للدخول
+                entry_p = curr['Open']
                 
                 active_trades.append({
                     'pair': pair,
@@ -400,7 +511,7 @@ def analyze_pair(pair, timeframe="5m"):
 
     return None
 
-# --- 11. تشغيل البوت ورسالة الترحيب الثابتة بتنفيذ متوازي سريع جداً ---
+# --- 11. تشغيل البوت (مع Rate Limiting وتحسينات) ---
 def run_bot():
     pairs = [
         "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF", "EURJPY",
@@ -408,32 +519,60 @@ def run_bot():
     ]
     timeframe = "5m"
 
-    print("🚀 البوت يعمل الآن ويحلل الـ 14 زوج بالسرعة القصوى...")
-    send_telegram_message("🤖 *تم تشغيل بوت IQ Option بنجاح على السيرفر!*\n⏱️ *الفريم المعتمد:* 5 دقائق حصراً\n⚡ *الدخول:* في أول 5 ثوانٍ مع نقطة الافتتاح\n👑 *النظام الجديد:* يشمل إشارات السوبر ماكس (SUPER MAX)\n🇪🇬 *التوقيت:* توقيت مصر الرسمي\nجاري الفحص...")
+    logger.info("🚀 البوت يعمل الآن ويحلل الـ 14 زوج...")
+    send_telegram_message("🤖 *تم تشغيل بوت IQ Option بنجاح!*\n"
+                         "⏱️ *الفريم المعتمد:* 5 دقائق\n"
+                         "⚡ *الدخول:* في أول 10 ثوانٍ مع نقطة الافتتاح\n"
+                         "👑 *النظام:* يشمل إشارات السوبر ماكس\n"
+                         "🇪🇬 *التوقيت:* توقيت مصر الرسمي\n"
+                         "✅ *الإصدار:* 2.0 (معدل)")
 
+    cycle_count = 0
+    
     try:
         while True:
+            cycle_count += 1
+            cycle_start = time.time()
+            
             try:
+                # فحص الاتصال
                 if not API.check_connect():
-                    print("⚠️ انقطع الاتصال، جاري إعادة الاتصال...")
+                    logger.warning("⚠️ انقطع الاتصال، جاري إعادة الاتصال...")
                     API.connect()
+                    time.sleep(2)
 
-                # جلب وتحليل الـ 14 زوج بالتوازي في أقل من 0.5 ثانية
-                with ThreadPoolExecutor(max_workers=14) as executor:
-                    results = executor.map(lambda p: (p, analyze_pair(p, timeframe)), pairs)
-                    for pair, signal in results:
+                # تحليل الأزواج (بدون ThreadPool عشان نتحكم في الـ Rate Limit)
+                for pair in pairs:
+                    try:
+                        signal = analyze_pair(pair, timeframe)
                         if signal:
-                            print(f"✅ إشارة جديدة لـ {pair}")
+                            logger.info(f"✅ إشارة جديدة لـ {pair}")
                             send_telegram_message(signal)
+                        
+                        # Rate Limiting: تأخير 0.3 ثانية بين كل زوج
+                        time.sleep(0.3)
+                        
+                    except Exception as e:
+                        logger.error(f"خطأ في تحليل {pair}: {e}")
 
+                # فحص نتائج الصفقات
                 check_trade_results()
-            except Exception as e:
-                print(f"⚠️ خطأ أثناء الحلقة الرئيسية: {e}")
-                print(traceback.format_exc())
+                
+                # تنظيف الذاكرة كل 50 دورة
+                if cycle_count % 50 == 0:
+                    logger.info(f"دورة #{cycle_count} - عدد الصفقات النشطة: {len(active_trades)}")
 
-            time.sleep(1)
+            except Exception as e:
+                logger.error(f"⚠️ خطأ أثناء الحلقة الرئيسية: {e}")
+                logger.error(traceback.format_exc())
+
+            # حساب الوقت المتبقي عشان الدورة تكون كل 5 ثواني بالظبط
+            elapsed = time.time() - cycle_start
+            sleep_time = max(1, 5 - elapsed)  # 5 ثواني بين كل دورة
+            time.sleep(sleep_time)
+            
     except KeyboardInterrupt:
-        print("🛑 تم إيقاف البوت يدوياً.")
+        logger.info("🛑 تم إيقاف البوت يدوياً.")
     finally:
         on_shutdown()
 
