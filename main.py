@@ -28,9 +28,12 @@ logging.getLogger('iqoptionapi').setLevel(logging.WARNING)
 logging.getLogger('urllib3').setLevel(logging.WARNING)
 
 CAIRO_TZ = pytz.timezone('Africa/Cairo')
+UTC_TZ = pytz.utc
+
 def get_cairo_time():
     return datetime.now(CAIRO_TZ)
 
+# ========== بيانات ==========
 IQ_EMAIL = os.environ.get("IQ_EMAIL", "zain1mohamed2425@gmail.com")
 IQ_PASSWORD = os.environ.get("IQ_PASSWORD", "ZainMohamed2425@")
 ACCOUNT_TYPE = "PRACTICE"
@@ -40,7 +43,12 @@ CHAT_ID = os.environ.get("CHAT_ID", "1462370563")
 alerted_pairs = {}
 active_trades = []
 martingale_queue = {}
+recent_signals = {}      # زوج: (وقت, اتجاه) — منع الإشارات المتعاكسة
+news_data = []
+last_news_update = 0
+ht_trend_cache = {}      # cache فريم الساعة
 
+# ========== مؤشرات ==========
 def calculate_alma(series, window=9, offset=0.85, sigma=6):
     m = offset * (window - 1)
     s = window / sigma
@@ -67,6 +75,13 @@ def calculate_bollinger(series, period=20, std_dev=2):
     std = series.rolling(window=period).std()
     return sma + (std * std_dev), sma - (std * std_dev)
 
+def calculate_atr(df, period=14):
+    hl = df['High'] - df['Low']
+    hc = (df['High'] - df['Close'].shift()).abs()
+    lc = (df['Low'] - df['Close'].shift()).abs()
+    tr = pd.concat([hl, hc, lc], axis=1).max(axis=1)
+    return tr.rolling(period).mean().iloc[-1]
+
 def get_fractal_levels(df):
     highs, lows = df['High'], df['Low']
     resistance = highs.rolling(window=5, center=True).apply(lambda x: x[2] if max(x) == x[2] else np.nan, raw=True)
@@ -75,6 +90,79 @@ def get_fractal_levels(df):
     last_sup = support.dropna().iloc[-1] if not support.dropna().empty else df['Low'].min()
     return last_res, last_sup
 
+# ========== فلتر الأخبار ==========
+def update_news():
+    global news_data, last_news_update
+    if time.time() - last_news_update < 3600:
+        return
+    try:
+        r = requests.get("https://nfs.faireconomy.media/ff_calendar_thisweek.json", timeout=10)
+        if r.status_code == 200:
+            news_data = r.json()
+            last_news_update = time.time()
+            logger.info(f"✅ تم تحديث الأخبار: {len(news_data)} حدث")
+    except Exception as e:
+        logger.warning(f"⚠️ فشل جلب الأخبار: {e}")
+
+def is_news_time():
+    update_news()
+    now = datetime.now(UTC_TZ)
+    for ev in news_data:
+        try:
+            if str(ev.get('impact','')).upper() not in ['HIGH','RED','3']:
+                continue
+            et = datetime.fromtimestamp(ev['date'], tz=UTC_TZ)
+            diff = abs((now - et).total_seconds())
+            if diff <= 900:  # 15 دقيقة قبل وبعد
+                return True
+        except:
+            continue
+    return False
+
+# ========== فلتر فريم الساعة ==========
+def get_higher_tf_trend(pair):
+    if pair in ht_trend_cache and time.time() - ht_trend_cache[pair][1] < 1800:
+        return ht_trend_cache[pair][0]
+    try:
+        candles = API.get_candles(pair, 3600, 20, time.time())
+        if not candles or len(candles) < 10:
+            return None
+        df_h = pd.DataFrame(candles)
+        df_h.rename(columns={'close':'Close'}, inplace=True)
+        df_h['ALMA_9'] = calculate_alma(df_h['Close'], 9, 0.85, 6)
+        df_h['ALMA_50'] = calculate_alma(df_h['Close'], 50, 0.85, 6)
+        lh = df_h.iloc[-2]
+        trend = "CALL" if lh['ALMA_9'] > lh['ALMA_50'] else "PUT" if lh['ALMA_9'] < lh['ALMA_50'] else None
+        ht_trend_cache[pair] = (trend, time.time())
+        return trend
+    except Exception as e:
+        logger.error(f"خطأ فريم الساعة {pair}: {e}")
+        return None
+
+# ========== فلتر جودة الشمعة ==========
+def check_candle_quality(c):
+    body = abs(c['Close'] - c['Open'])
+    rng = c['High'] - c['Low']
+    if rng == 0:
+        return False
+    bp = body / rng
+    if bp < 0.10:   # دوجي
+        return False
+    up_sh = c['High'] - max(c['Close'], c['Open'])
+    lo_sh = min(c['Close'], c['Open']) - c['Low']
+    if bp > 0.92 and (up_sh < rng*0.03 or lo_sh < rng*0.03):  # انفجارية بدون ظل
+        return False
+    return True
+
+# ========== منع الإشارات المتعاكسة ==========
+def can_take_signal(pair, direction):
+    if pair in recent_signals:
+        lt, ld = recent_signals[pair]
+        if time.time() - lt < 600 and ld != direction:
+            return False
+    return True
+
+# ========== Telegram ==========
 def send_telegram_message(message, retries=3):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "Markdown"}
@@ -95,6 +183,7 @@ def on_shutdown():
 
 atexit.register(on_shutdown)
 
+# ========== IQ Option ==========
 def connect_iqoption():
     logger.info("🔌 جاري الاتصال...")
     api = IQ_Option(IQ_EMAIL, IQ_PASSWORD)
@@ -112,13 +201,14 @@ def connect_iqoption():
 
 API = connect_iqoption()
 
+# ========== المضاعفة ==========
 def analyze_martingale(pair, original_direction):
     try:
         raw_candles = API.get_candles(pair, 300, 60, time.time())
         if not raw_candles or len(raw_candles) < 55:
             return None
         df = pd.DataFrame(raw_candles)
-        df.rename(columns={'open': 'Open', 'max': 'High', 'min': 'Low', 'close': 'Close', 'volume': 'Volume'}, inplace=True)
+        df.rename(columns={'open':'Open','max':'High','min':'Low','close':'Close','volume':'Volume'}, inplace=True)
         df['ALMA'] = calculate_alma(df['Close'], 9, 0.85, 6)
         df['ALMA_50'] = calculate_alma(df['Close'], 50, 0.85, 6)
         df['RSI'] = calculate_rsi(df['Close'], 14)
@@ -154,6 +244,7 @@ def analyze_martingale(pair, original_direction):
         logger.error(f"خطأ تحليل المضاعفة: {e}")
         return None
 
+# ========== نتائج الصفقات ==========
 def check_trade_results():
     current_time = time.time()
     trades_to_remove = []
@@ -197,6 +288,7 @@ def check_trade_results():
         if trade in active_trades:
             active_trades.remove(trade)
 
+# ========== تحليل الزوج ==========
 def analyze_pair(pair, timeframe="5m"):
     tf_seconds, duration_text, expire_delay = 300, "5 دقائق", 300
     try:
@@ -207,7 +299,7 @@ def analyze_pair(pair, timeframe="5m"):
     if not raw_candles or len(raw_candles) < 55:
         return None
     df = pd.DataFrame(raw_candles)
-    df.rename(columns={'open': 'Open', 'max': 'High', 'min': 'Low', 'close': 'Close', 'volume': 'Volume'}, inplace=True)
+    df.rename(columns={'open':'Open','max':'High','min':'Low','close':'Close','volume':'Volume'}, inplace=True)
     df['ALMA'] = calculate_alma(df['Close'], 9, 0.85, 6)
     df['ALMA_50'] = calculate_alma(df['Close'], 50, 0.85, 6)
     df['RSI'] = calculate_rsi(df['Close'], 14)
@@ -219,22 +311,10 @@ def analyze_pair(pair, timeframe="5m"):
     price, open_price, low, high = last['Close'], last['Open'], last['Low'], last['High']
     alma, rsi, stoch_k, stoch_d = last['ALMA'], last['RSI'], last['Stoch_K'], last['Stoch_D']
     bbl, bbu, volume, vol_ma = last['BBL'], last['BBU'], last['Volume'], last['Vol_MA']
-    
-    # ========== فلاتر جديدة أقوى ==========
-    is_strong = abs(price - open_price) > ((high - low) * 0.30)  # 30% بدل 25%
-    
-    # فلتر الاتجاه العام: ALMA 9 فوق/تحت 50
-    trend_up = last['ALMA'] > last['ALMA_50']
-    trend_down = last['ALMA'] < last['ALMA_50']
-    
-    # فلاتر الحجم المختلفة لكل نوع
-    vol_super = volume > (vol_ma * 1.2)   # سوبر ماكس: حجم أعلى 20%
-    vol_max = volume > (vol_ma * 1.1)     # ماكس: حجم أعلى 10%
-    vol_strong = volume > (vol_ma * 1.0)  # قوية: حجم أعلى من المتوسط
-    
+    is_strong = abs(price - open_price) > ((high - low) * 0.25)
+    valid_vol = volume > (vol_ma * 0.8)
     near_sup = abs(price - support) <= (price * 0.0005) or low <= (bbl * 1.001)
     near_res = abs(price - resistance) <= (price * 0.0005) or high >= (bbu * 0.999)
-    
     pair_key = f"{pair}_5m"
     cn = get_cairo_time()
     cts = cn.strftime('%I:%M %p')
@@ -242,30 +322,27 @@ def analyze_pair(pair, timeframe="5m"):
     cmin = cn.minute % 5
     final_signal, direction = None, None
 
-    # ========== سوبر ماكس (زي ما هو + حجم أقوى) ==========
+    # شروط السوبر ماكس
     a9p, a50p, a9c, a50c = prev['ALMA'], prev['ALMA_50'], last['ALMA'], last['ALMA_50']
-    smc = (a9p <= a50p) and (a9c > a50c) and (stoch_k > stoch_d) and is_strong and vol_super
-    smp = (a9p >= a50p) and (a9c < a50c) and (stoch_k < stoch_d) and is_strong and vol_super
+    smc = (a9p <= a50p) and (a9c > a50c) and (stoch_k > stoch_d) and is_strong and valid_vol
+    smp = (a9p >= a50p) and (a9c < a50c) and (stoch_k < stoch_d) and is_strong and valid_vol
     if smc:
         direction, final_signal = "CALL", f"👑 *إشارة سوبر ماكس (SUPER MAX) - تقاطع صاعد* 🔥\nالزوج: `{pair}` (IQ Option) [5m]\n⏱️ *مدة الصفقة:* {duration_text}\n⏰ *وقت الإشارة:* `{cts}`"
     elif smp:
         direction, final_signal = "PUT", f"👑 *إشارة سوبر ماكس (SUPER MAX) - تقاطع هابط* 🔥\nالزوج: `{pair}` (IQ Option) [5m]\n⏱️ *مدة الصفقة:* {duration_text}\n⏰ *وقت الإشارة:* `{cts}`"
 
-    # ========== ماكس (أقوى بكثير) ==========
-    if not final_signal and is_strong and vol_max:
-        # CALL ماكس: مع الاتجاه الصاعد + RSI < 45 + Stoch < 25
-        if price > alma and stoch_k > stoch_d and rsi < 45 and near_support and stoch_k < 25 and trend_up:
-            direction, final_signal = "CALL", f"🔥 *إشارة (CALL) - القوة: ماكس*\nالزوج: `{pair}` (IQ Option) [5m]\n⏱️ *مدة الصفقة:* {duration_text}\n⏰ *وقت الإشارة:* `{cts}`"
-        # PUT ماكس: مع الاتجاه الهابط + RSI > 55 + Stoch > 75
-        elif price < alma and stoch_k < stoch_d and rsi > 55 and near_resistance and stoch_k > 75 and trend_down:
-            direction, final_signal = "PUT", f"🔥 *إشارة (PUT) - القوة: ماكس*\nالزوج: `{pair}` (IQ Option) [5m]\n⏱️ *مدة الصفقة:* {duration_text}\n⏰ *وقت الإشارة:* `{cts}`"
-
-    # ========== قوية جداً (مع الاتجاه + RSI أصعب) ==========
-    if not final_signal and is_strong and vol_strong:
-        if price > alma and stoch_k > stoch_d and rsi < 45 and near_support and stoch_k < 35 and trend_up:
-            direction, final_signal = "CALL", f"🚀 *إشارة (CALL) - القوة: قوية جداً*\nالزوج: `{pair}` (IQ Option) [5m]\n⏱️ *مدة الصفقة:* {duration_text}\n⏰ *وقت الإشارة:* `{cts}`"
-        elif price < alma and stoch_k < stoch_d and rsi > 55 and near_resistance and stoch_k > 65 and trend_down:
-            direction, final_signal = "PUT", f"📉 *إشارة (PUT) - القوة: قوية جداً*\nالزوج: `{pair}` (IQ Option) [5m]\n⏱️ *مدة الصفقة:* {duration_text}\n⏰ *وقت الإشارة:* `{cts}`"
+    # الإشارات العادية
+    if not final_signal and is_strong and valid_vol:
+        if price > alma and stoch_k > stoch_d and rsi <= 50 and near_sup:
+            if stoch_k < 30:
+                direction, final_signal = "CALL", f"🔥 *إشارة (CALL) - القوة: ماكس*\nالزوج: `{pair}` (IQ Option) [5m]\n⏱️ *مدة الصفقة:* {duration_text}\n⏰ *وقت الإشارة:* `{cts}`"
+            elif stoch_k < 40:
+                direction, final_signal = "CALL", f"🚀 *إشارة (CALL) - القوة: قوية جداً*\nالزوج: `{pair}` (IQ Option) [5m]\n⏱️ *مدة الصفقة:* {duration_text}\n⏰ *وقت الإشارة:* `{cts}`"
+        elif price < alma and stoch_k < stoch_d and rsi >= 50 and near_res:
+            if stoch_k > 70:
+                direction, final_signal = "PUT", f"🔥 *إشارة (PUT) - القوة: ماكس*\nالزوج: `{pair}` (IQ Option) [5m]\n⏱️ *مدة الصفقة:* {duration_text}\n⏰ *وقت الإشارة:* `{cts}`"
+            elif stoch_k > 60:
+                direction, final_signal = "PUT", f"📉 *إشارة (PUT) - القوة: قوية جداً*\nالزوج: `{pair}` (IQ Option) [5m]\n⏱️ *مدة الصفقة:* {duration_text}\n⏰ *وقت الإشارة:* `{cts}`"
 
     # فحص المضاعفات
     if pair in martingale_queue:
@@ -285,22 +362,15 @@ def analyze_pair(pair, timeframe="5m"):
     crd = curr['Stoch_D']
     ca9, ca50 = curr['ALMA'], curr['ALMA_50']
     pa9, pa50 = last['ALMA'], last['ALMA_50']
-    ctrend_up = ca9 > ca50
-    ctrend_down = ca9 < ca50
-    
     predicted_type = None
     if (pa9 <= pa50 and ca9 > ca50 and crk > crd) or (pa9 >= pa50 and ca9 < ca50 and crk < crd):
         predicted_type = "👑 سوبر ماكس"
-    elif crp > cra and crk > crd and crs < 45 and ctrend_up:
-        if crk < 25:
-            predicted_type = "🔥 ماكس"
-        elif crk < 35:
-            predicted_type = "🚀 قوية جداً"
-    elif crp < cra and crk < crd and crs > 55 and ctrend_down:
-        if crk > 75:
-            predicted_type = "🔥 ماكس"
-        elif crk > 65:
-            predicted_type = "🚀 قوية جداً"
+    elif crp > cra and crk > crd and crs <= 50:
+        if crk < 30: predicted_type = "🔥 ماكس"
+        elif crk < 40: predicted_type = "🚀 قوية جداً"
+    elif crp < cra and crk < crd and crs >= 50:
+        if crk > 70: predicted_type = "🔥 ماكس"
+        elif crk > 60: predicted_type = "🚀 قوية جداً"
 
     hpc = (crp > cra) and (crk <= 40) and (crs <= 50)
     hpp = (crp < cra) and (crk >= 60) and (crs >= 50)
@@ -315,12 +385,44 @@ def analyze_pair(pair, timeframe="5m"):
             send_telegram_message(f"⚠️ *تجهّز! فرصة هبوط (PUT){pt}* قريبة جداً\nالزوج: `{pair}` [5m]\nيرجى فتح الشارت وتجهيز الصفقة!")
             alerted_pairs[pair_key] = "PUT"
 
-    if final_signal:
-        if csec <= 10:
-            if pair_key in alerted_pairs:
-                del alerted_pairs[pair_key]
-                active_trades.append({'pair': pair, 'timeframe': '5m', 'direction': direction, 'entry_price': curr['Open'], 'expire_time': time.time() + expire_delay, 'warned_loss': False, 'is_martingale': False})
-                return final_signal
+    # ========== الفلاتر الأربعة الجديدة ==========
+    if final_signal and csec <= 10:
+        # 1. فلتر أخبار
+        if is_news_time():
+            logger.info(f"🛑 إشارة {pair} تم رفضها (خبر قوي)")
+            return None
+        
+        # 2. فلتر ATR (السوق الهادي)
+        atr = calculate_atr(df)
+        if atr < (price * 0.00025):  # أقل من 2.5 نقاط
+            logger.info(f"🛑 إشارة {pair} تم رفضها (سوق هادي ATR={atr:.5f})")
+            return None
+        
+        # 3. فلتر جودة الشمعة
+        if not check_candle_quality(last):
+            logger.info(f"🛑 إشارة {pair} تم رفضها (شمعة ضعيفة/دوجي/انفجارية)")
+            return None
+        
+        # 4. فلتر فريم الساعة + منع الإشارات المتعاكسة
+        if pair_key in alerted_pairs:
+            del alerted_pairs[pair_key]
+            
+            ht = get_higher_tf_trend(pair)
+            if ht is not None and ht != direction:
+                logger.info(f"🛑 إشارة {pair} تم رفضها (فريم الساعة عكس: {ht})")
+                send_telegram_message(f"⛔ *تم رفض إشارة {pair}*\nالسبب: فريم الساعة عكس الاتجاه ({ht})\n⏰ `{cts}`")
+                return None
+            
+            if not can_take_signal(pair, direction):
+                logger.info(f"🛑 إشارة {pair} تم رفضها (إشارة متعاكسة قريبة)")
+                send_telegram_message(f"⛔ *تم رفض إشارة {pair}*\nالسبب: إشارة متعاكسة على نفس الزوج قبل 10 دقائق\n⏰ `{cts}`")
+                return None
+            
+            # كل الفلاتر عدت
+            recent_signals[pair] = (time.time(), direction)
+            active_trades.append({'pair': pair, 'timeframe': '5m', 'direction': direction, 'entry_price': curr['Open'], 'expire_time': time.time() + expire_delay, 'warned_loss': False, 'is_martingale': False})
+            return final_signal
+
     else:
         if pair_key in alerted_pairs:
             prev_alert_dir = alerted_pairs[pair_key]
@@ -329,10 +431,11 @@ def analyze_pair(pair, timeframe="5m"):
                 del alerted_pairs[pair_key]
     return None
 
+# ========== تشغيل البوت ==========
 def run_bot():
     pairs = ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF", "EURJPY", "EURGBP", "AUDCAD", "AUDJPY", "CADJPY", "EURAUD", "GBPJPY", "EURCAD"]
     logger.info("🚀 البوت يعمل...")
-    send_telegram_message("🤖 *تم تشغيل بوت IQ Option!*\n⏱️ *الفريم:* 5 دقائق\n⚡ *الدخول:* أول 10 ثوانٍ\n🔍 *المضاعفة:* بتحليل جديد\n📊 *الفلاتر الجديدة:* اتجاه عام + RSI أصعب + حجم أقوى")
+    send_telegram_message("🤖 *تم تشغيل بوت IQ Option!*\n⏱️ *الفريم:* 5 دقائق\n⚡ *الدخول:* أول 10 ثوانٍ\n🔍 *المضاعفة:* بتحليل جديد\n🛡️ *الفلاتر الجديدة:* أخبار + ATR + فريم الساعة + جودة الشمعة + منع متعاكس")
     try:
         while True:
             try:
