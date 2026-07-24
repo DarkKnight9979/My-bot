@@ -47,8 +47,8 @@ def get_cairo_time():
     return datetime.now(CAIRO_TZ)
 
 # --- 3. البيانات (بدون Default حقيقي) ---
-IQ_EMAIL = os.environ.get("zain1mohamed2425@gmail.com")
-IQ_PASSWORD = os.environ.get("ZainMohamed2425@")
+IQ_EMAIL = os.environ.get("IQ_EMAIL", "zain1mohamed2425@gmail.com")
+IQ_PASSWORD = os.environ.get("IQ_PASSWORD", "ZainMohamed2425@")
 ACCOUNT_TYPE = os.environ.get("ACCOUNT_TYPE", "PRACTICE")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8794920089:AAFnRnoudkdPrlMtDaijlaQgczrTkaM0MU4")
 CHAT_ID = os.environ.get("CHAT_ID", "1462370563")
@@ -406,10 +406,7 @@ def check_trade_results():
                 cp, ep, d = candles[-1]['close'], trade['entry_price'], trade['direction']
                 losing = (d == "CALL" and cp < ep) or (d == "PUT" and cp > ep)
                 if losing:
-                    send_telegram_message(f"⏳ *تنبيه مبكر*
-الزوج: `{trade['pair']}` [5m]
-الصفقة تتجه للخسارة..
-🔍 *جاري تحليل فرصة المضاعفة...*")
+                    send_telegram_message(f"⏳ *تنبيه مبكر*\nالزوج: `{trade['pair']}` [5m]\nالصفقة تتجه للخسارة..\n🔍 *جاري تحليل فرصة المضاعفة...*")
                     martingale_queue[trade['pair']] = {'original_direction': d, 'entry_price': ep, 'time': time.time()}
                     trade['warned_loss'] = True
 
@@ -426,24 +423,16 @@ def check_trade_results():
 
                 if is_mg:
                     msg = f"✅ *نتيجة المضاعفة: رابحة*" if is_win else f"❌ *نتيجة المضاعفة: خاسرة*"
-                    msg += f"
-الزوج: `{pair}` [5m]
-⏰ `{ts}`"
+                    msg += f"\nالزوج: `{pair}` [5m]\n⏰ `{ts}`"
                     send_telegram_message(msg)
                     trades_to_remove.append(trade)
                 else:
                     if is_win:
-                        send_telegram_message(f"✅ *نتيجة الصفقة: رابحة* 🎯
-الزوج: `{pair}` [5m]
-⏰ `{ts}`")
+                        send_telegram_message(f"✅ *نتيجة الصفقة: رابحة* 🎯\nالزوج: `{pair}` [5m]\n⏰ `{ts}`")
                         trades_to_remove.append(trade)
                     else:
                         martingale_queue[pair] = {'original_direction': d, 'entry_price': ep, 'time': time.time()}
-                        send_telegram_message(f"❌ *الصفقة خاسرة*
-الزوج: `{pair}` [5m]
-⏰ `{ts}`
-
-🔍 *جاري تحليل السوق لإيجاد أفضل فرصة مضاعفة...*")
+                        send_telegram_message(f"❌ *الصفقة خاسرة*\nالزوج: `{pair}` [5m]\n⏰ `{ts}`\n\n🔍 *جاري تحليل السوق لإيجاد أفضل فرصة مضاعفة...*")
                         trades_to_remove.append(trade)
         except Exception as e:
             logger.error(f"خطأ متابعة {trade['pair']}: {e}")
@@ -490,15 +479,9 @@ def analyze_pair(pair, timeframe="5m"):
     valid_momentum = abs(roc) >= 0.03
 
     if smc and valid_trend and valid_momentum:
-        direction, final_signal = "CALL", f"👑 *إشارة سوبر ماكس (SUPER MAX) - تقاطع صاعد* 🔥
-الزوج: `{pair}` (IQ Option) [5m]
-⏱️ *مدة الصفقة:* {duration_text}
-⏰ *وقت الإشارة:* `{cts}`"
+        direction, final_signal = "CALL", f"👑 *إشارة سوبر ماكس (SUPER MAX) - تقاطع صاعد* 🔥\nالزوج: `{pair}` (IQ Option) [5m]\n⏱️ *مدة الصفقة:* {duration_text}\n⏰ *وقت الإشارة:* `{cts}`"
     elif smp and valid_trend and valid_momentum:
-        direction, final_signal = "PUT", f"👑 *إشارة سوبر ماكس (SUPER MAX) - تقاطع هابط* 🔥
-الزوج: `{pair}` (IQ Option) [5m]
-⏱️ *مدة الصفقة:* {duration_text}
-⏰ *وقت الإشارة:* `{cts}`"
+        direction, final_signal = "PUT", f"👑 *إشارة سوبر ماكس (SUPER MAX) - تقاطع هابط* 🔥\nالزوج: `{pair}` (IQ Option) [5m]\n⏱️ *مدة الصفقة:* {duration_text}\n⏰ *وقت الإشارة:* `{cts}`"
 
     if not final_signal and is_strong and valid_vol and valid_trend and valid_momentum:
         rsi_call_zone = 40 if adx >= 25 else 45
@@ -510,44 +493,25 @@ def analyze_pair(pair, timeframe="5m"):
 
         if price > alma9 and stoch_k > stoch_d and rsi <= rsi_call_zone and near_sup:
             if stoch_k < stoch_max_call:
-                direction, final_signal = "CALL", f"🔥 *إشارة (CALL) - القوة: ماكس*
-الزوج: `{pair}` (IQ Option) [5m]
-⏱️ *مدة الصفقة:* {duration_text}
-⏰ *وقت الإشارة:* `{cts}`"
+                direction, final_signal = "CALL", f"🔥 *إشارة (CALL) - القوة: ماكس*\nالزوج: `{pair}` (IQ Option) [5m]\n⏱️ *مدة الصفقة:* {duration_text}\n⏰ *وقت الإشارة:* `{cts}`"
             elif stoch_k < stoch_strong_call:
-                direction, final_signal = "CALL", f"🚀 *إشارة (CALL) - القوة: قوية جداً*
-الزوج: `{pair}` (IQ Option) [5m]
-⏱️ *مدة الصفقة:* {duration_text}
-⏰ *وقت الإشارة:* `{cts}`"
+                direction, final_signal = "CALL", f"🚀 *إشارة (CALL) - القوة: قوية جداً*\nالزوج: `{pair}` (IQ Option) [5m]\n⏱️ *مدة الصفقة:* {duration_text}\n⏰ *وقت الإشارة:* `{cts}`"
         elif price < alma9 and stoch_k < stoch_d and rsi >= rsi_put_zone and near_res:
             if stoch_k > stoch_max_put:
-                direction, final_signal = "PUT", f"🔥 *إشارة (PUT) - القوة: ماكس*
-الزوج: `{pair}` (IQ Option) [5m]
-⏱️ *مدة الصفقة:* {duration_text}
-⏰ *وقت الإشارة:* `{cts}`"
+                direction, final_signal = "PUT", f"🔥 *إشارة (PUT) - القوة: ماكس*\nالزوج: `{pair}` (IQ Option) [5m]\n⏱️ *مدة الصفقة:* {duration_text}\n⏰ *وقت الإشارة:* `{cts}`"
             elif stoch_k > stoch_strong_put:
-                direction, final_signal = "PUT", f"📉 *إشارة (PUT) - القوة: قوية جداً*
-الزوج: `{pair}` (IQ Option) [5m]
-⏱️ *مدة الصفقة:* {duration_text}
-⏰ *وقت الإشارة:* `{cts}`"
+                direction, final_signal = "PUT", f"📉 *إشارة (PUT) - القوة: قوية جداً*\nالزوج: `{pair}` (IQ Option) [5m]\n⏱️ *مدة الصفقة:* {duration_text}\n⏰ *وقت الإشارة:* `{cts}`"
 
     if pair in martingale_queue:
         mg = martingale_queue[pair]
         if direction and direction != mg['original_direction']:
             da = "صعود (CALL)" if direction == "CALL" else "هبوط (PUT)"
-            send_telegram_message(f"🎯 *فرصة المضاعفة جاهزة!*
-الزوج: `{pair}` [5m]
-الاتجاه: *{da}*
-⏰ `{cts}`
-
-⚡ *جهز الدخول الآن!*")
+            send_telegram_message(f"🎯 *فرصة المضاعفة جاهزة!*\nالزوج: `{pair}` [5m]\nالاتجاه: *{da}*\n⏰ `{cts}`\n\n⚡ *جهز الدخول الآن!*")
             active_trades.append({'pair': pair, 'timeframe': '5m', 'direction': direction, 'entry_price': curr['Open'], 'expire_time': time.time() + expire_delay, 'warned_loss': True, 'is_martingale': True})
             del martingale_queue[pair]
             return None
         elif time.time() - mg['time'] > 1200:
-            send_telegram_message(f"❌ *تم إلغاء فرصة المضاعفة*
-الزوج: `{pair}` [5m]
-السبب: لم يتم العثور على إشارة قوية.")
+            send_telegram_message(f"❌ *تم إلغاء فرصة المضاعفة*\nالزوج: `{pair}` [5m]\nالسبب: لم يتم العثور على إشارة قوية.")
             del martingale_queue[pair]
 
     crp, crk, crs, cra = curr['Close'], curr['Stoch_K'], curr['RSI'], curr['ALMA_9']
@@ -570,15 +534,11 @@ def analyze_pair(pair, timeframe="5m"):
     if cmin == 4 and csec >= 30:
         if hpc and pair_key not in alerted_pairs:
             pt = f" من نوع *{predicted_type}*" if predicted_type else ""
-            send_telegram_message(f"⚠️ *تجهّز! فرصة صعود (CALL){pt}* قريبة جداً
-الزوج: `{pair}` [5m]
-يرجى فتح الشارت وتجهيز الصفقة!")
+            send_telegram_message(f"⚠️ *تجهّز! فرصة صعود (CALL){pt}* قريبة جداً\nالزوج: `{pair}` [5m]\nيرجى فتح الشارت وتجهيز الصفقة!")
             alerted_pairs[pair_key] = "CALL"
         elif hpp and pair_key not in alerted_pairs:
             pt = f" من نوع *{predicted_type}*" if predicted_type else ""
-            send_telegram_message(f"⚠️ *تجهّز! فرصة هبوط (PUT){pt}* قريبة جداً
-الزوج: `{pair}` [5m]
-يرجى فتح الشارت وتجهيز الصفقة!")
+            send_telegram_message(f"⚠️ *تجهّز! فرصة هبوط (PUT){pt}* قريبة جداً\nالزوج: `{pair}` [5m]\nيرجى فتح الشارت وتجهيز الصفقة!")
             alerted_pairs[pair_key] = "PUT"
 
     if final_signal and csec <= 15:
@@ -598,15 +558,11 @@ def analyze_pair(pair, timeframe="5m"):
         ht = get_higher_tf_trend(pair)
         if ht is not None and ht != direction:
             logger.info(f"🛑 إشارة {pair} مرفوضة (HTF عكس: {ht})")
-            send_telegram_message(f"⛔ *تم رفض إشارة {pair}*
-السبب: فريم الساعة عكس الاتجاه ({ht})
-⏰ `{cts}`")
+            send_telegram_message(f"⛔ *تم رفض إشارة {pair}*\nالسبب: فريم الساعة عكس الاتجاه ({ht})\n⏰ `{cts}`")
             return None
         if not can_take_signal(pair, direction):
             logger.info(f"🛑 إشارة {pair} مرفوضة (متعاكسة قريبة)")
-            send_telegram_message(f"⛔ *تم رفض إشارة {pair}*
-السبب: إشارة متعاكسة على نفس الزوج قبل 10 دقائق
-⏰ `{cts}`")
+            send_telegram_message(f"⛔ *تم رفض إشارة {pair}*\nالسبب: إشارة متعاكسة على نفس الزوج قبل 10 دقائق\n⏰ `{cts}`")
             return None
         recent_signals[pair] = (time.time(), direction)
         active_trades.append({'pair': pair, 'timeframe': '5m', 'direction': direction, 'entry_price': curr['Open'], 'expire_time': time.time() + expire_delay, 'warned_loss': False, 'is_martingale': False})
@@ -615,9 +571,7 @@ def analyze_pair(pair, timeframe="5m"):
         if pair_key in alerted_pairs:
             prev_alert_dir = alerted_pairs[pair_key]
             if (prev_alert_dir == "CALL" and crk > 60) or (prev_alert_dir == "PUT" and crk < 40):
-                send_telegram_message(f"❌ *تم إلغاء التنبيه*
-الزوج: `{pair}` [5m]
-السبب: الشروط لم تعد متوافقة.")
+                send_telegram_message(f"❌ *تم إلغاء التنبيه*\nالزوج: `{pair}` [5m]\nالسبب: الشروط لم تعد متوافقة.")
                 del alerted_pairs[pair_key]
     return None
 
@@ -633,13 +587,7 @@ def run_bot():
     global cycle_count
     pairs = ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF", "EURJPY", "EURGBP", "AUDCAD", "AUDJPY", "CADJPY", "EURAUD", "GBPJPY", "EURCAD"]
     logger.info("🚀 البوت يعمل...")
-    send_telegram_message("🤖 *تم تشغيل بوت IQ Option V3!*
-⏱️ *الفريم:* 5 دقائق
-⚡ *الدخول:* أول 15 ثانية
-🔍 *المضاعفة:* Super Max فقط
-🛡️ *الفلاتر:* أخبار ذكية + ADX + ATR Wilder + BBW + ROC + جودة الشمعة + HTF + منع متعاكس
-💾 *Cache:* مفعل
-📊 *إحصائيات:* مفعلة")
+    send_telegram_message("🤖 *تم تشغيل بوت IQ Option V3!*\n⏱️ *الفريم:* 5 دقائق\n⚡ *الدخول:* أول 15 ثانية\n🔍 *المضاعفة:* Super Max فقط\n🛡️ *الفلاتر:* أخبار ذكية + ADX + ATR Wilder + BBW + ROC + جودة الشمعة + HTF + منع متعاكس\n💾 *Cache:* مفعل\n📊 *إحصائيات:* مفعلة")
 
     threading.Thread(target=telegram_worker, daemon=True).start()
 
