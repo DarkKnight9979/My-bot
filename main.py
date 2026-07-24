@@ -230,7 +230,7 @@ def analyze_pair(pair, timeframe="5m"):
     cmin = cn.minute % 5
     final_signal, direction = None, None
 
-    # ========== شروط السوبر ماكس ==========
+    # شروط السوبر ماكس
     a9p, a50p, a9c, a50c = prev['ALMA'], prev['ALMA_50'], last['ALMA'], last['ALMA_50']
     smc = (a9p <= a50p) and (a9c > a50c) and (stoch_k > stoch_d) and is_strong and valid_vol
     smp = (a9p >= a50p) and (a9c < a50c) and (stoch_k < stoch_d) and is_strong and valid_vol
@@ -239,7 +239,7 @@ def analyze_pair(pair, timeframe="5m"):
     elif smp:
         direction, final_signal = "PUT", f"👑 *إشارة سوبر ماكس (SUPER MAX) - تقاطع هابط* 🔥\nالزوج: `{pair}` (IQ Option) [5m]\n⏱️ *مدة الصفقة:* {duration_text}\n⏰ *وقت الإشارة:* `{cts}`"
 
-    # ========== الإشارات العادية ==========
+    # الإشارات العادية
     if not final_signal and is_strong and valid_vol:
         if price > alma and stoch_k > stoch_d and rsi <= 50 and near_sup:
             if stoch_k < 30:
@@ -252,7 +252,7 @@ def analyze_pair(pair, timeframe="5m"):
             elif stoch_k > 60:
                 direction, final_signal = "PUT", f"📉 *إشارة (PUT) - القوة: قوية جداً*\nالزوج: `{pair}` (IQ Option) [5m]\n⏱️ *مدة الصفقة:* {duration_text}\n⏰ *وقت الإشارة:* `{cts}`"
 
-    # ========== فحص المضاعفات ==========
+    # فحص المضاعفات
     if pair in martingale_queue:
         mg = martingale_queue[pair]
         if direction and direction != mg['original_direction']:
@@ -267,23 +267,25 @@ def analyze_pair(pair, timeframe="5m"):
 
     # ========== التجهيز المسبق مع توقع نوع الإشارة ==========
     crp, crk, crs, cra = curr['Close'], curr['Stoch_K'], curr['RSI'], curr['ALMA']
+    crd = curr['Stoch_D']
     ca9, ca50 = curr['ALMA'], curr['ALMA_50']
-    pa9, pa50 = df.iloc[-2]['ALMA'], df.iloc[-2]['ALMA_50']
+    pa9, pa50 = last['ALMA'], last['ALMA_50']
     
-    # توقع النوع على الشمعة الحية
     predicted_type = None
-    if (pa9 <= pa50 and ca9 > ca50 and crk > curr['Stoch_D']) or (pa9 >= pa50 and ca9 < ca50 and crk < curr['Stoch_D']):
-        predicted_type = "سوبر ماكس"
-    elif crp > cra and crk > curr['Stoch_D'] and crs <= 50:
+    
+    # توقع النوع بناءً على الشمعة الحية
+    if (pa9 <= pa50 and ca9 > ca50 and crk > crd) or (pa9 >= pa50 and ca9 < ca50 and crk < crd):
+        predicted_type = "👑 سوبر ماكس"
+    elif crp > cra and crk > crd and crs <= 50:
         if crk < 30:
-            predicted_type = "ماكس"
+            predicted_type = "🔥 ماكس"
         elif crk < 40:
-            predicted_type = "قوية جداً"
-    elif crp < cra and crk < curr['Stoch_D'] and crs >= 50:
+            predicted_type = "🚀 قوية جداً"
+    elif crp < cra and crk < crd and crs >= 50:
         if crk > 70:
-            predicted_type = "ماكس"
+            predicted_type = "🔥 ماكس"
         elif crk > 60:
-            predicted_type = "قوية جداً"
+            predicted_type = "🚀 قوية جداً"
 
     hpc = (crp > cra) and (crk <= 40) and (crs <= 50)
     hpp = (crp < cra) and (crk >= 60) and (crs >= 50)
@@ -298,7 +300,7 @@ def analyze_pair(pair, timeframe="5m"):
             send_telegram_message(f"⚠️ *تجهّز! فرصة هبوط (PUT){pt}* قريبة جداً\nالزوج: `{pair}` [5m]\nيرجى فتح الشارت وتجهيز الصفقة!")
             alerted_pairs[pair_key] = "PUT"
 
-    # ========== إرسال الإشارة ==========
+    # إرسال الإشارة
     if final_signal:
         if csec <= 10:
             if pair_key in alerted_pairs:
