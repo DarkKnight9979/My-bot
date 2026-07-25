@@ -210,9 +210,9 @@ def cleanup_memory():
     global sent_signals, recent_signals, candles_cache, df_cache, ht_trend_cache, hunt_mode_announced, alerted_pairs
     sent_signals = {k:v for k,v in sent_signals.items() if now - v < 600}
     recent_signals = {k:v for k,v in recent_signals.items() if now - v[0] < 1200}
-    # تنظيف التنبيهات المسبقة كل 10 دقايق عشان متراكمش
+    # تنظيف التنبيهات المسبقة كل 8 دقايق (480 ثانية)
     for k in list(alerted_pairs.keys()):
-        if k in sent_signals and now - sent_signals[k] > 600:
+        if now - alerted_pairs[k][1] > 480:
             del alerted_pairs[k]
     for k in list(candles_cache.keys()):
         if now - candles_cache[k][1] > 300:
@@ -466,39 +466,39 @@ def evaluate_signal_strength(direction, curr, prev, df, price, alma9, alma50,
     # --- مستوى 2: قوية جداً ---
     if direction == "CALL":
         cond_base = (price > alma9) and (stoch_k > stoch_d)
-        cond_rsi = 30 <= rsi <= 55
+        cond_rsi = 30 <= rsi <= 53
         cond_zone = near_sup or (price <= curr['BBL'] * 1.001)
-        cond_stoch_zone = stoch_k <= 45
+        cond_stoch_zone = stoch_k <= 43
     else:
         cond_base = (price < alma9) and (stoch_k < stoch_d)
-        cond_rsi = 45 <= rsi <= 70
+        cond_rsi = 47 <= rsi <= 70
         cond_zone = near_res or (price >= curr['BBU'] * 0.999)
-        cond_stoch_zone = stoch_k >= 55
+        cond_stoch_zone = stoch_k >= 57
     if (cond_base and cond_rsi and cond_zone and cond_stoch_zone and
-        body_pct >= 0.15 and
-        volume >= vol_ma * 0.75 and
-        adx >= 14 and
-        bbw >= 0.0008 and
-        atr >= (price * 0.00022) and
-        abs(roc) >= 0.025):
+        body_pct >= 0.16 and
+        volume >= vol_ma * 0.78 and
+        adx >= 15 and
+        bbw >= 0.0009 and
+        atr >= (price * 0.00024) and
+        abs(roc) >= 0.027):
         return 2
 
     # --- مستوى 1: قوية (الأسهل والأكثر تكراراً) ---
     if direction == "CALL":
         cond_base = (price > alma9) and (stoch_k > stoch_d)
-        cond_rsi = rsi <= 65
+        cond_rsi = rsi <= 63
         cond_zone = near_sup or (price <= curr['BBL'] * 1.002)
     else:
         cond_base = (price < alma9) and (stoch_k < stoch_d)
-        cond_rsi = rsi >= 35
+        cond_rsi = rsi >= 37
         cond_zone = near_res or (price >= curr['BBU'] * 0.998)
     if (cond_base and cond_rsi and cond_zone and
-        body_pct >= 0.12 and
-        volume >= vol_ma * 0.7 and
-        adx >= 12 and
-        bbw >= 0.0006 and
-        atr >= (price * 0.00018) and
-        abs(roc) >= 0.02):
+        body_pct >= 0.13 and
+        volume >= vol_ma * 0.72 and
+        adx >= 13 and
+        bbw >= 0.0007 and
+        atr >= (price * 0.00019) and
+        abs(roc) >= 0.022):
         return 1
 
     return 0
@@ -878,4 +878,5 @@ def run_bot():
 if __name__ == "__main__":
     threading.Thread(target=run_web_server, daemon=True).start()
     run_bot()
+
 
