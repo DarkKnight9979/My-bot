@@ -1155,20 +1155,23 @@ def analyze_pair_wrapper_king(pair):
 def run_bot():
     global cycle_count, last_hunt_message_time
 
-    day_of_week = datetime.now(CAIRO_TZ).weekday()
-    if day_of_week in [5, 6]:
-        pairs = [
-            "EURUSD-OTC", "GBPUSD-OTC", "USDJPY-OTC", "USDCHF-OTC",
-            "EURJPY-OTC", "EURGBP-OTC", "AUDCAD-OTC", "GBPJPY-OTC"
-        ]
-        mode_text = "OTC (عطلة weekend)"
-    else:
-        pairs = [
-            "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF",
-            "EURJPY", "EURGBP", "AUDCAD", "AUDJPY", "CADJPY", "EURAUD",
-            "GBPJPY", "EURCAD"
-        ]
-        mode_text = "عادي (سوق مفتوح)"
+    # ========== دالة مساعدة لتحديد الأزواج حسب اليوم ==========
+    def get_pairs_for_today():
+        day_of_week = datetime.now(CAIRO_TZ).weekday()
+        if day_of_week in [5, 6]:  # سبت أو أحد
+            return [
+                "EURUSD-OTC", "GBPUSD-OTC", "USDJPY-OTC", "USDCHF-OTC",
+                "EURJPY-OTC", "EURGBP-OTC", "AUDCAD-OTC", "GBPJPY-OTC"
+            ], "OTC (عطلة weekend)"
+        else:  # اتنين لجمعة
+            return [
+                "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF",
+                "EURJPY", "EURGBP", "AUDCAD", "AUDJPY", "CADJPY", "EURAUD",
+                "GBPJPY", "EURCAD"
+            ], "عادي (سوق مفتوح)"
+
+    pairs, mode_text = get_pairs_for_today()
+    current_mode = mode_text
 
     logger.info(f"🚀 البوت يعمل بالنسخة V7.0 (وضع {mode_text})...")
     send_telegram_message(
@@ -1200,6 +1203,20 @@ def run_bot():
             cycle_count += 1
             cycle_start = time.time()
             try:
+                # ========== تحديث الأزواج تلقائياً حسب اليوم ==========
+                pairs, mode_text = get_pairs_for_today()
+                if mode_text != current_mode:
+                    current_mode = mode_text
+                    logger.info(f"🔄 تبديل تلقائي للوضع: {mode_text}")
+                    send_telegram_message(
+                        f"🔄 *تبديل تلقائي للوضع!*\n"
+                        f"📅 اليوم: *{datetime.now(CAIRO_TZ).strftime('%A %d/%m/%Y')}*\n"
+                        f"🌐 الوضع الجديد: *{mode_text}*\n"
+                        f"📋 الأزواج: *{len(pairs)}* زوج"
+                    )
+                    # تنظيف caches لما يتبدل الوضع
+                    invalid_assets.clear()
+
                 check_connection_health()
 
                 valid_pairs = [p for p in pairs if p not in invalid_assets]
