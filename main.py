@@ -799,12 +799,10 @@ def run_bot():
     day_of_week = datetime.now(CAIRO_TZ).weekday()
     # 5 = السبت, 6 = الأحد
     if day_of_week in [5, 6]:
-        # الأزواج الـ OTC المتاحة فعلاً في IQ Option (بدون AUDUSD-OTC و USDCAD-OTC)
+        # الأزواج الـ OTC المتاحة فعلاً في IQ Option (تم التحقق)
         pairs = [
             "EURUSD-OTC", "GBPUSD-OTC", "USDJPY-OTC", "USDCHF-OTC",
-            "EURJPY-OTC", "EURGBP-OTC", "AUDCAD-OTC", "AUDJPY-OTC",
-            "CADJPY-OTC", "EURAUD-OTC", "GBPJPY-OTC", "EURCAD-OTC",
-            "EURCHF-OTC", "NZDCHF-OTC"
+            "EURJPY-OTC", "EURGBP-OTC", "AUDCAD-OTC", "GBPJPY-OTC"
         ]
         mode_text = "OTC (عطلة weekend)"
     else:
