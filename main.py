@@ -100,6 +100,751 @@ king_df_cache = {}
 king_htf_cache = {}
 king_stats = defaultdict(lambda: {"win": 0, "loss": 0, "total": 0})
 
+
+# ========== STATISTICAL ENGINE (V7.1) ==========
+# محرك إحصائي ذكي — منفصل 100% عن الاستراتيجيات
+
+import json
+import os
+from pathlib import Path
+
+# --- ملفات البيانات ---
+TRADE_LOG_FILE = "trade_log.jsonl"
+STATS_STATE_FILE = "stats_state.json"
+OPTIMIZATION_PROPOSAL_FILE = "optimization_proposal.json"
+WEIGHTS_FILE = "king_weights.json"
+
+# --- إنشاء الملفات لو مش موجودة ---
+for f in [TRADE_LOG_FILE, STATS_STATE_FILE, OPTIMIZATION_PROPOSAL_FILE, WEIGHTS_FILE]:
+    if not os.path.exists(f):
+        Path(f).touch()
+
+# --- الأوزان الافتراضية للـ King Strategy ---
+DEFAULT_KING_WEIGHTS = {
+    "structure": 20,
+    "sweep": 20,
+    "trend": 10,
+    "momentum": 15,
+    "volatility": 10,
+    "adx": 10,
+    "rsi": 5,
+    "stochastic": 5,
+    "candle": 15
+}
+
+def load_king_weights():
+    try:
+        with open(WEIGHTS_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            if data and isinstance(data, dict):
+                return {k: int(v) for k, v in data.items()}
+    except:
+        pass
+    return DEFAULT_KING_WEIGHTS.copy()
+
+def save_king_weights(weights):
+    with open(WEIGHTS_FILE, 'w', encoding='utf-8') as f:
+        json.dump(weights, f, indent=2)
+
+KING_WEIGHTS = load_king_weights()
+
+# --- تسجيل الصفقات ---
+def log_trade(trade_data):
+    """
+    يسجل صفقة واحدة في ملف JSONL.
+    trade_data: dict مع كل تفاصيل الصفقة والفلاتر.
+    """
+    try:
+        with open(TRADE_LOG_FILE, 'a', encoding='utf-8') as f:
+            f.write(json.dumps(trade_data, ensure_ascii=False) + "\n")
+    except Exception as e:
+        logger.error(f"خطأ في تسجيل الصفقة: {e}")
+
+def read_trade_log(max_entries=50000):
+    """
+    يقرأ آخر N صفقة من ملف JSONL.
+    يرجع: list of dicts
+    """
+    trades = []
+    try:
+        with open(TRADE_LOG_FILE, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+        for line in lines[-max_entries:]:
+            line = line.strip()
+            if line:
+                try:
+                    trades.append(json.loads(line))
+                except:
+                    continue
+    except Exception as e:
+        logger.error(f"خطأ في قراءة سجل الصفقات: {e}")
+    return trades
+
+# --- تقييم الفلاتر ---
+def evaluate_filters(trades):
+    """
+    يحسب Win Rate لكل فلتر على حدة.
+    يرجع: dict {filter_name: {"win": N, "loss": N, "wr": %, "worth": "High/Med/Low"}}
+    """
+    if not trades:
+        return {}
+
+    filter_stats = {}
+
+    # نجمع كل أسماء الفلاتر من أول صفقة
+    sample_filters = trades[0].get("filters", {})
+    for fname in sample_filters.keys():
+        filter_stats[fname] = {"win": 0, "loss": 0, "total": 0}
+
+    for trade in trades:
+        outcome = trade.get("outcome", "")
+        filters = trade.get("filters", {})
+        for fname, fval in filters.items():
+            if fname not in filter_stats:
+                continue
+            if fval:  # الفلتر متحقق
+                filter_stats[fname]["total"] += 1
+                if outcome == "win":
+                    filter_stats[fname]["win"] += 1
+                else:
+                    filter_stats[fname]["loss"] += 1
+
+    results = {}
+    for fname, stat in filter_stats.items():
+        total = stat["total"]
+        if total >= 10:
+            wr = (stat["win"] / total) * 100
+            if wr >= 80:
+                worth = "High"
+            elif wr >= 65:
+                worth = "Med"
+            else:
+                worth = "Low"
+            results[fname] = {
+                "win": stat["win"],
+                "loss": stat["loss"],
+                "total": total,
+                "wr": round(wr, 1),
+                "worth": worth
+            }
+
+    # ترتيب حسب Win Rate
+    results = dict(sorted(results.items(), key=lambda x: x[1]["wr"], reverse=True))
+    return results
+
+# --- ترتيب الأزواج ---
+def rank_pairs(trades):
+    """
+    يرجع ترتيب الأزواج حسب الأداء.
+    Score = (WR * 0.4) + (ProfitFactor * 20 * 0.3) + (Stability * 0.2) + (CountRatio * 0.1)
+    """
+    if not trades:
+        return {}
+
+    pair_data = {}
+    for t in trades:
+        pair = t.get("pair", "UNKNOWN")
+        if pair not in pair_data:
+            pair_data[pair] = {"win": 0, "loss": 0, "total": 0, "wins": [], "losses": []}
+        pair_data[pair]["total"] += 1
+        if t.get("outcome") == "win":
+            pair_data[pair]["win"] += 1
+            pair_data[pair]["wins"].append(1)
+            pair_data[pair]["losses"].append(0)
+        else:
+            pair_data[pair]["loss"] += 1
+            pair_data[pair]["wins"].append(0)
+            pair_data[pair]["losses"].append(1)
+
+    rankings = []
+    max_total = max(d["total"] for d in pair_data.values()) if pair_data else 1
+
+    for pair, data in pair_data.items():
+        total = data["total"]
+        if total < 5:
+            continue
+        wr = (data["win"] / total) * 100
+
+        # Profit Factor
+        avg_win = 1  # binary options
+        avg_loss = 1
+        profit_factor = avg_win / avg_loss if avg_loss > 0 else 1
+        if data["loss"] > 0:
+            profit_factor = data["win"] / data["loss"]
+
+        # Stability (نسبة الاتساق — std dev من WR في شرائح)
+        chunks = [data["wins"][i:i+10] for i in range(0, len(data["wins"]), 10)]
+        chunk_wrs = []
+        for chunk in chunks:
+            if chunk:
+                chunk_wrs.append(sum(chunk) / len(chunk) * 100)
+        stability = 100 - np.std(chunk_wrs) if chunk_wrs and len(chunk_wrs) > 1 else 50
+
+        count_ratio = (total / max_total) * 100
+
+        score = (wr * 0.4) + (min(profit_factor, 5) * 20 * 0.3) + (stability * 0.2) + (count_ratio * 0.1)
+
+        rankings.append({
+            "pair": pair,
+            "wr": round(wr, 1),
+            "total": total,
+            "profit_factor": round(profit_factor, 2),
+            "stability": round(stability, 1),
+            "score": round(score, 1)
+        })
+
+    rankings.sort(key=lambda x: x["score"], reverse=True)
+    return rankings
+
+# --- تحليل الأوقات ---
+def analyze_hours(trades):
+    """
+    يحسب Win Rate لكل ساعة من اليوم.
+    """
+    if not trades:
+        return {}
+
+    hour_stats = {}
+    for t in trades:
+        hour = t.get("hour", 0)
+        if hour not in hour_stats:
+            hour_stats[hour] = {"win": 0, "loss": 0, "total": 0}
+        hour_stats[hour]["total"] += 1
+        if t.get("outcome") == "win":
+            hour_stats[hour]["win"] += 1
+        else:
+            hour_stats[hour]["loss"] += 1
+
+    results = {}
+    for h, stat in hour_stats.items():
+        if stat["total"] >= 5:
+            results[h] = {
+                "win": stat["win"],
+                "loss": stat["loss"],
+                "total": stat["total"],
+                "wr": round((stat["win"] / stat["total"]) * 100, 1)
+            }
+
+    return dict(sorted(results.items(), key=lambda x: x[1]["wr"], reverse=True))
+
+# --- تحليل الـ Confidence Calibration ---
+def analyze_confidence_calibration(trades):
+    """
+    يشيك لو الـ Score بيوحي بـ WR صحيح ولا لا.
+    مثلاً: Score 90–94 المفروض يكسب ~90%، لو كسب 70% → البوت بيبالغ.
+    """
+    if not trades:
+        return {}
+
+    score_buckets = {
+        "80-84": {"trades": [], "expected_wr": 82},
+        "85-89": {"trades": [], "expected_wr": 87},
+        "90-94": {"trades": [], "expected_wr": 92},
+        "95-100": {"trades": [], "expected_wr": 97},
+    }
+
+    for t in trades:
+        score = t.get("score", 0)
+        if 80 <= score <= 84:
+            score_buckets["80-84"]["trades"].append(t)
+        elif 85 <= score <= 89:
+            score_buckets["85-89"]["trades"].append(t)
+        elif 90 <= score <= 94:
+            score_buckets["90-94"]["trades"].append(t)
+        elif 95 <= score <= 100:
+            score_buckets["95-100"]["trades"].append(t)
+
+    calibration = {}
+    for bucket, data in score_buckets.items():
+        trades_in_bucket = data["trades"]
+        if len(trades_in_bucket) >= 10:
+            wins = sum(1 for t in trades_in_bucket if t.get("outcome") == "win")
+            actual_wr = (wins / len(trades_in_bucket)) * 100
+            expected_wr = data["expected_wr"]
+            diff = actual_wr - expected_wr
+            calibration[bucket] = {
+                "total": len(trades_in_bucket),
+                "actual_wr": round(actual_wr, 1),
+                "expected_wr": expected_wr,
+                "diff": round(diff, 1),
+                "status": "✅ متوازن" if abs(diff) <= 5 else ("⚠️ يبالغ" if diff < -5 else "🔥 أقوى من المتوقع")
+            }
+
+    return calibration
+
+# --- Grid Search Optimization ---
+def grid_search_optimization(trades, strategy="king"):
+    """
+    يجرب تركيبات مختلفة من العتبات ويطلع الأفضل.
+    يرجع: dict بالتعديلات المقترحة.
+    """
+    if len(trades) < 200:
+        return None, "غير كافي — محتاج 200+ صفقة"
+
+    # نحلل بس على King Strategy
+    king_trades = [t for t in trades if t.get("strategy") == "king"]
+    if len(king_trades) < 100:
+        return None, "غير كافي — محتاج 100+ صفقة King"
+
+    proposals = []
+
+    # 1. ADX Threshold
+    best_adx = 22
+    best_adx_wr = 0
+    for adx_thresh in [18, 20, 22, 24, 26, 28, 30]:
+        subset = [t for t in king_trades if t.get("indicators", {}).get("adx", 0) >= adx_thresh]
+        if len(subset) >= 20:
+            wins = sum(1 for t in subset if t.get("outcome") == "win")
+            wr = (wins / len(subset)) * 100
+            if wr > best_adx_wr:
+                best_adx_wr = wr
+                best_adx = adx_thresh
+
+    if best_adx != 22:
+        proposals.append({
+            "filter": "ADX",
+            "current": 22,
+            "proposed": best_adx,
+            "reason": f"WR يتحسن لـ {best_adx_wr:.1f}% مع ADX ≥ {best_adx}",
+            "impact": "يقلل الإشارات قليلاً ويرفع الجودة"
+        })
+
+    # 2. RSI Range for CALL
+    best_rsi_low, best_rsi_high = 45, 60
+    best_rsi_wr = 0
+    for low in range(40, 50, 2):
+        for high in range(55, 65, 2):
+            subset = [t for t in king_trades 
+                      if t.get("direction") == "CALL" 
+                      and low <= t.get("indicators", {}).get("rsi", 0) <= high]
+            if len(subset) >= 15:
+                wins = sum(1 for t in subset if t.get("outcome") == "win")
+                wr = (wins / len(subset)) * 100
+                if wr > best_rsi_wr:
+                    best_rsi_wr = wr
+                    best_rsi_low, best_rsi_high = low, high
+
+    if (best_rsi_low, best_rsi_high) != (45, 60):
+        proposals.append({
+            "filter": "RSI CALL",
+            "current": "45–60",
+            "proposed": f"{best_rsi_low}–{best_rsi_high}",
+            "reason": f"WR يتحسن لـ {best_rsi_wr:.1f}%",
+            "impact": "تعديل دقيق لنطاق RSI"
+        })
+
+    # 3. Body % Threshold
+    best_body = 0.60
+    best_body_wr = 0
+    for body in [0.50, 0.55, 0.60, 0.65, 0.70]:
+        # نحسب body% من الصفقات المسجلة (مش متاح مباشرة، نستخدم proxy)
+        subset = [t for t in king_trades if t.get("filters", {}).get("candle_ok", False)]
+        if len(subset) >= 20:
+            wins = sum(1 for t in subset if t.get("outcome") == "win")
+            wr = (wins / len(subset)) * 100
+            if wr > best_body_wr:
+                best_body_wr = wr
+                best_body = body
+
+    # 4. Sweep Threshold
+    best_sweep = 0.0003
+    best_sweep_wr = 0
+    for sweep in [0.0002, 0.0003, 0.0004, 0.0005]:
+        subset = [t for t in king_trades if t.get("filters", {}).get("sweep_ok", False)]
+        if len(subset) >= 20:
+            wins = sum(1 for t in subset if t.get("outcome") == "win")
+            wr = (wins / len(subset)) * 100
+            if wr > best_sweep_wr:
+                best_sweep_wr = wr
+                best_sweep = sweep
+
+    if best_sweep != 0.0003:
+        proposals.append({
+            "filter": "Sweep Threshold",
+            "current": 0.0003,
+            "proposed": best_sweep,
+            "reason": f"WR يتحسن لـ {best_sweep_wr:.1f}%",
+            "impact": "تعديل حساسية Liquidity Sweep"
+        })
+
+    return proposals, "تم التحليل بنجاح"
+
+# --- Weight Engine: تعديل أوزان King Strategy ---
+def optimize_weights(trades):
+    """
+    يحسب الأداء الحقيقي لكل فلتر ويعدّل أوزانه.
+    الفلتر اللي بيكسب أكتر → وزنه يزيد.
+    الفلتر اللي بيفشل → وزنه يقل.
+    """
+    if len(trades) < 300:
+        return None, "غير كافي — محتاج 300+ صفقة"
+
+    king_trades = [t for t in trades if t.get("strategy") == "king"]
+    if len(king_trades) < 150:
+        return None, "غير كافي — محتاج 150+ صفقة King"
+
+    filter_performance = {}
+    current_weights = load_king_weights()
+
+    for fname in current_weights.keys():
+        with_filter = [t for t in king_trades if t.get("filters", {}).get(fname, False)]
+        without_filter = [t for t in king_trades if not t.get("filters", {}).get(fname, False)]
+
+        if len(with_filter) >= 20 and len(without_filter) >= 20:
+            wr_with = sum(1 for t in with_filter if t.get("outcome") == "win") / len(with_filter) * 100
+            wr_without = sum(1 for t in without_filter if t.get("outcome") == "win") / len(without_filter) * 100
+
+            filter_performance[fname] = {
+                "wr_with": wr_with,
+                "wr_without": wr_without,
+                "diff": wr_with - wr_without,
+                "count": len(with_filter)
+            }
+
+    if not filter_performance:
+        return None, "لا توجد بيانات كافية"
+
+    # تعديل الأوزان
+    new_weights = current_weights.copy()
+    total_weight = sum(current_weights.values())
+
+    adjustments = []
+    for fname, perf in filter_performance.items():
+        diff = perf["diff"]
+        current = current_weights[fname]
+
+        if diff > 10:  # الفلتر ده بيفرق كتير
+            new_w = min(current + 3, 25)
+            adjustments.append(f"{fname}: {current} → {new_w} (+{diff:.1f}% WR)")
+        elif diff < -5:  # الفلتر ده مش بيفرق
+            new_w = max(current - 2, 3)
+            adjustments.append(f"{fname}: {current} → {new_w} ({diff:.1f}% WR)")
+        else:
+            new_w = current
+
+        new_weights[fname] = new_w
+
+    # Normalization: نضمن المجموع = 100
+    current_sum = sum(new_weights.values())
+    if current_sum != 100:
+        factor = 100 / current_sum
+        new_weights = {k: max(1, round(v * factor)) for k, v in new_weights.items()}
+        # تعديل بسيط عشان المجموع يبقى 100 بالظبط
+        diff = 100 - sum(new_weights.values())
+        if diff != 0:
+            # نضيف الفرق على أكبر وزن
+            max_key = max(new_weights, key=new_weights.get)
+            new_weights[max_key] += diff
+
+    return {
+        "old_weights": current_weights,
+        "new_weights": new_weights,
+        "adjustments": adjustments,
+        "filter_performance": filter_performance
+    }, "تم تحديث الأوزان"
+
+# --- توليد التقرير ---
+def generate_report(trades, period="daily"):
+    """
+    ينتج تقرير شامل.
+    period: daily / weekly / monthly
+    """
+    if not trades:
+        return None
+
+    total = len(trades)
+    wins = sum(1 for t in trades if t.get("outcome") == "win")
+    losses = total - wins
+    wr = (wins / total * 100) if total > 0 else 0
+
+    # Profit Factor
+    pf = wins / losses if losses > 0 else float('inf')
+
+    # Max streaks
+    max_win_streak = 0
+    max_loss_streak = 0
+    current_win = 0
+    current_loss = 0
+    for t in trades:
+        if t.get("outcome") == "win":
+            current_win += 1
+            current_loss = 0
+            max_win_streak = max(max_win_streak, current_win)
+        else:
+            current_loss += 1
+            current_win = 0
+            max_loss_streak = max(max_loss_streak, current_loss)
+
+    # Expectancy
+    avg_win = 1
+    avg_loss = 1
+    expectancy = (avg_win * (wr/100)) - (avg_loss * (1 - wr/100))
+
+    # Best/Worst pairs
+    pair_rank = rank_pairs(trades)
+    best_pair = pair_rank[0] if pair_rank else None
+    worst_pair = pair_rank[-1] if pair_rank else None
+
+    # Hour analysis
+    hour_stats = analyze_hours(trades)
+    best_hour = next(iter(hour_stats.items())) if hour_stats else None
+    worst_hour = list(hour_stats.items())[-1] if hour_stats else None
+
+    # Strategy breakdown
+    orig_trades = [t for t in trades if t.get("strategy") == "original"]
+    king_trades = [t for t in trades if t.get("strategy") == "king"]
+
+    orig_wr = (sum(1 for t in orig_trades if t.get("outcome") == "win") / len(orig_trades) * 100) if orig_trades else 0
+    king_wr = (sum(1 for t in king_trades if t.get("outcome") == "win") / len(king_trades) * 100) if king_trades else 0
+
+    report = {
+        "period": period,
+        "total_trades": total,
+        "wins": wins,
+        "losses": losses,
+        "win_rate": round(wr, 1),
+        "profit_factor": round(pf, 2),
+        "max_win_streak": max_win_streak,
+        "max_loss_streak": max_loss_streak,
+        "expectancy": round(expectancy, 3),
+        "best_pair": best_pair,
+        "worst_pair": worst_pair,
+        "best_hour": best_hour,
+        "worst_hour": worst_hour,
+        "original": {"total": len(orig_trades), "wr": round(orig_wr, 1)},
+        "king": {"total": len(king_trades), "wr": round(king_wr, 1)},
+        "filter_eval": evaluate_filters(trades),
+        "calibration": analyze_confidence_calibration(trades),
+        "pair_rankings": pair_rank[:5] if len(pair_rank) >= 5 else pair_rank,
+    }
+
+    return report
+
+def format_report_message(report):
+    """
+    يحول التقرير لرسالة تليجرام منسقة.
+    """
+    if not report:
+        return "📊 *لا توجد بيانات كافية للتقرير*"
+
+    period_name = {"daily": "اليومي", "weekly": "الأسبوعي", "monthly": "الشهري"}.get(report["period"], report["period"])
+
+    msg = (
+        f"📊 *تقرير {period_name}*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"📈 *إجمالي الصفقات:* {report['total_trades']}\n"
+        f"✅ *رابحة:* {report['wins']} | ❌ *خاسرة:* {report['losses']}\n"
+        f"🎯 *Win Rate:* {report['win_rate']}%\n"
+        f"💰 *Profit Factor:* {report['profit_factor']}\n"
+        f"📊 *Expectancy:* {report['expectancy']}\n"
+        f"🔥 *أطول سلسلة رابحة:* {report['max_win_streak']}\n"
+        f"💔 *أطول سلسلة خاسرة:* {report['max_loss_streak']}\n\n"
+    )
+
+    if report.get("best_pair"):
+        bp = report["best_pair"]
+        msg += f"🏆 *أفضل زوج:* `{bp['pair']}` — WR: {bp['wr']}%\n"
+    if report.get("worst_pair"):
+        wp = report["worst_pair"]
+        msg += f"⚠️ *أسوأ زوج:* `{wp['pair']}` — WR: {wp['wr']}%\n"
+
+    msg += f"\n📋 *الاستراتيجيات:*\n"
+    msg += f"  أصلية: {report['original']['total']} صفقة — WR: {report['original']['wr']}%\n"
+    msg += f"  👑 King: {report['king']['total']} صفقة — WR: {report['king']['wr']}%\n"
+
+    # Filter evaluation
+    if report.get("filter_eval"):
+        msg += f"\n🔬 *ترتيب الفلاتر:*\n"
+        for i, (fname, fdata) in enumerate(list(report["filter_eval"].items())[:5], 1):
+            emoji = "🟢" if fdata["worth"] == "High" else ("🟡" if fdata["worth"] == "Med" else "🔴")
+            msg += f"  {i}. {emoji} `{fname}` — WR: {fdata['wr']}% ({fdata['worth']})\n"
+
+    # Calibration
+    if report.get("calibration"):
+        msg += f"\n⚖️ *معايرة الثقة:*\n"
+        for bucket, cdata in report["calibration"].items():
+            msg += f"  {bucket}: {cdata['status']} (Actual: {cdata['actual_wr']}% vs Expected: {cdata['expected_wr']}%)\n"
+
+    return msg
+
+# --- اقتراح التحسين وإرساله ---
+def generate_and_send_optimization_proposal():
+    """
+    يولد اقتراح تحسين ويبعته على تليجرام.
+    """
+    trades = read_trade_log(max_entries=5000)
+
+    # Grid Search
+    proposals, status = grid_search_optimization(trades)
+
+    # Weight Engine
+    weight_result, weight_status = optimize_weights(trades)
+
+    if not proposals and not weight_result:
+        logger.info(f"📊 Optimization: {status}")
+        return
+
+    # بناء الرسالة
+    msg = (
+        f"🔧 *اقتراح تحسين تلقائي*\n"
+        f"📅 التاريخ: {datetime.now(CAIRO_TZ).strftime('%d/%m/%Y %I:%M %p')}\n"
+        f"📊 الصفقات المحللة: {len(trades)}\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+    )
+
+    if proposals:
+        msg += f"📋 *تعديلات العتبات:*\n"
+        for p in proposals:
+            msg += (
+                f"\n🔹 *{p['filter']}*\n"
+                f"   الحالي: `{p['current']}`\n"
+                f"   المقترح: `{p['proposed']}`\n"
+                f"   السبب: {p['reason']}\n"
+                f"   التأثير: {p['impact']}\n"
+            )
+
+    if weight_result:
+        msg += f"\n⚖️ *تعديلات أوزان King Strategy:*\n"
+        for adj in weight_result["adjustments"]:
+            msg += f"   • {adj}\n"
+        msg += f"\n📊 الأوزان الجديدة:\n"
+        for k, v in weight_result["new_weights"].items():
+            old = weight_result["old_weights"].get(k, v)
+            arrow = "↗️" if v > old else ("↘️" if v < old else "➡️")
+            msg += f"   {arrow} `{k}`: {old} → {v}\n"
+
+    msg += (
+        f"\n━━━━━━━━━━━━━━━━━━━━\n"
+        f"✅ *للموافقة:* رد بكلمة `موافق`\n"
+        f"❌ *للرفض:* رد بكلمة `رفض`\n"
+        f"⏳ *متاح لـ 24 ساعة*\n\n"
+        f"⚠️ *تحذير:* التعديل هيغير عتبات الاستراتيجيات."
+    )
+
+    # حفظ الاقتراح في ملف
+    proposal_data = {
+        "timestamp": get_iq_time(),
+        "proposals": proposals or [],
+        "weight_result": weight_result,
+        "status": "pending",
+        "message": msg
+    }
+    with open(OPTIMIZATION_PROPOSAL_FILE, 'w', encoding='utf-8') as f:
+        json.dump(proposal_data, f, ensure_ascii=False, indent=2)
+
+    send_telegram_message(msg)
+    logger.info("🔧 تم إرسال اقتراح تحسين على تليجرام")
+
+# --- معالجة رد المستخدم ---
+def handle_optimization_reply(reply_text):
+    """
+    يتعامل مع رد المستخدم على اقتراح التحسين.
+    """
+    reply_lower = reply_text.lower().strip()
+
+    try:
+        with open(OPTIMIZATION_PROPOSAL_FILE, 'r', encoding='utf-8') as f:
+            proposal = json.load(f)
+    except:
+        return False, "لا يوجد اقتراح نشط"
+
+    if proposal.get("status") != "pending":
+        return False, "الاقتراح تم معالجته بالفعل"
+
+    # التحقق من وقت الصلاحية (24 ساعة)
+    if get_iq_time() - proposal.get("timestamp", 0) > 86400:
+        proposal["status"] = "expired"
+        with open(OPTIMIZATION_PROPOSAL_FILE, 'w', encoding='utf-8') as f:
+            json.dump(proposal, f, ensure_ascii=False, indent=2)
+        return False, "انتهت صلاحية الاقتراح (24 ساعة)"
+
+    if reply_lower in ["موافق", "موافقة", "نعم", "yes", "approve", "ok"]:
+        # تطبيق التعديلات
+        weight_result = proposal.get("weight_result")
+        if weight_result and weight_result.get("new_weights"):
+            global KING_WEIGHTS
+            KING_WEIGHTS = weight_result["new_weights"]
+            save_king_weights(KING_WEIGHTS)
+            logger.info("✅ تم تطبيق أوزان King Strategy الجديدة")
+
+        proposal["status"] = "approved"
+        with open(OPTIMIZATION_PROPOSAL_FILE, 'w', encoding='utf-8') as f:
+            json.dump(proposal, f, ensure_ascii=False, indent=2)
+
+        return True, "✅ تم تطبيق التعديلات بنجاح! البوت يستخدم الآن العتبات الجديدة."
+
+    elif reply_lower in ["رفض", "لا", "no", "reject", "cancel"]:
+        proposal["status"] = "rejected"
+        with open(OPTIMIZATION_PROPOSAL_FILE, 'w', encoding='utf-8') as f:
+            json.dump(proposal, f, ensure_ascii=False, indent=2)
+
+        return True, "❌ تم رفض الاقتراح. البوت يستمر بالعتبات الحالية."
+
+    return False, None
+
+# --- الخلفية Worker ---
+def stats_engine_worker():
+    """
+    يشتغل في الخلفية كل ساعة.
+    يولد تقارير واقتراحات تحسين.
+    """
+    logger.info("📊 Statistical Engine Worker started")
+
+    last_daily_report = 0
+    last_weekly_report = 0
+    last_monthly_report = 0
+    last_optimization = 0
+
+    while True:
+        try:
+            now = get_iq_time()
+            now_dt = datetime.fromtimestamp(now, tz=CAIRO_TZ)
+
+            trades = read_trade_log(max_entries=10000)
+
+            # تقرير يومي — الساعة 00:00 بتوقيت القاهرة
+            if now_dt.hour == 0 and now - last_daily_report > 3600:
+                # ناخد صفقات آخر 24 ساعة
+                day_trades = [t for t in trades if now - t.get("timestamp", 0) <= 86400]
+                report = generate_report(day_trades, "daily")
+                msg = format_report_message(report)
+                send_telegram_message(msg)
+                last_daily_report = now
+                logger.info("📊 تم إرسال التقرير اليومي")
+
+            # تقرير أسبوعي — السبت الساعة 00:00
+            if now_dt.weekday() == 5 and now_dt.hour == 0 and now - last_weekly_report > 3600:
+                week_trades = [t for t in trades if now - t.get("timestamp", 0) <= 604800]
+                report = generate_report(week_trades, "weekly")
+                msg = format_report_message(report)
+                send_telegram_message(msg)
+
+                # مع الـ Weekly Report نبعت اقتراح تحسين
+                if len(trades) >= 200:
+                    generate_and_send_optimization_proposal()
+
+                last_weekly_report = now
+                logger.info("📊 تم إرسال التقرير الأسبوعي + اقتراح تحسين")
+
+            # تقرير شهري — يوم 1 الساعة 00:00
+            if now_dt.day == 1 and now_dt.hour == 0 and now - last_monthly_report > 3600:
+                month_trades = [t for t in trades if now - t.get("timestamp", 0) <= 2592000]
+                report = generate_report(month_trades, "monthly")
+                msg = format_report_message(report)
+                send_telegram_message(msg)
+                last_monthly_report = now
+                logger.info("📊 تم إرسال التقرير الشهري")
+
+            # اقتراح تحسين كل 3 أيام (لو فيه بيانات كافية)
+            if len(trades) >= 500 and now - last_optimization > 259200:
+                generate_and_send_optimization_proposal()
+                last_optimization = now
+
+        except Exception as e:
+            logger.error(f"خطأ في Statistical Engine: {e}")
+            logger.error(traceback.format_exc())
+
+        time.sleep(3600)  # يشيك كل ساعة
 KING_SIGNAL_NAMES = {
     1: ("ملك الإشارات 🥉", "KING BRONZE"),      # 80–84
     2: ("ملك الإشارات 🥈", "KING SILVER"),      # 85–89
@@ -298,20 +1043,19 @@ def check_king_candle_quality(candle):
 def calculate_king_score(structure_ok, sweep_ok, trend_ok, momentum_ok,
                          volatility_ok, adx_ok, rsi_ok, stoch_ok, candle_ok):
     """
-    نظام النقاط (Confidence Score) — المجموع = 100
-    Structure=20 | Sweep=20 | Trend=10 | Momentum=15 | Volatility=10
-    ADX=10 | RSI=5 | Stochastic=5 | Candle=15
+    نظام النقاط (Confidence Score) — يستخدم أوزان ديناميكية من Weight Engine.
     """
+    w = KING_WEIGHTS
     score = 0
-    if structure_ok: score += 20
-    if sweep_ok: score += 20
-    if trend_ok: score += 10
-    if momentum_ok: score += 15
-    if volatility_ok: score += 10
-    if adx_ok: score += 10
-    if rsi_ok: score += 5
-    if stoch_ok: score += 5
-    if candle_ok: score += 15
+    if structure_ok: score += w.get('structure', 20)
+    if sweep_ok: score += w.get('sweep', 20)
+    if trend_ok: score += w.get('trend', 10)
+    if momentum_ok: score += w.get('momentum', 15)
+    if volatility_ok: score += w.get('volatility', 10)
+    if adx_ok: score += w.get('adx', 10)
+    if rsi_ok: score += w.get('rsi', 5)
+    if stoch_ok: score += w.get('stochastic', 5)
+    if candle_ok: score += w.get('candle', 15)
     return score
 
 # --- 6. Cache & Data Management ---
@@ -795,6 +1539,28 @@ def check_trade_results():
                     stats[pair]['total'] += 1
                     stats[pair]['win' if is_win else 'loss'] += 1
 
+                # ========== Statistical Engine: تسجيل الصفقة ==========
+                try:
+                    log_trade({
+                        "timestamp": get_iq_time(),
+                        "pair": pair,
+                        "direction": d,
+                        "strategy": trade.get('strategy', 'unknown'),
+                        "level": trade.get('signal_level', 0),
+                        "score": trade.get('score', 0),
+                        "entry_price": float(ep),
+                        "exit_price": float(fp),
+                        "outcome": "win" if is_win else "loss",
+                        "filters": trade.get('filters', {}),
+                        "indicators": trade.get('indicators', {}),
+                        "hour": trade.get('hour', datetime.now(CAIRO_TZ).hour),
+                        "day_of_week": datetime.now(CAIRO_TZ).weekday(),
+                        "is_martingale": is_mg,
+                        "is_king": is_king
+                    })
+                except Exception as e:
+                    logger.error(f"خطأ في تسجيل صفقة للـ Statistical Engine: {e}")
+
                 if is_mg:
                     msg = f"✅ *نتيجة المضاعفة: رابحة*" if is_win else f"❌ *نتيجة المضاعفة: خاسرة*"
                     msg += f"\nالزوج: `{pair}` [5m]\n⏰ `{ts}`"
@@ -958,7 +1724,31 @@ def analyze_pair(pair, timeframe="5m"):
             'warned_loss': False,
             'is_martingale': in_hunt_mode,
             'signal_level': strength,
-            'signal_name': signal_name_ar
+            'signal_name': signal_name_ar,
+            # Statistical Engine data
+            'score': strength * 16,  # rough mapping to 100 scale
+            'filters': {
+                'alma_cross': (a9p <= a50p and a9c > a50c) if potential_direction == "CALL" else (a9p >= a50p and a9c < a50c),
+                'price_above_alma': price > alma9 if potential_direction == "CALL" else price < alma9,
+                'stoch_aligned': stoch_k > stoch_d if potential_direction == "CALL" else stoch_k < stoch_d,
+                'rsi_zone': (30 <= rsi <= 52) if potential_direction == "CALL" else (48 <= rsi <= 70),
+                'near_sr': near_sup if potential_direction == "CALL" else near_res,
+                'volume_ok': volume >= vol_ma * 0.78,
+                'adx_ok': adx >= 15,
+                'bbw_ok': bbw >= 0.0009,
+                'atr_ok': atr >= (price * 0.00024)
+            },
+            'indicators': {
+                'adx': float(adx),
+                'rsi': float(rsi),
+                'bbw': float(bbw),
+                'atr': float(atr),
+                'roc': float(roc),
+                'stoch_k': float(stoch_k),
+                'stoch_d': float(stoch_d)
+            },
+            'hour': datetime.now(CAIRO_TZ).hour,
+            'strategy': 'original'
         })
         return final_signal
 
@@ -1121,7 +1911,30 @@ def analyze_pair_king(pair, timeframe="5m"):
             'is_king': True,
             'signal_level': level,
             'signal_name': signal_name_ar,
-            'score': score
+            'score': score,
+            # Statistical Engine data
+            'filters': {
+                'structure_ok': structure in ["BULLISH", "BEARISH"],
+                'sweep_ok': sweep_ok,
+                'trend_ok': trend_ok,
+                'momentum_ok': momentum_ok,
+                'volatility_ok': volatility_ok,
+                'adx_ok': adx_ok,
+                'rsi_ok': rsi_ok,
+                'stoch_ok': stoch_ok,
+                'candle_ok': candle_ok
+            },
+            'indicators': {
+                'adx': float(adx),
+                'rsi': float(rsi),
+                'roc': float(roc),
+                'atr': float(atr),
+                'bbw': float(bbw),
+                'stoch_k': float(stoch_k),
+                'stoch_d': float(stoch_d)
+            },
+            'hour': datetime.now(CAIRO_TZ).hour,
+            'strategy': 'king'
         })
 
         final_signal = (
@@ -1152,6 +1965,54 @@ def analyze_pair_wrapper_king(pair):
         return pair, None
 
 # --- 16. تشغيل البوت ---
+
+# ========== Telegram Reply Handler (للموافقة على التحسينات) ==========
+telegram_last_update_id = 0
+
+def telegram_reply_worker():
+    """
+    يشيك على ردود تليجرام كل 30 ثانية.
+    لو المستخدم رد "موافق" أو "رفض" على اقتراح تحسين → يتعامل معاه.
+    """
+    global telegram_last_update_id
+    logger.info("📱 Telegram Reply Worker started")
+
+    while True:
+        try:
+            url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
+            params = {
+                "offset": telegram_last_update_id + 1,
+                "limit": 10
+            }
+            res = requests.get(url, params=params, timeout=10)
+            if res.ok:
+                data = res.json()
+                if data.get("ok") and data.get("result"):
+                    for update in data["result"]:
+                        telegram_last_update_id = update["update_id"]
+
+                        # نفحص بس الرسائل النصية
+                        message = update.get("message", {})
+                        if not message:
+                            continue
+
+                        chat_id_msg = message.get("chat", {}).get("id")
+                        if str(chat_id_msg) != str(CHAT_ID):
+                            continue
+
+                        text = message.get("text", "").strip()
+                        if not text:
+                            continue
+
+                        # نفحص لو الرد على اقتراح تحسين
+                        success, response_msg = handle_optimization_reply(text)
+                        if success and response_msg:
+                            _send_telegram_raw(response_msg)
+                            logger.info(f"📱 تم معالجة رد المستخدم: {text}")
+        except Exception as e:
+            logger.error(f"خطأ في Telegram Reply Worker: {e}")
+
+        time.sleep(30)
 def run_bot():
     global cycle_count, last_hunt_message_time
 
@@ -1197,6 +2058,9 @@ def run_bot():
     )
 
     threading.Thread(target=telegram_worker, daemon=True).start()
+    threading.Thread(target=stats_engine_worker, daemon=True).start()
+    threading.Thread(target=telegram_reply_worker, daemon=True).start()
+    logger.info("📊 Statistical Engine Worker started")
 
     try:
         while True:
