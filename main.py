@@ -85,7 +85,8 @@ news_data = []
 last_news_update = 0
 news_fetch_failed = False
 hunt_mode_announced = {}
-last_hunt_message_time = 0  # لتتبع وقت آخر رسالة مضاعفة
+last_hunt_message_time = 0
+invalid_assets = set()  # لتتبع الأزواج اللي مش موجودة
 
 cycle_count = 0
 stats = defaultdict(lambda: {"win": 0, "loss": 0, "total": 0})
@@ -174,7 +175,12 @@ def get_cached_candles(pair, tf, count, max_age=30):
             candles_cache[key] = (data, now)
         return data
     except Exception as e:
-        logger.error(f"خطأ جلب شموع {pair}: {e}")
+        err_str = str(e).lower()
+        if "not found" in err_str or "asset" in err_str:
+            invalid_assets.add(pair)
+            logger.warning(f"⚠️ الزوج {pair} غير متاح في المنصة، تم إزالته من القائمة.")
+        else:
+            logger.error(f"خطأ جلب شموع {pair}: {e}")
         if key in candles_cache:
             return candles_cache[key][0]
         return None
@@ -793,11 +799,12 @@ def run_bot():
     day_of_week = datetime.now(CAIRO_TZ).weekday()
     # 5 = السبت, 6 = الأحد
     if day_of_week in [5, 6]:
+        # الأزواج الـ OTC المتاحة فعلاً في IQ Option (بدون AUDUSD-OTC و USDCAD-OTC)
         pairs = [
-            "EURUSD-OTC", "GBPUSD-OTC", "USDJPY-OTC", "AUDUSD-OTC",
-            "USDCAD-OTC", "USDCHF-OTC", "EURJPY-OTC", "EURGBP-OTC",
-            "AUDCAD-OTC", "AUDJPY-OTC", "CADJPY-OTC", "EURAUD-OTC",
-            "GBPJPY-OTC", "EURCAD-OTC"
+            "EURUSD-OTC", "GBPUSD-OTC", "USDJPY-OTC", "USDCHF-OTC",
+            "EURJPY-OTC", "EURGBP-OTC", "AUDCAD-OTC", "AUDJPY-OTC",
+            "CADJPY-OTC", "EURAUD-OTC", "GBPJPY-OTC", "EURCAD-OTC",
+            "EURCHF-OTC", "NZDCHF-OTC"
         ]
         mode_text = "OTC (عطلة weekend)"
     else:
@@ -808,11 +815,12 @@ def run_bot():
         ]
         mode_text = "عادي (سوق مفتوح)"
 
-    logger.info(f"🚀 البوت يعمل بالنسخة V5.2 (وضع {mode_text})...")
+    logger.info(f"🚀 البوت يعمل بالنسخة V5.3 (وضع {mode_text})...")
     send_telegram_message(
-        f"🤖 *تم تشغيل بوت IQ Option V5.2!*\n"
+        f"🤖 *تم تشغيل بوت IQ Option V5.3!*\n"
         f"📅 *اليوم:* {datetime.now(CAIRO_TZ).strftime('%A %d/%m/%Y')}\n"
         f"🌐 *وضع الأزواج:* {mode_text}\n"
+        f"📋 *الأزواج المتاحة:* {len(pairs)} زوج\n"
         f"⏱️ *الفريم:* 5 دقائق\n"
         f"📊 *مستويات الإشارات:*\n"
         f"  🚀 قوية جداً (Very Strong)\n"
@@ -836,6 +844,11 @@ def run_bot():
             try:
                 check_connection_health()
 
+                # تصفية الأزواج اللي مش موجودة في المنصة
+                valid_pairs = [p for p in pairs if p not in invalid_assets]
+                if len(valid_pairs) < len(pairs):
+                    logger.info(f"📋 الأزواج المتاحة: {len(valid_pairs)}/{len(pairs)}")
+
                 # رسالة دورية أثناء وضع المضاعفة — كل نص ساعة (1800 ثانية)
                 if martingale_queue:
                     now_time = get_iq_time()
@@ -843,14 +856,14 @@ def run_bot():
                         last_hunt_message_time = now_time
                         send_telegram_message(
                             f"🔍 *جاري تحليل السوق لإيجاد مضاعفة قوية...*\n"
-                            f"🎯 البوت يحلل *كل الأزواج الـ 14* بكل طاقته.\n\n"
+                            f"🎯 البوت يحلل *كل الأزواج المتاحة* بكل طاقته.\n\n"
                             f"⏳ نبحث عن *ماكس* 🔥 أو *سوبر ماكس* 👑 فقط.\n"
                             f"⛔ إشارات (قوية جداً) متوقفة مؤقتاً.\n"
                             f"⏱️ الوقت المتبقي للبحث: 3 ساعات كحد أقصى."
                         )
 
                 with ThreadPoolExecutor(max_workers=7) as executor:
-                    results = executor.map(analyze_pair_wrapper, pairs)
+                    results = executor.map(analyze_pair_wrapper, valid_pairs)
 
                     if martingale_queue:
                         # وضع المضاعفة: ناخد أول إشارة ماكس/سوبر ماكس نلاقيها
