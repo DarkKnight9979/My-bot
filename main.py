@@ -1,4 +1,3 @@
-
 import os
 import threading
 import logging
@@ -208,9 +207,13 @@ def get_cached_df(pair, tf, count):
 
 def cleanup_memory():
     now = get_iq_time()
-    global sent_signals, recent_signals, candles_cache, df_cache, ht_trend_cache, hunt_mode_announced
+    global sent_signals, recent_signals, candles_cache, df_cache, ht_trend_cache, hunt_mode_announced, alerted_pairs
     sent_signals = {k:v for k,v in sent_signals.items() if now - v < 600}
     recent_signals = {k:v for k,v in recent_signals.items() if now - v[0] < 1200}
+    # تنظيف التنبيهات المسبقة كل 10 دقايق عشان متراكمش
+    for k in list(alerted_pairs.keys()):
+        if k in sent_signals and now - sent_signals[k] > 600:
+            del alerted_pairs[k]
     for k in list(candles_cache.keys()):
         if now - candles_cache[k][1] > 300:
             del candles_cache[k]
@@ -747,7 +750,8 @@ def analyze_pair(pair, timeframe="5m"):
             'expire_time': get_iq_time() + 300,
             'warned_loss': False,
             'is_martingale': in_hunt_mode,
-            'signal_level': strength
+            'signal_level': strength,
+            'signal_name': signal_name_ar
         })
         return final_signal
 
@@ -874,3 +878,4 @@ def run_bot():
 if __name__ == "__main__":
     threading.Thread(target=run_web_server, daemon=True).start()
     run_bot()
+
