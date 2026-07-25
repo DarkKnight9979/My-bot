@@ -262,10 +262,15 @@ def update_news():
     logger.error("❌ فشل المصدران في جلب الأخبار! تفعيل وضع الحماية.")
 
 def is_news_for_pair(pair):
+    # في أيام OTC (سبت/أحد) مفيش أخبار، نتجاهل الفلتر
+    day_of_week = datetime.now(CAIRO_TZ).weekday()
+    if day_of_week in [5, 6]:
+        return False
+
     update_news()
     if news_fetch_failed:
-        logger.warning("🛡️ إيقاف الإشارة لوجود عطل في شبكة الأخبار (وضع الأمان)")
-        return True
+        logger.warning("⚠️ شبكة الأخبار غير متاحة، الإشارات مستمرة مع مراقبة يدوية")
+        return False  # لا نقفل الإشارات، نستمر بحذر
     now = datetime.now(UTC_TZ)
     for ev in news_data:
         try:
