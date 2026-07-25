@@ -85,6 +85,7 @@ news_data = []
 last_news_update = 0
 news_fetch_failed = False
 hunt_mode_announced = {}
+last_hunt_message_time = 0  # لتتبع وقت آخر رسالة مضاعفة
 
 cycle_count = 0
 stats = defaultdict(lambda: {"win": 0, "loss": 0, "total": 0})
@@ -622,20 +623,20 @@ def analyze_pair(pair, timeframe="5m"):
         emoji = SIGNAL_EMOJIS[strength]
         da = "صعود (CALL)" if potential_direction == "CALL" else "هبوط (PUT)"
 
-        # التنبيه المسبق (نهاية الشمعة: 270-285)
-        if 270 <= csec <= 285 and pair_key not in alerted_pairs:
+        # التنبيه المسبق (آخر 15 ثانية من الشمعة: 285-292)
+        if 285 <= csec <= 292 and pair_key not in alerted_pairs:
             send_telegram_message(
                 f"⚠️ *تجهّز! مضاعفة {signal_name_ar}* قريبة جداً\n"
                 f"الزوج: `{pair}` [5m]\n"
                 f"الاتجاه: *{da}*\n"
                 f"💡 النوع: *{signal_name_en}* {emoji}\n"
                 f"📊 القوة: *{strength}/3*\n"
-                f"يرجى فتح الشارت استعداداً للدخول!"
+                f"⏱️ *انتظر إشارة الدخول النهائية في آخر 5 ثواني من الشمعة!*"
             )
             alerted_pairs[pair_key] = potential_direction
 
-        # الإرسال النهائي فقط في آخر 10 ثوانٍ (290-299)
-        if 290 <= csec <= 299:
+        # الإرسال النهائي فقط في آخر 5 ثوانٍ (295-299)
+        if 295 <= csec <= 299:
             if already_sent_this_candle(pair):
                 return None
 
@@ -691,20 +692,22 @@ def analyze_pair(pair, timeframe="5m"):
     # ============================================================
     signal_name_ar, signal_name_en = SIGNAL_NAMES[strength]
     emoji = SIGNAL_EMOJIS[strength]
+    da = "صعود (CALL)" if potential_direction == "CALL" else "هبوط (PUT)"
 
-    # التنبيه المسبق (نهاية الشمعة: 270-285)
-    if 270 <= csec <= 285 and pair_key not in alerted_pairs:
+    # التنبيه المسبق (آخر 15 ثانية من الشمعة: 285-292)
+    if 285 <= csec <= 292 and pair_key not in alerted_pairs:
         send_telegram_message(
             f"⚠️ *تجهّز! إشارة {signal_name_ar}* قريبة جداً\n"
             f"الزوج: `{pair}` [5m]\n"
+            f"الاتجاه: *{da}*\n"
             f"💡 النوع: *{signal_name_en}* {emoji}\n"
             f"📊 القوة: *{strength}/3*\n"
-            f"يرجى فتح الشارت استعداداً للدخول!"
+            f"⏱️ *انتظر إشارة الدخول النهائية في آخر 5 ثواني من الشمعة!*"
         )
         alerted_pairs[pair_key] = potential_direction
 
-    # الإرسال النهائي فقط في آخر 10 ثوانٍ (290-299)
-    if 290 <= csec <= 299:
+    # الإرسال النهائي فقط في آخر 5 ثوانٍ (295-299)
+    if 295 <= csec <= 299:
         if already_sent_this_candle(pair):
             return None
 
@@ -736,6 +739,7 @@ def analyze_pair(pair, timeframe="5m"):
             final_signal = (
                 f"{emoji} *إشارة سوبر ماكس (SUPER MAX)* {emoji}\n"
                 f"الزوج: `{pair}` (IQ Option) [5m]\n"
+                f"الاتجاه: *{da}*\n"
                 f"⏱️ *مدة الصفقة:* {duration_text}\n"
                 f"📊 *مؤشرات:* ADX={adx:.1f} | BBW={bbw:.4f} | ATR={atr:.5f}\n"
                 f"⚡ *ادخل فوراً مع بداية الشمعة التالية!*"
@@ -744,6 +748,7 @@ def analyze_pair(pair, timeframe="5m"):
             final_signal = (
                 f"{emoji} *إشارة ماكس (MAX)* {emoji}\n"
                 f"الزوج: `{pair}` (IQ Option) [5m]\n"
+                f"الاتجاه: *{da}*\n"
                 f"⏱️ *مدة الصفقة:* {duration_text}\n"
                 f"📊 *مؤشرات:* ADX={adx:.1f} | BBW={bbw:.4f} | RSI={rsi:.1f}\n"
                 f"⚡ *ادخل فوراً مع بداية الشمعة التالية!*"
@@ -752,6 +757,7 @@ def analyze_pair(pair, timeframe="5m"):
             final_signal = (
                 f"{emoji} *إشارة قوية جداً (VERY STRONG)* {emoji}\n"
                 f"الزوج: `{pair}` (IQ Option) [5m]\n"
+                f"الاتجاه: *{da}*\n"
                 f"⏱️ *مدة الصفقة:* {duration_text}\n"
                 f"📊 *مؤشرات:* ADX={adx:.1f} | RSI={rsi:.1f} | ROC={roc:.2f}\n"
                 f"⚡ *ادخل فوراً مع بداية الشمعة التالية!*"
@@ -781,23 +787,44 @@ def analyze_pair_wrapper(pair):
         return pair, None
 
 def run_bot():
-    global cycle_count
-    pairs = ["EURUSD-OTC", "GBPUSD-OTC", "USDJPY-OTC", "AUDUSD-OTC", "USDCAD-OTC", "USDCHF-OTC", "EURJPY-OTC", "EURGBP-OTC"]
-    logger.info("🚀 البوت يعمل بالنسخة V5.1 (وضع المضاعفة على كل الأزواج)...")
+    global cycle_count, last_hunt_message_time
+
+    # ========== OTC MODE: أزواج OTC للعطلات ==========
+    day_of_week = datetime.now(CAIRO_TZ).weekday()
+    # 5 = السبت, 6 = الأحد
+    if day_of_week in [5, 6]:
+        pairs = [
+            "EURUSD-OTC", "GBPUSD-OTC", "USDJPY-OTC", "AUDUSD-OTC",
+            "USDCAD-OTC", "USDCHF-OTC", "EURJPY-OTC", "EURGBP-OTC",
+            "AUDCAD-OTC", "AUDJPY-OTC", "CADJPY-OTC", "EURAUD-OTC",
+            "GBPJPY-OTC", "EURCAD-OTC"
+        ]
+        mode_text = "OTC (عطلة weekend)"
+    else:
+        pairs = [
+            "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF",
+            "EURJPY", "EURGBP", "AUDCAD", "AUDJPY", "CADJPY", "EURAUD",
+            "GBPJPY", "EURCAD"
+        ]
+        mode_text = "عادي (سوق مفتوح)"
+
+    logger.info(f"🚀 البوت يعمل بالنسخة V5.2 (وضع {mode_text})...")
     send_telegram_message(
-        "🤖 *تم تشغيل بوت IQ Option V5.1!*\n"
-        "⏱️ *الفريم:* 5 دقائق\n"
-        "📊 *مستويات الإشارات:*\n"
-        "  🚀 قوية جداً (Very Strong)\n"
-        "  🔥 ماكس (Max)\n"
-        "  👑 سوبر ماكس (Super Max)\n"
-        "🎯 *وضع المضاعفة:* مفعل على كل الأزواج\n"
-        "  ⛔ إيقاف (قوية جداً) أثناء البحث عن مضاعفة\n"
-        "  ✅ قبول (ماكس 🔥 و سوبر ماكس 👑) فقط\n"
-        "  ⏱️ Timeout: 3 ساعات\n"
-        "  ⏱️ دخول في آخر 10 ثوانٍ من الشمعة\n"
-        "🌐 *مزامنة السيرفر:* مفعلة\n"
-        "🛡️ *الحماية:* مصدران للأخبار + مراقبة الاتصال + فلتر الساعة"
+        f"🤖 *تم تشغيل بوت IQ Option V5.2!*\n"
+        f"📅 *اليوم:* {datetime.now(CAIRO_TZ).strftime('%A %d/%m/%Y')}\n"
+        f"🌐 *وضع الأزواج:* {mode_text}\n"
+        f"⏱️ *الفريم:* 5 دقائق\n"
+        f"📊 *مستويات الإشارات:*\n"
+        f"  🚀 قوية جداً (Very Strong)\n"
+        f"  🔥 ماكس (Max)\n"
+        f"  👑 سوبر ماكس (Super Max)\n"
+        f"🎯 *وضع المضاعفة:* مفعل على كل الأزواج\n"
+        f"  ⛔ إيقاف (قوية جداً) أثناء البحث عن مضاعفة\n"
+        f"  ✅ قبول (ماكس 🔥 و سوبر ماكس 👑) فقط\n"
+        f"  ⏱️ Timeout: 3 ساعات\n"
+        f"  ⏱️ دخول في آخر 5 ثوانٍ من الشمعة\n"
+        f"🌐 *مزامنة السيرفر:* مفعلة\n"
+        f"🛡️ *الحماية:* مصدران للأخبار + مراقبة الاتصال + فلتر الساعة"
     )
 
     threading.Thread(target=telegram_worker, daemon=True).start()
@@ -809,15 +836,18 @@ def run_bot():
             try:
                 check_connection_health()
 
-                # رسالة دورية أثناء وضع المضاعفة
-                if martingale_queue and (cycle_count % 25 == 0):
-                    send_telegram_message(
-                        f"🔍 *جاري تحليل السوق لإيجاد مضاعفة قوية...*\n"
-                        f"🎯 البوت يحلل *كل الأزواج الـ 14* بكل طاقته.\n\n"
-                        f"⏳ نبحث عن *ماكس* 🔥 أو *سوبر ماكس* 👑 فقط.\n"
-                        f"⛔ إشارات (قوية جداً) متوقفة مؤقتاً.\n"
-                        f"⏱️ الوقت المتبقي للبحث: 3 ساعات كحد أقصى."
-                    )
+                # رسالة دورية أثناء وضع المضاعفة — كل نص ساعة (1800 ثانية)
+                if martingale_queue:
+                    now_time = get_iq_time()
+                    if now_time - last_hunt_message_time >= 1800:
+                        last_hunt_message_time = now_time
+                        send_telegram_message(
+                            f"🔍 *جاري تحليل السوق لإيجاد مضاعفة قوية...*\n"
+                            f"🎯 البوت يحلل *كل الأزواج الـ 14* بكل طاقته.\n\n"
+                            f"⏳ نبحث عن *ماكس* 🔥 أو *سوبر ماكس* 👑 فقط.\n"
+                            f"⛔ إشارات (قوية جداً) متوقفة مؤقتاً.\n"
+                            f"⏱️ الوقت المتبقي للبحث: 3 ساعات كحد أقصى."
+                        )
 
                 with ThreadPoolExecutor(max_workers=7) as executor:
                     results = executor.map(analyze_pair_wrapper, pairs)
@@ -830,7 +860,6 @@ def run_bot():
                                 logger.info(f"✅ مضاعفة ممتازة: {pair}")
                                 send_telegram_message(signal)
                                 martingale_found = True
-                                # نمسح كل قائمة المضاعفات لأننا لقينا واحدة
                                 martingale_queue.clear()
                                 alerted_pairs.clear()
                     else:
