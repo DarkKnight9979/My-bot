@@ -405,13 +405,13 @@ def evaluate_signal_strength(direction, curr, prev, df, price, alma9, alma50,
         # صعود: لازم السعر يكون فوق ALMA بمسافة واضحة + Stochastic متفق + RSI في منطقة الشراء
         cond_base = (price > alma9 * 1.0003) and (stoch_k > stoch_d * 1.02)
         cond_rsi = 30 <= rsi <= 55  # RSI في منطقة الشراء القوية (مش مجرد أقل من 60)
-        cond_zone = near_sup or (price <= bbl * 1.002)  # قرب الدعم أو البولنجر السفلي
+        cond_zone = near_sup or (price <= curr['BBL'] * 1.002)  # قرب الدعم أو البولنجر السفلي
         cond_stoch_zone = stoch_k <= 45  # Stochastic مش مبالغ فيه (مش overbought)
     else:
         # هبوط: لازم السعر يكون تحت ALMA بمسافة واضحة + Stochastic متفق + RSI في منطقة البيع
         cond_base = (price < alma9 * 0.9997) and (stoch_k < stoch_d * 0.98)
         cond_rsi = 45 <= rsi <= 70  # RSI في منطقة البيع القوية (مش مجرد أكبر من 40)
-        cond_zone = near_res or (price >= bbu * 0.998)  # قرب المقاومة أو البولنجر العلوي
+        cond_zone = near_res or (price >= curr['BBU'] * 0.998)  # قرب المقاومة أو البولنجر العلوي
         cond_stoch_zone = stoch_k >= 55  # Stochastic مش مبالغ فيه (مش oversold)
 
     if (cond_base and cond_rsi and cond_zone and cond_stoch_zone and
