@@ -212,7 +212,13 @@ def cleanup_memory():
     recent_signals = {k:v for k,v in recent_signals.items() if now - v[0] < 1200}
     # تنظيف التنبيهات المسبقة كل 8 دقايق (480 ثانية)
     for k in list(alerted_pairs.keys()):
-        if now - alerted_pairs[k][1] > 480:
+        val = alerted_pairs[k]
+        # Handle old format (string) and new format (tuple)
+        if isinstance(val, tuple) and len(val) >= 2:
+            if now - val[1] > 480:
+                del alerted_pairs[k]
+        else:
+            # Old string format - just delete it
             del alerted_pairs[k]
     for k in list(candles_cache.keys()):
         if now - candles_cache[k][1] > 300:
@@ -465,15 +471,17 @@ def evaluate_signal_strength(direction, curr, prev, df, price, alma9, alma50,
 
     # --- مستوى 2: قوية جداً ---
     if direction == "CALL":
-        cond_base = (price > alma9) and (stoch_k > stoch_d)
-        cond_rsi = 30 <= rsi <= 53
+        # السعر لازم يكون فوق ALMA_9 بمسافة واضحة (0.03%)
+        cond_base = (price > alma9 * 1.0003) and (stoch_k > stoch_d)
+        cond_rsi = 30 <= rsi <= 52
         cond_zone = near_sup or (price <= curr['BBL'] * 1.001)
-        cond_stoch_zone = stoch_k <= 43
+        cond_stoch_zone = stoch_k <= 42
     else:
-        cond_base = (price < alma9) and (stoch_k < stoch_d)
-        cond_rsi = 47 <= rsi <= 70
+        # السعر لازم يكون تحت ALMA_9 بمسافة واضحة (0.03%)
+        cond_base = (price < alma9 * 0.9997) and (stoch_k < stoch_d)
+        cond_rsi = 48 <= rsi <= 70
         cond_zone = near_res or (price >= curr['BBU'] * 0.999)
-        cond_stoch_zone = stoch_k >= 57
+        cond_stoch_zone = stoch_k >= 58
     if (cond_base and cond_rsi and cond_zone and cond_stoch_zone and
         body_pct >= 0.16 and
         volume >= vol_ma * 0.78 and
@@ -878,5 +886,3 @@ def run_bot():
 if __name__ == "__main__":
     threading.Thread(target=run_web_server, daemon=True).start()
     run_bot()
-
-
