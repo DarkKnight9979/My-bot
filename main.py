@@ -1,3 +1,4 @@
+
 import os
 import threading
 import logging
@@ -291,6 +292,10 @@ def is_news_for_pair(pair):
 
 # --- 8. فلتر افتتاح السوق ---
 def is_market_open_chaos():
+    # في أيام OTC (سبت/أحد) مفيش افتتاح سوق حقيقي - الـ OTC شغال طول اليوم
+    day_of_week = datetime.now(CAIRO_TZ).weekday()
+    if day_of_week in [5, 6]:
+        return False
     now = get_cairo_time()
     hm = now.hour * 100 + now.minute
     if (1000 <= hm <= 1030) or (1530 <= hm <= 1600):
