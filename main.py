@@ -562,7 +562,7 @@ def analyze_pair(pair, timeframe="5m"):
     price, open_price, low, high = curr['Close'], curr['Open'], curr['Low'], curr['High']
     alma9, alma50 = curr['ALMA_9'], curr['ALMA_50']
     rsi, stoch_k, stoch_d = curr['RSI'], curr['Stoch_K'], curr['Stoch_D']
-    bbl, bbu, volume, vol_ma = curr['BBL'], curr['BBU'], curr['Volume'], curr['Vol_MA']
+    volume, vol_ma = curr['Volume'], curr['Vol_MA']
     roc = curr['ROC']
 
     atr = calculate_atr_wilder(df, 14)
@@ -570,8 +570,8 @@ def analyze_pair(pair, timeframe="5m"):
     bbw = bollinger_bandwidth(df, 20)
     resistance, support = get_fractal_levels(df, lookback=20)
 
-    near_sup = abs(price - support) <= (price * 0.0005) or low <= (bbl * 1.001)
-    near_res = abs(price - resistance) <= (price * 0.0005) or high >= (bbu * 0.999)
+    near_sup = abs(price - support) <= (price * 0.0005) or low <= (curr['BBL'] * 1.001)
+    near_res = abs(price - resistance) <= (price * 0.0005) or high >= (curr['BBU'] * 0.999)
 
     pair_key = f"{pair}_5m"
     cn = get_cairo_time()
