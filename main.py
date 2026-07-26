@@ -172,6 +172,10 @@ def log_trade(trade_data):
     try:
         pair = trade_data.get("pair", "")
         log_file = get_trade_log_file(pair)
+        # ننشئ الملف لو مش موجود
+        if not os.path.exists(log_file):
+            with open(log_file, 'w', encoding='utf-8') as f:
+                pass
         with open(log_file, 'a', encoding='utf-8') as f:
             f.write(json.dumps(trade_data, ensure_ascii=False) + "\n")
     except Exception as e:
@@ -193,6 +197,9 @@ def read_trade_log(max_entries=50000, market_type=None):
         files = ["trade_log_live.jsonl", "trade_log_otc.jsonl"]
 
     for log_file in files:
+        # لو الملف مش موجود نتجاهله بس ونمشي
+        if not os.path.exists(log_file):
+            continue
         try:
             with open(log_file, 'r', encoding='utf-8') as f:
                 lines = f.readlines()
@@ -1554,7 +1561,15 @@ def is_otc_pair(pair):
     return "-OTC" in pair.upper()
 
 def get_trade_log_file(pair):
-    return "trade_log_otc.jsonl" if is_otc_pair(pair) else "trade_log_live.jsonl"
+    filename = "trade_log_otc.jsonl" if is_otc_pair(pair) else "trade_log_live.jsonl"
+    # ننشئ الملف لو مش موجود عشان read_trade_log ما تفشلش
+    if not os.path.exists(filename):
+        try:
+            with open(filename, 'w', encoding='utf-8') as f:
+                pass
+        except Exception as e:
+            logger.warning(f"⚠️ فشل إنشاء {filename}: {e}")
+    return filename
 
 def get_stats_file(pair):
     return "stats_state_otc.json" if is_otc_pair(pair) else "stats_state_live.json"
