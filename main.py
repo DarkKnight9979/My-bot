@@ -110,6 +110,10 @@ DISABLE_THRESHOLD = 45
 DISABLE_DURATION = 604800  # 7 أيام
 strategy_scores = {}
 
+# ========== Cache للإعدادات (لتقليل قراءة الملف) ==========
+settings_cache = {}
+SETTINGS_CACHE_TTL = 300  # 5 دقائق
+
 # ========== إنشاء ملفات التسجيل في البداية (لمنع أخطاء الملف المفقود) ==========
 def init_log_files():
     """
@@ -1143,7 +1147,7 @@ adaptive_thresholds = {
 def load_settings(market_type="live"):
     """
     يحمل إعدادات Walk Forward للسوق المحدد.
-    مع Fallback آمن لو الملف مش موجود أو تالف أو فاضي.
+    مع Fallback آمن + تصليح فوري للملف الفاضي/التالف.
     """
     file_path = SETTINGS_LIVE_FILE if market_type == "live" else SETTINGS_OTC_FILE
     default_settings = {
@@ -1165,23 +1169,26 @@ def load_settings(market_type="live"):
         if os.path.exists(file_path):
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read().strip()
-            # لو الملف فاضي نرجع الافتراضي بهدوء
+            # لو الملف فاضي نصلحه فوراً ونرجع الافتراضي
             if not content:
+                try:
+                    with open(file_path, 'w', encoding='utf-8') as f:
+                        json.dump(default_settings, f)
+                except:
+                    pass
                 return default_settings.copy()
             data = json.loads(content)
-            if isinstance(data, dict) and data:
+            if isinstance(data, dict):
                 # نتأكد من وجود كل المفاتيح المطلوبة
                 for key in default_settings:
                     if key not in data:
                         data[key] = default_settings[key]
                 return data
-    except Exception as e:
-        # نسجل error بس لو الملف مش فاضي (يعني فيه محتوى تالف فعلاً)
+    except Exception:
+        # نصلح الملف التالف فوراً
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read().strip()
-            if content:
-                logger.warning(f"⚠️ فشل تحميل إعدادات {market_type}: {e} — استخدام القيم الافتراضية")
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(default_settings, f)
         except:
             pass
 
@@ -1202,14 +1209,34 @@ def save_settings(settings, market_type="live"):
 def get_settings_for_pair(pair):
     """
     يرجع الإعدادات المناسبة للزوج (LIVE أو OTC).
+    تستخدم cache عشان ما تقراش الملف في كل مرة.
     Fallback آمن دائماً.
     """
+    global settings_cache
+    market_type = "otc" if is_otc_pair(pair) else "live"
+    cache_key = f"settings_{market_type}"
+    now = get_iq_time()
+
+    # نستخدم cache لو لسه صالح
+    if cache_key in settings_cache:
+        data, ts = settings_cache[cache_key]
+        if now - ts < SETTINGS_CACHE_TTL:
+            return data
+
     try:
-        market_type = "otc" if is_otc_pair(pair) else "live"
-        return load_settings(market_type)
-    except Exception as e:
-        logger.error(f"❌ فشل تحميل إعدادات {pair}: {e} — Fallback للافتراضي")
-        return load_settings("live")  # الأكثر أماناً
+        settings = load_settings(market_type)
+        settings_cache[cache_key] = (settings, now)
+        return settings
+    except Exception:
+        # Fallback للافتراضي من غير error
+        default = {
+            "adx_threshold": 22, "rsi_low_call": 45, "rsi_high_call": 60,
+            "rsi_low_put": 40, "rsi_high_put": 55, "sweep_threshold": 0.0003,
+            "body_pct_min": 0.60, "last_updated": 0, "market_type": market_type,
+            "approved": False, "walk_forward_wr": 0, "baseline_wr": 0
+        }
+        settings_cache[cache_key] = (default, now)
+        return default
 
 # ========== Adaptive Threshold محسّن (منفصل لكل سوق) ==========
 def calculate_adaptive_threshold(trades, market_type="live"):
@@ -1956,6 +1983,9 @@ def cleanup_memory():
                 del king_alerted_pairs[k]
         else:
             del king_alerted_pairs[k]
+    # تنظيف settings_cache
+    global settings_cache
+    settings_cache = {k:v for k,v in settings_cache.items() if now - v[1] < SETTINGS_CACHE_TTL}
 
 # --- 7. فلتر الأخبار ---
 CURRENCY_PAIRS = {
@@ -2833,6 +2863,9 @@ STRATEGY_SCORE_WINDOW = 100
 
 def run_bot():
     global cycle_count, last_hunt_message_time
+
+    # ========== إنشاء/إصلاح الملفات قبل أي حاجة ==========
+    init_log_files()
 
     # ========== دالة مساعدة لتحديد الأزواج حسب اليوم ==========
     def get_pairs_for_today():
