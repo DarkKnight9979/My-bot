@@ -52,11 +52,11 @@ ADAPTIVE_THRESHOLD_MAX = 100
 SETTINGS_CACHE_TTL = 300
 
 # ========== بيانات الاعتماد ==========
-IQ_EMAIL = os.environ.get("IQ_EMAIL", "")
-IQ_PASSWORD = os.environ.get("IQ_PASSWORD", "")
+IQ_EMAIL = os.environ.get("IQ_EMAIL", "zain1mohamed2425@gmail.com")
+IQ_PASSWORD = os.environ.get("IQ_PASSWORD", "ZainMohamed2425@")
 ACCOUNT_TYPE = os.environ.get("ACCOUNT_TYPE", "PRACTICE")
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
-CHAT_ID = os.environ.get("CHAT_ID", "")
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8794920089:AAFnRnoudkdPrlMtDaijlaQgczrTkaM0MU4")
+CHAT_ID = os.environ.get("CHAT_ID", "1462370563")
 
 if not IQ_EMAIL or not IQ_PASSWORD:
     raise ValueError("❌ يجب تعيين IQ_EMAIL و IQ_PASSWORD في متغيرات البيئة!")
