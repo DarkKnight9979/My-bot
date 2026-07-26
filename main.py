@@ -205,7 +205,6 @@ FILES = {
     "stats_state.json": {},
     "stats_state_live.json": {},
     "stats_state_otc.json": {},
-    "monte_carlo_results.json": {}
 }
 
 JSONL_FILES = ["trade_log_live.jsonl", "trade_log_otc.jsonl"]
@@ -1104,8 +1103,10 @@ def run_monte_carlo(trades, strategy="king", market_type=None):
 def format_monte_carlo_message(result):
     if not result:
         return "📊 *Monte Carlo: لا توجد بيانات كافية*"
+    market_label = result.get("market_type", "")
+    market_prefix = f" [{market_label.upper()}]" if market_label else ""
     return (
-        f"🎲 *Monte Carlo Simulation*\n"
+        f"🎲 *Monte Carlo Simulation{market_prefix}*\n"
         f"الاستراتيجية: `{result['strategy']}`\n"
         f"الصفقات: {result['trades']} | المحاكاة: {result['simulations']:,}\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -1122,6 +1123,7 @@ def format_monte_carlo_message(result):
         f"{result['status']}"
     )
 
+
 def save_monte_carlo_results(results_dict):
     """Save Monte Carlo results to JSON file with LIVE/OTC separation."""
     try:
@@ -1131,41 +1133,31 @@ def save_monte_carlo_results(results_dict):
     except Exception as e:
         logger.error(f"خطأ في حفظ نتائج Monte Carlo: {e}")
 
+
 def format_monte_carlo_summary(results_dict):
     """Format a combined summary message for all Monte Carlo results."""
     if not results_dict:
         return "📊 *Monte Carlo: لا توجد بيانات*"
-    msg = "🎲 *Monte Carlo Simulation — ملخص شهري*
-"
-    msg += f"📅 {datetime.now(CAIRO_TZ).strftime('%d/%m/%Y %I:%M %p')}
-"
-    msg += "━━━━━━━━━━━━━━━━━━━━
-
-"
+    msg = "🎲 *Monte Carlo Simulation — ملخص شهري*" + "\n"
+    msg += f"📅 {datetime.now(CAIRO_TZ).strftime('%d/%m/%Y %I:%M %p')}" + "\n"
+    msg += "━━━━━━━━━━━━━━━━━━━━" + "\n" + "\n"
     for market in ["live", "otc"]:
         market_data = results_dict.get(market, {})
         if not market_data:
             continue
         market_emoji = "🟢" if market == "live" else "🔵"
-        msg += f"{market_emoji} *{market.upper()}*
-"
+        msg += f"{market_emoji} *{market.upper()}*" + "\n"
         for strategy, result in market_data.items():
-            msg += f"  📌 `{strategy}`:
-"
-            msg += f"     ⚠️ Risk of Ruin: {result.get('risk_of_ruin', 'N/A')}%
-"
-            msg += f"     📉 Max Drawdown: {result.get('mc_dd_95th', 'N/A')} صفقات
-"
-            msg += f"     🛡️ Stability: {result.get('stability', 'N/A')}%
-"
-            msg += f"     📊 Baseline WR: {result.get('baseline_wr', 'N/A')}%
-"
-            msg += f"     {result.get('status', '')}
-"
-        msg += "
-"
+            msg += f"  📌 `{strategy}`:" + "\n"
+            msg += f"     ⚠️ Risk of Ruin: {result.get('risk_of_ruin', 'N/A')}%" + "\n"
+            msg += f"     📉 Max Drawdown: {result.get('mc_dd_95th', 'N/A')} صفقات" + "\n"
+            msg += f"     🛡️ Stability: {result.get('stability', 'N/A')}%" + "\n"
+            msg += f"     📊 Baseline WR: {result.get('baseline_wr', 'N/A')}%" + "\n"
+            msg += f"     {result.get('status', '')}" + "\n"
+        msg += "\n"
     msg += "━━━━━━━━━━━━━━━━━━━━"
     return msg
+
 
 # ========== Market Regime + Pair Disable + Strategy Scores ==========
 
@@ -2431,15 +2423,12 @@ def stats_engine_worker():
                         mc_result, mc_status = run_monte_carlo(market_trades, strategy=strategy, market_type=market)
                         if mc_result:
                             mc_results[market][strategy] = mc_result
-                            # Send individual result
                             mc_msg = format_monte_carlo_message(mc_result)
                             send_telegram_message(mc_msg)
                         else:
                             logger.info(f"📊 Monte Carlo [{market.upper()}/{strategy}]: {mc_status}")
-                # Save combined results
                 if mc_results:
                     save_monte_carlo_results(mc_results)
-                    # Send combined summary
                     summary_msg = format_monte_carlo_summary(mc_results)
                     send_telegram_message(summary_msg)
                 last_monthly_report = now
