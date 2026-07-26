@@ -114,21 +114,50 @@ strategy_scores = {}
 def init_log_files():
     """
     ينشئ ملفات التسجيل لو مش موجودة.
-    لازم يتنفذ قبل أي استدعاء لـ read_trade_log.
+    ملفات JSON بتتكتب بـ {} عشان json.load() ما يفشلش.
+    ملفات JSONL بتتساب فاضية.
     """
-    files_to_create = [
-        "trade_log_live.jsonl",
-        "trade_log_otc.jsonl",
-        "settings_live.json",
-        "settings_otc.json",
-        "king_weights.json",
-        "optimization_proposal.json",
-        "walk_forward_state.json",
-        "stats_state.json",
-        "stats_state_live.json",
-        "stats_state_otc.json"
-    ]
-    for filename in files_to_create:
+    json_files = {
+        "settings_live.json": {},
+        "settings_otc.json": {},
+        "king_weights.json": {
+            "structure": 20, "sweep": 20, "trend": 10,
+            "momentum": 15, "volatility": 10, "adx": 10,
+            "rsi": 5, "stochastic": 5, "candle": 15
+        },
+        "optimization_proposal.json": {},
+        "walk_forward_state.json": {},
+        "stats_state.json": {},
+        "stats_state_live.json": {},
+        "stats_state_otc.json": {}
+    }
+    jsonl_files = ["trade_log_live.jsonl", "trade_log_otc.jsonl"]
+
+    # ملفات JSON — نكتب {} أو القيم الافتراضية
+    for filename, default_data in json_files.items():
+        needs_fix = False
+        if not os.path.exists(filename):
+            needs_fix = True
+        else:
+            # لو الملف فاضي أو تالف نصلحه
+            try:
+                with open(filename, 'r', encoding='utf-8') as f:
+                    content = f.read().strip()
+                if not content:
+                    needs_fix = True
+            except:
+                needs_fix = True
+
+        if needs_fix:
+            try:
+                with open(filename, 'w', encoding='utf-8') as f:
+                    json.dump(default_data, f)
+                logger.info(f"📁 تم إنشاء/إصلاح {filename}")
+            except Exception as e:
+                logger.warning(f"⚠️ فشل إنشاء {filename}: {e}")
+
+    # ملفات JSONL — فاضية
+    for filename in jsonl_files:
         if not os.path.exists(filename):
             try:
                 with open(filename, 'w', encoding='utf-8') as f:
@@ -1114,7 +1143,7 @@ adaptive_thresholds = {
 def load_settings(market_type="live"):
     """
     يحمل إعدادات Walk Forward للسوق المحدد.
-    مع Fallback آمن لو الملف مش موجود أو تالف.
+    مع Fallback آمن لو الملف مش موجود أو تالف أو فاضي.
     """
     file_path = SETTINGS_LIVE_FILE if market_type == "live" else SETTINGS_OTC_FILE
     default_settings = {
@@ -1135,15 +1164,26 @@ def load_settings(market_type="live"):
     try:
         if os.path.exists(file_path):
             with open(file_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                if isinstance(data, dict) and data:
-                    # نتأكد من وجود كل المفاتيح المطلوبة
-                    for key in default_settings:
-                        if key not in data:
-                            data[key] = default_settings[key]
-                    return data
+                content = f.read().strip()
+            # لو الملف فاضي نرجع الافتراضي بهدوء
+            if not content:
+                return default_settings.copy()
+            data = json.loads(content)
+            if isinstance(data, dict) and data:
+                # نتأكد من وجود كل المفاتيح المطلوبة
+                for key in default_settings:
+                    if key not in data:
+                        data[key] = default_settings[key]
+                return data
     except Exception as e:
-        logger.warning(f"⚠️ فشل تحميل إعدادات {market_type}: {e} — استخدام القيم الافتراضية")
+        # نسجل error بس لو الملف مش فاضي (يعني فيه محتوى تالف فعلاً)
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read().strip()
+            if content:
+                logger.warning(f"⚠️ فشل تحميل إعدادات {market_type}: {e} — استخدام القيم الافتراضية")
+        except:
+            pass
 
     return default_settings.copy()
 
