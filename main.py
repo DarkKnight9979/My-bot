@@ -110,6 +110,33 @@ DISABLE_THRESHOLD = 45
 DISABLE_DURATION = 604800  # 7 أيام
 strategy_scores = {}
 
+# ========== إنشاء ملفات التسجيل في البداية (لمنع أخطاء الملف المفقود) ==========
+def init_log_files():
+    """
+    ينشئ ملفات التسجيل لو مش موجودة.
+    لازم يتنفذ قبل أي استدعاء لـ read_trade_log.
+    """
+    files_to_create = [
+        "trade_log_live.jsonl",
+        "trade_log_otc.jsonl",
+        "settings_live.json",
+        "settings_otc.json",
+        "king_weights.json",
+        "optimization_proposal.json",
+        "walk_forward_state.json",
+        "stats_state.json",
+        "stats_state_live.json",
+        "stats_state_otc.json"
+    ]
+    for filename in files_to_create:
+        if not os.path.exists(filename):
+            try:
+                with open(filename, 'w', encoding='utf-8') as f:
+                    pass
+                logger.info(f"📁 تم إنشاء {filename}")
+            except Exception as e:
+                logger.warning(f"⚠️ فشل إنشاء {filename}: {e}")
+
 # ========== King Signal Names (المفقودة في النسخة الأصلية) ==========
 KING_SIGNAL_NAMES = {
     1: ("King Bronze 🥉", "KING BRONZE"),
@@ -1447,6 +1474,9 @@ def stats_engine_worker():
 
     while True:
         try:
+            # ننشئ الملفات في أول دورة عشان لو البوت اشتغل من غير __main__
+            if cycle_count == 0:
+                init_log_files()
             now = get_iq_time()
             now_dt = datetime.fromtimestamp(now, tz=CAIRO_TZ)
 
@@ -2970,5 +3000,6 @@ def run_bot():
         on_shutdown()
 
 if __name__ == "__main__":
+    init_log_files()  # ننشئ الملفات قبل أي حاجة
     threading.Thread(target=run_web_server, daemon=True).start()
     run_bot()
