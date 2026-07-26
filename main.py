@@ -8,6 +8,7 @@ import numpy as np
 import atexit
 import pytz
 import traceback
+import json
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from flask import Flask
@@ -30,7 +31,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Bot is Running Successfully V7.0 with King of Signals!"
+    return "Bot is Running Successfully V7.2 with King of Signals + Adaptive LIVE/OTC!"
 
 def run_web_server():
     port = int(os.environ.get("PORT", 10000))
@@ -100,12 +101,27 @@ king_df_cache = {}
 king_htf_cache = {}
 king_stats = defaultdict(lambda: {"win": 0, "loss": 0, "total": 0})
 
+# ========== متغيرات النظام الإحصائي ==========
+regime_cache = {}
+REGIME_CACHE_TTL = 300
+disabled_pairs = {}
+DISABLE_WINDOW = 50
+DISABLE_THRESHOLD = 45
+DISABLE_DURATION = 604800  # 7 أيام
+strategy_scores = {}
 
-# ========== STATISTICAL ENGINE (V7.1) ==========
+# ========== King Signal Names (المفقودة في النسخة الأصلية) ==========
+KING_SIGNAL_NAMES = {
+    1: ("King Bronze 🥉", "KING BRONZE"),
+    2: ("King Silver 🥈", "KING SILVER"),
+    3: ("King Gold 👑", "KING GOLD"),
+    4: ("King Elite 👑🔥", "KING ELITE")
+}
+KING_EMOJIS = {1: "🥉", 2: "🥈", 3: "👑", 4: "👑🔥"}
+
+# ========== STATISTICAL ENGINE (V7.2) ==========
 # محرك إحصائي ذكي — منفصل 100% عن الاستراتيجيات
 
-import json
-import os
 from pathlib import Path
 
 # --- ملفات البيانات ---
@@ -151,41 +167,58 @@ KING_WEIGHTS = load_king_weights()
 # --- تسجيل الصفقات ---
 def log_trade(trade_data):
     """
-    يسجل صفقة واحدة في ملف JSONL.
-    trade_data: dict مع كل تفاصيل الصفقة والفلاتر.
+    يسجل صفقة واحدة في ملف JSONL منفصل حسب نوع السوق (LIVE/OTC).
     """
     try:
-        with open(TRADE_LOG_FILE, 'a', encoding='utf-8') as f:
+        pair = trade_data.get("pair", "")
+        log_file = get_trade_log_file(pair)
+        with open(log_file, 'a', encoding='utf-8') as f:
             f.write(json.dumps(trade_data, ensure_ascii=False) + "\n")
     except Exception as e:
         logger.error(f"خطأ في تسجيل الصفقة: {e}")
 
-def read_trade_log(max_entries=50000):
+def read_trade_log(max_entries=50000, market_type=None):
     """
     يقرأ آخر N صفقة من ملف JSONL.
+    market_type: 'live', 'otc', or None (all)
     يرجع: list of dicts
     """
     trades = []
-    try:
-        with open(TRADE_LOG_FILE, 'r', encoding='utf-8') as f:
-            lines = f.readlines()
-        for line in lines[-max_entries:]:
-            line = line.strip()
-            if line:
-                try:
-                    trades.append(json.loads(line))
-                except:
-                    continue
-    except Exception as e:
-        logger.error(f"خطأ في قراءة سجل الصفقات: {e}")
-    return trades
+    files = []
+    if market_type == 'live':
+        files = ["trade_log_live.jsonl"]
+    elif market_type == 'otc':
+        files = ["trade_log_otc.jsonl"]
+    else:
+        files = ["trade_log_live.jsonl", "trade_log_otc.jsonl"]
+
+    for log_file in files:
+        try:
+            with open(log_file, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+            for line in lines[-max_entries:]:
+                line = line.strip()
+                if line:
+                    try:
+                        trades.append(json.loads(line))
+                    except:
+                        continue
+        except Exception as e:
+            logger.error(f"خطأ في قراءة {log_file}: {e}")
+
+    # Sort by timestamp and return last max_entries
+    trades.sort(key=lambda x: x.get("timestamp", 0))
+    return trades[-max_entries:] if len(trades) > max_entries else trades
 
 # --- تقييم الفلاتر ---
-def evaluate_filters(trades):
+def evaluate_filters(trades, market_type=None):
     """
     يحسب Win Rate لكل فلتر على حدة.
+    market_type: 'live', 'otc', or None (all)
     يرجع: dict {filter_name: {"win": N, "loss": N, "wr": %, "worth": "High/Med/Low"}}
     """
+    if market_type:
+        trades = [t for t in trades if ("-OTC" in t.get("pair", "").upper()) == (market_type == "otc")]
     if not trades:
         return {}
 
@@ -233,11 +266,14 @@ def evaluate_filters(trades):
     return results
 
 # --- ترتيب الأزواج ---
-def rank_pairs(trades):
+def rank_pairs(trades, market_type=None):
     """
     يرجع ترتيب الأزواج حسب الأداء.
+    market_type: 'live', 'otc', or None (all)
     Score = (WR * 0.4) + (ProfitFactor * 20 * 0.3) + (Stability * 0.2) + (CountRatio * 0.1)
     """
+    if market_type:
+        trades = [t for t in trades if ("-OTC" in t.get("pair", "").upper()) == (market_type == "otc")]
     if not trades:
         return {}
 
@@ -297,10 +333,13 @@ def rank_pairs(trades):
     return rankings
 
 # --- تحليل الأوقات ---
-def analyze_hours(trades):
+def analyze_hours(trades, market_type=None):
     """
     يحسب Win Rate لكل ساعة من اليوم.
+    market_type: 'live', 'otc', or None (all)
     """
+    if market_type:
+        trades = [t for t in trades if ("-OTC" in t.get("pair", "").upper()) == (market_type == "otc")]
     if not trades:
         return {}
 
@@ -331,7 +370,6 @@ def analyze_hours(trades):
 def analyze_confidence_calibration(trades):
     """
     يشيك لو الـ Score بيوحي بـ WR صحيح ولا لا.
-    مثلاً: Score 90–94 المفروض يكسب ~90%، لو كسب 70% → البوت بيبالغ.
     """
     if not trades:
         return {}
@@ -373,18 +411,21 @@ def analyze_confidence_calibration(trades):
     return calibration
 
 # --- Grid Search Optimization ---
-def grid_search_optimization(trades, strategy="king"):
+def grid_search_optimization(trades, strategy="king", market_type=None):
     """
     يجرب تركيبات مختلفة من العتبات ويطلع الأفضل.
     يرجع: dict بالتعديلات المقترحة.
     """
+    if market_type:
+        trades = [t for t in trades if ("-OTC" in t.get("pair", "").upper()) == (market_type == "otc")]
+
     if len(trades) < 200:
         return None, "غير كافي — محتاج 200+ صفقة"
 
     # نحلل بس على King Strategy
-    king_trades = [t for t in trades if t.get("strategy") == "king"]
+    king_trades = [t for t in trades if t.get("strategy") == strategy]
     if len(king_trades) < 100:
-        return None, "غير كافي — محتاج 100+ صفقة King"
+        return None, f"غير كافي — محتاج 100+ صفقة {strategy}"
 
     proposals = []
 
@@ -433,20 +474,7 @@ def grid_search_optimization(trades, strategy="king"):
             "impact": "تعديل دقيق لنطاق RSI"
         })
 
-    # 3. Body % Threshold
-    best_body = 0.60
-    best_body_wr = 0
-    for body in [0.50, 0.55, 0.60, 0.65, 0.70]:
-        # نحسب body% من الصفقات المسجلة (مش متاح مباشرة، نستخدم proxy)
-        subset = [t for t in king_trades if t.get("filters", {}).get("candle_ok", False)]
-        if len(subset) >= 20:
-            wins = sum(1 for t in subset if t.get("outcome") == "win")
-            wr = (wins / len(subset)) * 100
-            if wr > best_body_wr:
-                best_body_wr = wr
-                best_body = body
-
-    # 4. Sweep Threshold
+    # 3. Sweep Threshold
     best_sweep = 0.0003
     best_sweep_wr = 0
     for sweep in [0.0002, 0.0003, 0.0004, 0.0005]:
@@ -473,8 +501,6 @@ def grid_search_optimization(trades, strategy="king"):
 def optimize_weights(trades):
     """
     يحسب الأداء الحقيقي لكل فلتر ويعدّل أوزانه.
-    الفلتر اللي بيكسب أكتر → وزنه يزيد.
-    الفلتر اللي بيفشل → وزنه يقل.
     """
     if len(trades) < 300:
         return None, "غير كافي — محتاج 300+ صفقة"
@@ -513,10 +539,10 @@ def optimize_weights(trades):
         diff = perf["diff"]
         current = current_weights[fname]
 
-        if diff > 10:  # الفلتر ده بيفرق كتير
+        if diff > 10:
             new_w = min(current + 3, 25)
             adjustments.append(f"{fname}: {current} → {new_w} (+{diff:.1f}% WR)")
-        elif diff < -5:  # الفلتر ده مش بيفرق
+        elif diff < -5:
             new_w = max(current - 2, 3)
             adjustments.append(f"{fname}: {current} → {new_w} ({diff:.1f}% WR)")
         else:
@@ -529,10 +555,8 @@ def optimize_weights(trades):
     if current_sum != 100:
         factor = 100 / current_sum
         new_weights = {k: max(1, round(v * factor)) for k, v in new_weights.items()}
-        # تعديل بسيط عشان المجموع يبقى 100 بالظبط
         diff = 100 - sum(new_weights.values())
         if diff != 0:
-            # نضيف الفرق على أكبر وزن
             max_key = max(new_weights, key=new_weights.get)
             new_weights[max_key] += diff
 
@@ -543,12 +567,255 @@ def optimize_weights(trades):
         "filter_performance": filter_performance
     }, "تم تحديث الأوزان"
 
+# ========== Market Regime Detection ==========
+def detect_market_regime(pair, tf=300):
+    """
+    يحدد حالة السوق الحالية.
+    """
+    key = f"regime_{pair}"
+    now = get_iq_time()
+    if key in regime_cache and now - regime_cache[key][1] < REGIME_CACHE_TTL:
+        return regime_cache[key][0]
+
+    try:
+        df = get_cached_df_king(pair, tf, 80)
+        if df is None or len(df) < 30:
+            return "unknown"
+
+        # Calculate indicators
+        df['ALMA_20'] = calculate_alma(df['Close'], 20, 0.85, 6)
+        df['ALMA_80'] = calculate_alma(df['Close'], 80, 0.85, 6)
+        atr_series = calculate_atr_series(df, 14)
+        atr = atr_series.iloc[-1]
+        atr_avg = atr_series.tail(20).mean()
+        adx, _, _ = calculate_adx(df, 14)
+        bbw = bollinger_bandwidth(df, 20)
+
+        # Detect regime
+        regime = "unknown"
+
+        if adx >= 25 and atr > atr_avg * 1.2:
+            regime = "trending"
+        elif adx < 18 and bbw < 0.001:
+            regime = "ranging"
+        elif atr > atr_avg * 1.8:
+            regime = "high_vol"
+        elif atr < atr_avg * 0.5:
+            regime = "low_vol"
+        else:
+            regime = "mixed"
+
+        regime_cache[key] = (regime, now)
+        return regime
+    except Exception as e:
+        logger.error(f"خطأ في تحديد حالة السوق {pair}: {e}")
+        return "unknown"
+
+# ========== Dynamic Pair Disable ==========
+def check_pair_disabled(pair):
+    """
+    يشيك لو الزوج متوقف مؤقتاً.
+    يرجع: (is_disabled, reason)
+    """
+    now = get_iq_time()
+    if pair in disabled_pairs:
+        if now < disabled_pairs[pair]:
+            return True, f"متوقف مؤقتاً حتى {datetime.fromtimestamp(disabled_pairs[pair]).strftime('%d/%m %H:%M')}"
+        else:
+            del disabled_pairs[pair]
+            logger.info(f"✅ الزوج {pair} رجع للعمل بعد فترة التوقف")
+            return False, None
+    return False, None
+
+def update_disabled_pairs():
+    """
+    يفحص أداء كل زوج ويوقف الضعيف.
+    """
+    try:
+        # نقرأ كل الصفقات
+        all_trades = read_trade_log(max_entries=10000)
+
+        pair_stats = {}
+        for t in all_trades:
+            p = t.get("pair", "")
+            if p not in pair_stats:
+                pair_stats[p] = {"win": 0, "loss": 0, "total": 0}
+            # ناخد آخر DISABLE_WINDOW صفقة بس
+            if pair_stats[p]["total"] < DISABLE_WINDOW:
+                pair_stats[p]["total"] += 1
+                if t.get("outcome") == "win":
+                    pair_stats[p]["win"] += 1
+                else:
+                    pair_stats[p]["loss"] += 1
+
+        newly_disabled = []
+        for pair, stat in pair_stats.items():
+            if stat["total"] >= 30:  # محتاج 30 صفقة عالأقل
+                wr = (stat["win"] / stat["total"]) * 100
+                if wr < DISABLE_THRESHOLD and pair not in disabled_pairs:
+                    disabled_until = get_iq_time() + DISABLE_DURATION
+                    disabled_pairs[pair] = disabled_until
+                    newly_disabled.append((pair, wr))
+                    logger.warning(f"🚫 الزوج {pair} توقف مؤقتاً — WR: {wr:.1f}% (آخر {stat['total']} صفقة)")
+
+        if newly_disabled:
+            msg = "🚫 *توقيف أزواج تلقائي*\n\n"
+            for p, wr in newly_disabled:
+                msg += f"• `{p}` — WR: {wr:.1f}% (توقف 7 أيام)\n"
+            send_telegram_message(msg)
+
+    except Exception as e:
+        logger.error(f"خطأ في تحديث الأزواج المتوقفة: {e}")
+
+# ========== Adaptive Strategy Selector ==========
+def update_strategy_scores():
+    """
+    يحدث Score لكل استراتيجية بناءً على آخر N صفقة.
+    """
+    try:
+        all_trades = read_trade_log(max_entries=STRATEGY_SCORE_WINDOW * 2)
+
+        for strategy in ["original", "king"]:
+            trades = [t for t in all_trades if t.get("strategy") == strategy]
+            if len(trades) >= 20:
+                wins = sum(1 for t in trades if t.get("outcome") == "win")
+                wr = (wins / len(trades)) * 100
+
+                # حساب Stability (نسبة الاتساق)
+                chunks = [trades[i:i+10] for i in range(0, len(trades), 10)]
+                chunk_wrs = []
+                for chunk in chunks:
+                    if chunk:
+                        cw = sum(1 for t in chunk if t.get("outcome") == "win") / len(chunk) * 100
+                        chunk_wrs.append(cw)
+                stability = 100 - np.std(chunk_wrs) if len(chunk_wrs) > 1 else 50
+
+                # Score مركب
+                score = (wr * 0.6) + (stability * 0.4)
+
+                strategy_scores[strategy] = {
+                    "win": wins,
+                    "loss": len(trades) - wins,
+                    "total": len(trades),
+                    "wr": round(wr, 1),
+                    "stability": round(stability, 1),
+                    "score": round(score, 1)
+                }
+
+                logger.info(f"📊 Strategy Score — {strategy}: WR={wr:.1f}%, Score={score:.1f}")
+    except Exception as e:
+        logger.error(f"خطأ في تحديث Strategy Scores: {e}")
+
+def select_strategy_for_regime(regime):
+    """
+    يختار أفضل استراتيجية حسب حالة السوق.
+    """
+    if regime == "trending":
+        return ["king", "original"]
+    elif regime == "ranging":
+        return ["original"]
+    elif regime == "high_vol":
+        return ["original"]
+    elif regime == "low_vol":
+        return []
+    else:
+        return ["original", "king"]
+
+# ========== Feature Importance Weight Engine ==========
+def calculate_feature_importance(trades, strategy="king"):
+    """
+    يحسب أهمية كل فلتر باستخدام طريقة الـ Permutation Importance.
+    """
+    if len(trades) < 100:
+        return None, "غير كافي"
+
+    st_trades = [t for t in trades if t.get("strategy") == strategy]
+    if len(st_trades) < 50:
+        return None, "غير كافي للاستراتيجية"
+
+    # Baseline WR
+    baseline_wins = sum(1 for t in st_trades if t.get("outcome") == "win")
+    baseline_wr = (baseline_wins / len(st_trades)) * 100
+
+    # نحسب أهمية كل فلتر
+    filter_names = []
+    if st_trades and st_trades[0].get("filters"):
+        filter_names = list(st_trades[0]["filters"].keys())
+
+    importance = {}
+    for fname in filter_names:
+        without_filter = [t for t in st_trades if not t.get("filters", {}).get(fname, False)]
+        with_filter = [t for t in st_trades if t.get("filters", {}).get(fname, False)]
+
+        if len(with_filter) >= 20 and len(without_filter) >= 20:
+            wr_with = sum(1 for t in with_filter if t.get("outcome") == "win") / len(with_filter) * 100
+            wr_without = sum(1 for t in without_filter if t.get("outcome") == "win") / len(without_filter) * 100
+
+            imp = wr_with - wr_without
+            importance[fname] = {
+                "importance": round(imp, 2),
+                "wr_with": round(wr_with, 1),
+                "wr_without": round(wr_without, 1),
+                "count": len(with_filter)
+            }
+
+    # نحول الأهمية لأوزان (normalize لـ 100)
+    if importance:
+        total_imp = sum(abs(v["importance"]) for v in importance.values())
+        if total_imp > 0:
+            weights = {}
+            for fname, data in importance.items():
+                w = max(1, round((abs(data["importance"]) / total_imp) * 100))
+                weights[fname] = w
+
+            # Normalization: نضمن المجموع = 100
+            current_sum = sum(weights.values())
+            if current_sum != 100:
+                factor = 100 / current_sum
+                weights = {k: max(1, round(v * factor)) for k, v in weights.items()}
+                diff = 100 - sum(weights.values())
+                if diff != 0:
+                    max_key = max(weights, key=weights.get)
+                    weights[max_key] += diff
+
+            return {"weights": weights, "importance": importance, "baseline_wr": round(baseline_wr, 1)}, "تم"
+
+    return None, "لا توجد بيانات كافية"
+
+def optimize_weights_feature_importance(trades):
+    """
+    يستخدم Feature Importance لتحديث أوزان King Strategy.
+    """
+    result, status = calculate_feature_importance(trades, strategy="king")
+    if not result:
+        return None, status
+
+    old_weights = load_king_weights()
+    new_weights = result["weights"]
+
+    adjustments = []
+    for fname in old_weights.keys():
+        old_w = old_weights.get(fname, 0)
+        new_w = new_weights.get(fname, old_w)
+        if old_w != new_w:
+            arrow = "↗️" if new_w > old_w else ("↘️" if new_w < old_w else "➡️")
+            adjustments.append(f"{arrow} {fname}: {old_w} → {new_w}")
+
+    return {
+        "old_weights": old_weights,
+        "new_weights": new_weights,
+        "importance": result["importance"],
+        "baseline_wr": result["baseline_wr"],
+        "adjustments": adjustments
+    }, "تم تحديث الأوزان بناءً على Feature Importance"
+
 # --- توليد التقرير ---
-def generate_report(trades, period="daily"):
+def generate_report(trades, period="daily", market_type=None):
     """
     ينتج تقرير شامل.
-    period: daily / weekly / monthly
     """
+    if market_type:
+        trades = [t for t in trades if ("-OTC" in t.get("pair", "").upper()) == (market_type == "otc")]
     if not trades:
         return None
 
@@ -599,6 +866,7 @@ def generate_report(trades, period="daily"):
 
     report = {
         "period": period,
+        "market_type": market_type or "all",
         "total_trades": total,
         "wins": wins,
         "losses": losses,
@@ -628,9 +896,11 @@ def format_report_message(report):
         return "📊 *لا توجد بيانات كافية للتقرير*"
 
     period_name = {"daily": "اليومي", "weekly": "الأسبوعي", "monthly": "الشهري"}.get(report["period"], report["period"])
+    market_label = report.get("market_type", "")
+    market_prefix = f" [{market_label.upper()}]" if market_label else ""
 
     msg = (
-        f"📊 *تقرير {period_name}*\n"
+        f"📊 *تقرير {period_name}{market_prefix}*\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"📈 *إجمالي الصفقات:* {report['total_trades']}\n"
         f"✅ *رابحة:* {report['wins']} | ❌ *خاسرة:* {report['losses']}\n"
@@ -677,8 +947,8 @@ def generate_and_send_optimization_proposal():
     # Grid Search
     proposals, status = grid_search_optimization(trades)
 
-    # Weight Engine
-    weight_result, weight_status = optimize_weights(trades)
+    # Feature Importance Weight Engine
+    weight_result, weight_status = optimize_weights_feature_importance(trades)
 
     if not proposals and not weight_result:
         logger.info(f"📊 Optimization: {status}")
@@ -704,7 +974,8 @@ def generate_and_send_optimization_proposal():
             )
 
     if weight_result:
-        msg += f"\n⚖️ *تعديلات أوزان King Strategy:*\n"
+        msg += f"\n⚖️ *تعديلات أوزان King Strategy (Feature Importance):*\n"
+        msg += f"📊 Baseline WR: {weight_result.get('baseline_wr', 'N/A')}%\n"
         for adj in weight_result["adjustments"]:
             msg += f"   • {adj}\n"
         msg += f"\n📊 الأوزان الجديدة:\n"
@@ -712,6 +983,13 @@ def generate_and_send_optimization_proposal():
             old = weight_result["old_weights"].get(k, v)
             arrow = "↗️" if v > old else ("↘️" if v < old else "➡️")
             msg += f"   {arrow} `{k}`: {old} → {v}\n"
+
+        if weight_result.get("importance"):
+            msg += f"\n🔬 *Feature Importance:*\n"
+            sorted_imp = sorted(weight_result["importance"].items(), key=lambda x: abs(x[1]["importance"]), reverse=True)
+            for fname, imp_data in sorted_imp[:5]:
+                emoji = "🟢" if imp_data["importance"] > 5 else ("🟡" if imp_data["importance"] > 0 else "🔴")
+                msg += f"   {emoji} `{fname}`: +{imp_data['importance']:.1f}% (WR مع: {imp_data['wr_with']}% | بدون: {imp_data['wr_without']}%)\n"
 
     msg += (
         f"\n━━━━━━━━━━━━━━━━━━━━\n"
@@ -782,11 +1060,372 @@ def handle_optimization_reply(reply_text):
 
     return False, None
 
+
+
+# ========== Walk Forward Settings Files (منفصلة بالكامل) ==========
+SETTINGS_LIVE_FILE = "settings_live.json"
+SETTINGS_OTC_FILE = "settings_otc.json"
+
+# ========== Adaptive Confidence Threshold (منفصل بالكامل) ==========
+ADAPTIVE_THRESHOLD_ENABLED = True
+ADAPTIVE_THRESHOLD_WINDOW = 250  # آخر 250 صفقة
+ADAPTIVE_THRESHOLD_MIN = 80      # الحد الأدنى المطلق
+ADAPTIVE_THRESHOLD_MAX = 100     # الحد الأقصى
+adaptive_thresholds = {
+    "live": 80,   # يبدأ من 80 ويتكيف
+    "otc": 80
+}
+
+# ========== دوال الإعدادات المنفصلة (مع Fallback آمن) ==========
+def load_settings(market_type="live"):
+    """
+    يحمل إعدادات Walk Forward للسوق المحدد.
+    مع Fallback آمن لو الملف مش موجود أو تالف.
+    """
+    file_path = SETTINGS_LIVE_FILE if market_type == "live" else SETTINGS_OTC_FILE
+    default_settings = {
+        "adx_threshold": 22,
+        "rsi_low_call": 45,
+        "rsi_high_call": 60,
+        "rsi_low_put": 40,
+        "rsi_high_put": 55,
+        "sweep_threshold": 0.0003,
+        "body_pct_min": 0.60,
+        "last_updated": 0,
+        "market_type": market_type,
+        "approved": False,
+        "walk_forward_wr": 0,
+        "baseline_wr": 0
+    }
+
+    try:
+        if os.path.exists(file_path):
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                if isinstance(data, dict) and data:
+                    # نتأكد من وجود كل المفاتيح المطلوبة
+                    for key in default_settings:
+                        if key not in data:
+                            data[key] = default_settings[key]
+                    return data
+    except Exception as e:
+        logger.warning(f"⚠️ فشل تحميل إعدادات {market_type}: {e} — استخدام القيم الافتراضية")
+
+    return default_settings.copy()
+
+def save_settings(settings, market_type="live"):
+    """
+    يحفظ إعدادات Walk Forward للسوق المحدد.
+    """
+    file_path = SETTINGS_LIVE_FILE if market_type == "live" else SETTINGS_OTC_FILE
+    try:
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(settings, f, indent=2)
+        logger.info(f"💾 تم حفظ إعدادات {market_type.upper()} في {file_path}")
+    except Exception as e:
+        logger.error(f"❌ فشل حفظ إعدادات {market_type}: {e}")
+
+def get_settings_for_pair(pair):
+    """
+    يرجع الإعدادات المناسبة للزوج (LIVE أو OTC).
+    Fallback آمن دائماً.
+    """
+    try:
+        market_type = "otc" if is_otc_pair(pair) else "live"
+        return load_settings(market_type)
+    except Exception as e:
+        logger.error(f"❌ فشل تحميل إعدادات {pair}: {e} — Fallback للافتراضي")
+        return load_settings("live")  # الأكثر أماناً
+
+# ========== Adaptive Threshold محسّن (منفصل لكل سوق) ==========
+def calculate_adaptive_threshold(trades, market_type="live"):
+    """
+    يحسب الحد الأدنى المتكيف للـ Score بناءً على أداء آخر N صفقة للسوق المحدد.
+    """
+    if not ADAPTIVE_THRESHOLD_ENABLED:
+        return ADAPTIVE_THRESHOLD_MIN
+
+    # نفلتر حسب السوق
+    market_trades = [t for t in trades if ("-OTC" in t.get("pair", "").upper()) == (market_type == "otc")]
+
+    recent = market_trades[-ADAPTIVE_THRESHOLD_WINDOW:]
+    if len(recent) < 50:
+        return adaptive_thresholds.get(market_type, ADAPTIVE_THRESHOLD_MIN)
+
+    wins = sum(1 for t in recent if t.get("outcome") == "win")
+    wr = (wins / len(recent)) * 100
+
+    # حساب الحد المتكيف
+    if wr >= 80:
+        threshold = 80
+    elif wr >= 70:
+        threshold = 85
+    elif wr >= 60:
+        threshold = 90
+    elif wr >= 50:
+        threshold = 95
+    else:
+        threshold = 100
+
+    # نضمن الحدود
+    threshold = max(ADAPTIVE_THRESHOLD_MIN, min(ADAPTIVE_THRESHOLD_MAX, threshold))
+
+    adaptive_thresholds[market_type] = threshold
+
+    if len(recent) >= 100:
+        logger.info(f"📊 Adaptive Threshold [{market_type.upper()}]: WR={wr:.1f}% → Threshold={threshold}")
+
+    return threshold
+
+def get_adaptive_king_level(score, market_type="live"):
+    """
+    يحدد مستوى King باستخدام الحد المتكيف المنفصل لكل سوق.
+    """
+    threshold = adaptive_thresholds.get(market_type, ADAPTIVE_THRESHOLD_MIN)
+
+    if score >= 95 and threshold <= 95:
+        return 4  # Elite
+    elif score >= 90 and threshold <= 90:
+        return 3  # Gold
+    elif score >= 85 and threshold <= 85:
+        return 2  # Silver
+    elif score >= threshold:
+        return 1  # Bronze
+    return 0
+
+# ========== Walk Forward Validation Engine (منفصل لكل سوق) ==========
+WALK_FORWARD_MIN_TRADES = 1000
+WALK_FORWARD_TRAIN_RATIO = 0.70
+WALK_FORWARD_FILE = "walk_forward_state.json"
+
+def run_walk_forward_validation(trades, strategy="king", market_type="live"):
+    """
+    يقسم البيانات 70% تدريب + 30% اختبار للسوق المحدد فقط.
+    يرجع: (approved, result_dict, message)
+    """
+    # فلترة حسب السوق أولاً
+    market_trades = [t for t in trades if ("-OTC" in t.get("pair", "").upper()) == (market_type == "otc")]
+
+    # ثم فلترة حسب الاستراتيجية
+    st_trades = [t for t in market_trades if t.get("strategy") == strategy]
+
+    if len(st_trades) < WALK_FORWARD_MIN_TRADES:
+        return False, None, f"غير كافي — محتاج {WALK_FORWARD_MIN_TRADES}+ صفقة {strategy}/{market_type.upper()} (حالياً: {len(st_trades)})"
+
+    # تقسيم البيانات
+    split_idx = int(len(st_trades) * WALK_FORWARD_TRAIN_RATIO)
+    train_set = st_trades[:split_idx]
+    test_set = st_trades[split_idx:]
+
+    # Baseline: الأداء القديم (الإعدادات الحالية)
+    baseline_wins = sum(1 for t in test_set if t.get("outcome") == "win")
+    baseline_wr = (baseline_wins / len(test_set)) * 100
+
+    # Optimization على التدريب
+    best_config = None
+    best_train_wr = 0
+
+    # نجرب تعديلات بسيطة على العتبات
+    adx_options = [20, 22, 24, 26, 28]
+    rsi_low_options = [40, 42, 45, 48]
+    rsi_high_options = [55, 58, 60, 62]
+
+    for adx_t in adx_options:
+        for rsi_l in rsi_low_options:
+            for rsi_h in rsi_high_options:
+                # نحسب WR على التدريب مع العتبات دي
+                filtered = []
+                for t in train_set:
+                    indicators = t.get("indicators", {})
+                    direction = t.get("direction", "")
+                    adx_ok = indicators.get("adx", 0) >= adx_t
+                    rsi = indicators.get("rsi", 50)
+                    if direction == "CALL":
+                        rsi_ok = rsi_l <= rsi <= rsi_h
+                    else:
+                        rsi_ok = (100 - rsi_h) <= rsi <= (100 - rsi_l)
+
+                    if adx_ok and rsi_ok:
+                        filtered.append(t)
+
+                if len(filtered) >= 20:
+                    wins = sum(1 for t in filtered if t.get("outcome") == "win")
+                    wr = (wins / len(filtered)) * 100
+                    if wr > best_train_wr:
+                        best_train_wr = wr
+                        best_config = {"adx": adx_t, "rsi_low": rsi_l, "rsi_high": rsi_h}
+
+    if not best_config:
+        return False, None, "لم يتم العثور على إعدادات أفضل"
+
+    # Validation: نختبر الإعدادات الجديدة على الـ 30%
+    test_filtered = []
+    for t in test_set:
+        indicators = t.get("indicators", {})
+        direction = t.get("direction", "")
+        adx_ok = indicators.get("adx", 0) >= best_config["adx"]
+        rsi = indicators.get("rsi", 50)
+        if direction == "CALL":
+            rsi_ok = best_config["rsi_low"] <= rsi <= best_config["rsi_high"]
+        else:
+            rsi_ok = (100 - best_config["rsi_high"]) <= rsi <= (100 - best_config["rsi_low"])
+
+        if adx_ok and rsi_ok:
+            test_filtered.append(t)
+
+    if len(test_filtered) >= 10:
+        test_wins = sum(1 for t in test_filtered if t.get("outcome") == "win")
+        test_wr = (test_wins / len(test_filtered)) * 100
+    else:
+        test_wr = 0
+
+    # Decision
+    improvement = test_wr - baseline_wr
+
+    result = {
+        "market_type": market_type,
+        "strategy": strategy,
+        "train_size": len(train_set),
+        "test_size": len(test_set),
+        "baseline_wr": round(baseline_wr, 1),
+        "new_wr": round(test_wr, 1),
+        "improvement": round(improvement, 1),
+        "best_config": best_config,
+        "approved": improvement > 2  # يوافق لو التحسين > 2%
+    }
+
+    if result["approved"]:
+        msg = f"✅ Walk Forward [{market_type.upper()}/{strategy}]: مقبول — تحسين {improvement:.1f}% (Baseline: {baseline_wr:.1f}% → New: {test_wr:.1f}%)"
+        # حفظ الإعدادات الجديدة
+        settings = load_settings(market_type)
+        settings["adx_threshold"] = best_config["adx"]
+        settings["rsi_low_call"] = best_config["rsi_low"]
+        settings["rsi_high_call"] = best_config["rsi_high"]
+        settings["rsi_low_put"] = 100 - best_config["rsi_high"]
+        settings["rsi_high_put"] = 100 - best_config["rsi_low"]
+        settings["last_updated"] = get_iq_time()
+        settings["walk_forward_wr"] = test_wr
+        settings["baseline_wr"] = baseline_wr
+        settings["approved"] = True
+        save_settings(settings, market_type)
+    else:
+        msg = f"❌ Walk Forward [{market_type.upper()}/{strategy}]: مرفوض — تحسين {improvement:.1f}% فقط (Baseline: {baseline_wr:.1f}% → New: {test_wr:.1f}%)"
+
+    return result["approved"], result, msg
+
+# ========== Monte Carlo Simulation ==========
+MONTE_CARLO_MIN_TRADES = 500
+MONTE_CARLO_SIMULATIONS = 1000
+BLOCK_SIZE = 20
+
+def run_monte_carlo(trades, strategy="king"):
+    """
+    Monte Carlo باستخدام Block Bootstrap.
+    """
+    st_trades = [t for t in trades if t.get("strategy") == strategy]
+    if len(st_trades) < MONTE_CARLO_MIN_TRADES:
+        return None, f"غير كافي — محتاج {MONTE_CARLO_MIN_TRADES}+ صفقة"
+
+    n = len(st_trades)
+    outcomes = [1 if t.get("outcome") == "win" else 0 for t in st_trades]
+
+    # نحسب الـ Baseline
+    baseline_wr = sum(outcomes) / n * 100
+
+    simulations = []
+    np.random.seed(int(time.time()))
+
+    for _ in range(MONTE_CARLO_SIMULATIONS):
+        # Block Bootstrap
+        sim_outcomes = []
+        while len(sim_outcomes) < n:
+            start_idx = np.random.randint(0, n - BLOCK_SIZE + 1)
+            block = outcomes[start_idx:start_idx + BLOCK_SIZE]
+            sim_outcomes.extend(block)
+
+        sim_outcomes = sim_outcomes[:n]
+        sim_wr = sum(sim_outcomes) / n * 100
+
+        # Max Drawdown
+        cumulative = 0
+        max_dd = 0
+        peak = 0
+        for o in sim_outcomes:
+            cumulative += (1 if o == 1 else -1)
+            if cumulative > peak:
+                peak = cumulative
+            dd = peak - cumulative
+            if dd > max_dd:
+                max_dd = dd
+
+        simulations.append({"wr": sim_wr, "max_dd": max_dd})
+
+    # Analysis
+    wrs = [s["wr"] for s in simulations]
+    dds = [s["max_dd"] for s in simulations]
+
+    wr_mean = np.mean(wrs)
+    wr_std = np.std(wrs)
+    wr_5th = np.percentile(wrs, 5)
+    wr_95th = np.percentile(wrs, 95)
+
+    dd_mean = np.mean(dds)
+    dd_95th = np.percentile(dds, 95)
+
+    # Risk of Ruin
+    ruin_count = sum(1 for s in simulations if s["max_dd"] > 50)
+    risk_of_ruin = (ruin_count / MONTE_CARLO_SIMULATIONS) * 100
+
+    # Stability
+    stable_count = sum(1 for s in simulations if s["wr"] >= 60)
+    stability = (stable_count / MONTE_CARLO_SIMULATIONS) * 100
+
+    result = {
+        "strategy": strategy,
+        "trades": n,
+        "simulations": MONTE_CARLO_SIMULATIONS,
+        "baseline_wr": round(baseline_wr, 1),
+        "mc_mean_wr": round(wr_mean, 1),
+        "mc_wr_std": round(wr_std, 1),
+        "mc_wr_5th": round(wr_5th, 1),
+        "mc_wr_95th": round(wr_95th, 1),
+        "mc_mean_dd": round(dd_mean, 1),
+        "mc_dd_95th": round(dd_95th, 1),
+        "risk_of_ruin": round(risk_of_ruin, 1),
+        "stability": round(stability, 1),
+        "status": "✅ مستقر" if stability >= 80 and risk_of_ruin < 5 else ("⚠️ متوسط" if stability >= 60 else "🔴 ضعيف")
+    }
+
+    return result, "تم"
+
+def format_monte_carlo_message(result):
+    """يحول نتائج Monte Carlo لرسالة تليجرام."""
+    if not result:
+        return "📊 *Monte Carlo: لا توجد بيانات كافية*"
+
+    return (
+        f"🎲 *Monte Carlo Simulation*\n"
+        f"الاستراتيجية: `{result['strategy']}`\n"
+        f"الصفقات: {result['trades']} | المحاكاة: {result['simulations']:,}\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"📊 *Win Rate:*\n"
+        f"   Baseline: {result['baseline_wr']}%\n"
+        f"   MC Mean: {result['mc_mean_wr']}% (±{result['mc_wr_std']}%)\n"
+        f"   5th–95th Percentile: {result['mc_wr_5th']}% – {result['mc_wr_95th']}%\n\n"
+        f"📉 *Max Drawdown:*\n"
+        f"   Mean: {result['mc_mean_dd']} صفقات\n"
+        f"   95th Percentile: {result['mc_dd_95th']} صفقات\n\n"
+        f"⚠️ *Risk of Ruin:* {result['risk_of_ruin']}%\n"
+        f"🛡️ *Stability:* {result['stability']}%\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"{result['status']}"
+    )
+
 # --- الخلفية Worker ---
 def stats_engine_worker():
     """
     يشتغل في الخلفية كل ساعة.
-    يولد تقارير واقتراحات تحسين.
+    يولد تقارير منفصلة لـ LIVE و OTC + Walk Forward + Monte Carlo.
     """
     logger.info("📊 Statistical Engine Worker started")
 
@@ -794,49 +1433,113 @@ def stats_engine_worker():
     last_weekly_report = 0
     last_monthly_report = 0
     last_optimization = 0
+    last_disabled_check = 0
+    last_walk_forward = 0
+    last_monte_carlo = 0
+    last_adaptive_update = 0
 
     while True:
         try:
             now = get_iq_time()
             now_dt = datetime.fromtimestamp(now, tz=CAIRO_TZ)
 
-            trades = read_trade_log(max_entries=10000)
+            # ========== تحديث Adaptive Thresholds (كل ساعة) ==========
+            if now - last_adaptive_update > 3600:
+                all_trades = read_trade_log(max_entries=10000)
+                for market in ["live", "otc"]:
+                    old_thresh = adaptive_thresholds.get(market, 80)
+                    new_thresh = calculate_adaptive_threshold(all_trades, market_type=market)
+                    if old_thresh != new_thresh:
+                        logger.info(f"📊 Adaptive Threshold [{market.upper()}] تغير: {old_thresh} → {new_thresh}")
+                last_adaptive_update = now
 
-            # تقرير يومي — الساعة 00:00 بتوقيت القاهرة
+            # ========== تقرير يومي — منفصل LIVE/OTC ==========
             if now_dt.hour == 0 and now - last_daily_report > 3600:
-                # ناخد صفقات آخر 24 ساعة
-                day_trades = [t for t in trades if now - t.get("timestamp", 0) <= 86400]
-                report = generate_report(day_trades, "daily")
-                msg = format_report_message(report)
-                send_telegram_message(msg)
+                for market in ["live", "otc"]:
+                    day_trades = read_trade_log(max_entries=10000, market_type=market)
+                    day_trades = [t for t in day_trades if now - t.get("timestamp", 0) <= 86400]
+                    report = generate_report(day_trades, "daily", market_type=market)
+                    msg = format_report_message(report)
+                    if msg and "لا توجد بيانات" not in msg:
+                        send_telegram_message(msg)
                 last_daily_report = now
-                logger.info("📊 تم إرسال التقرير اليومي")
+                logger.info("📊 تم إرسال التقرير اليومي (LIVE + OTC)")
 
-            # تقرير أسبوعي — السبت الساعة 00:00
+            # ========== تقرير أسبوعي — منفصل LIVE/OTC ==========
             if now_dt.weekday() == 5 and now_dt.hour == 0 and now - last_weekly_report > 3600:
-                week_trades = [t for t in trades if now - t.get("timestamp", 0) <= 604800]
-                report = generate_report(week_trades, "weekly")
-                msg = format_report_message(report)
-                send_telegram_message(msg)
+                for market in ["live", "otc"]:
+                    week_trades = read_trade_log(max_entries=10000, market_type=market)
+                    week_trades = [t for t in week_trades if now - t.get("timestamp", 0) <= 604800]
+                    report = generate_report(week_trades, "weekly", market_type=market)
+                    msg = format_report_message(report)
+                    if msg and "لا توجد بيانات" not in msg:
+                        send_telegram_message(msg)
 
-                # مع الـ Weekly Report نبعت اقتراح تحسين
-                if len(trades) >= 200:
+                # اقتراح تحسين أسبوعي
+                all_trades = read_trade_log(max_entries=10000)
+                if len(all_trades) >= 200:
                     generate_and_send_optimization_proposal()
 
                 last_weekly_report = now
                 logger.info("📊 تم إرسال التقرير الأسبوعي + اقتراح تحسين")
 
-            # تقرير شهري — يوم 1 الساعة 00:00
-            if now_dt.day == 1 and now_dt.hour == 0 and now - last_monthly_report > 3600:
-                month_trades = [t for t in trades if now - t.get("timestamp", 0) <= 2592000]
-                report = generate_report(month_trades, "monthly")
-                msg = format_report_message(report)
-                send_telegram_message(msg)
-                last_monthly_report = now
-                logger.info("📊 تم إرسال التقرير الشهري")
+            # ========== تحديث الأزواج المتوقفة ==========
+            if now_dt.hour == 1 and now - last_disabled_check > 3600:
+                update_disabled_pairs()
+                last_disabled_check = now
 
-            # اقتراح تحسين كل 3 أيام (لو فيه بيانات كافية)
-            if len(trades) >= 500 and now - last_optimization > 259200:
+            # ========== تقرير شهري — منفصل LIVE/OTC ==========
+            if now_dt.day == 1 and now_dt.hour == 0 and now - last_monthly_report > 3600:
+                for market in ["live", "otc"]:
+                    month_trades = read_trade_log(max_entries=10000, market_type=market)
+                    month_trades = [t for t in month_trades if now - t.get("timestamp", 0) <= 2592000]
+                    report = generate_report(month_trades, "monthly", market_type=market)
+                    msg = format_report_message(report)
+                    if msg and "لا توجد بيانات" not in msg:
+                        send_telegram_message(msg)
+
+                # Monte Carlo مع التقرير الشهري
+                all_trades = read_trade_log(max_entries=10000)
+                for strategy in ["original", "king"]:
+                    mc_result, mc_status = run_monte_carlo(all_trades, strategy=strategy)
+                    if mc_result:
+                        mc_msg = format_monte_carlo_message(mc_result)
+                        send_telegram_message(mc_msg)
+
+                last_monthly_report = now
+                logger.info("📊 تم إرسال التقرير الشهري + Monte Carlo")
+
+            # ========== Walk Forward Validation — منفصل LIVE/OTC ==========
+            for market in ["live", "otc"]:
+                market_trades = read_trade_log(max_entries=10000, market_type=market)
+                if len(market_trades) >= WALK_FORWARD_MIN_TRADES and now - last_walk_forward > 1209600:
+                    for strategy in ["original", "king"]:
+                        approved, wf_result, wf_msg = run_walk_forward_validation(
+                            market_trades, strategy=strategy, market_type=market
+                        )
+                        send_telegram_message(
+                            f"🔬 *Walk Forward Validation [{market.upper()}/{strategy.upper()}]*\n{wf_msg}"
+                        )
+                        if approved and wf_result:
+                            config = wf_result.get("best_config", {})
+                            send_telegram_message(
+                                f"📋 *إعدادات مقترحة (مفعلة تلقائياً):*\n"
+                                f"   السوق: *{market.upper()}*\n"
+                                f"   الاستراتيجية: *{strategy.upper()}*\n"
+                                f"   ADX ≥ {config.get('adx', 'N/A')}\n"
+                                f"   RSI CALL: {config.get('rsi_low', 'N/A')}–{config.get('rsi_high', 'N/A')}\n"
+                                f"   RSI PUT: {100 - config.get('rsi_high', 'N/A')}–{100 - config.get('rsi_low', 'N/A')}\n"
+                                f"\n✅ تم حفظها في `settings_{market}.json`"
+                            )
+                    last_walk_forward = now
+                elif len(market_trades) < WALK_FORWARD_MIN_TRADES and now - last_walk_forward > 604800:
+                    remaining = WALK_FORWARD_MIN_TRADES - len(market_trades)
+                    logger.info(f"⏳ Walk Forward [{market.upper()}]: محتاج {remaining} صفقة أخرى ({len(market_trades)}/{WALK_FORWARD_MIN_TRADES})")
+                    last_walk_forward = now
+
+            # ========== اقتراح تحسين كل 3 أيام ==========
+            all_trades = read_trade_log(max_entries=10000)
+            if len(all_trades) >= 500 and now - last_optimization > 259200:
                 generate_and_send_optimization_proposal()
                 last_optimization = now
 
@@ -844,14 +1547,17 @@ def stats_engine_worker():
             logger.error(f"خطأ في Statistical Engine: {e}")
             logger.error(traceback.format_exc())
 
-        time.sleep(3600)  # يشيك كل ساعة
-KING_SIGNAL_NAMES = {
-    1: ("ملك الإشارات 🥉", "KING BRONZE"),      # 80–84
-    2: ("ملك الإشارات 🥈", "KING SILVER"),      # 85–89
-    3: ("ملك الإشارات 👑", "KING GOLD"),        # 90–94
-    4: ("ملك الإشارات 👑🔥", "KING ELITE"),     # 95–100
-}
-KING_EMOJIS = {1: "🥉", 2: "🥈", 3: "👑", 4: "👑🔥"}
+        time.sleep(3600)
+
+
+def is_otc_pair(pair):
+    return "-OTC" in pair.upper()
+
+def get_trade_log_file(pair):
+    return "trade_log_otc.jsonl" if is_otc_pair(pair) else "trade_log_live.jsonl"
+
+def get_stats_file(pair):
+    return "stats_state_otc.json" if is_otc_pair(pair) else "stats_state_live.json"
 
 def get_king_level(score):
     if score >= 95:
@@ -1057,6 +1763,7 @@ def calculate_king_score(structure_ok, sweep_ok, trend_ok, momentum_ok,
     if stoch_ok: score += w.get('stochastic', 5)
     if candle_ok: score += w.get('candle', 15)
     return score
+
 
 # --- 6. Cache & Data Management ---
 def get_cached_candles(pair, tf, count, max_age=30):
@@ -1442,6 +2149,7 @@ def evaluate_signal_strength(direction, curr, prev, df, price, alma9, alma50,
 
     return 0
 
+
 # --- 11. Telegram Queue ---
 def telegram_worker():
     while True:
@@ -1469,7 +2177,7 @@ def send_telegram_message(message):
 # --- 12. إيقاف البوت ---
 def on_shutdown():
     logger.warning("البوت يتوقف...")
-    _send_telegram_raw("🔴 *تنبيه: تم إيقاف بوت IQ Option V7.0!*")
+    _send_telegram_raw("🔴 *تنبيه: تم إيقاف بوت IQ Option V7.2!*")
 
 atexit.register(on_shutdown)
 
@@ -1598,7 +2306,7 @@ def check_trade_results():
         if trade in active_trades:
             active_trades.remove(trade)
 
-# --- 15. التحليل الرئيسي (الأصلي) ---
+# --- 15. التحليل الرئيسي (الأصلي) — مع دمج الإعدادات الديناميكية ---
 def analyze_pair(pair, timeframe="5m"):
     tf_seconds, duration_text = 300, "5 دقائق"
     df = get_cached_df(pair, tf_seconds, 60)
@@ -1725,8 +2433,7 @@ def analyze_pair(pair, timeframe="5m"):
             'is_martingale': in_hunt_mode,
             'signal_level': strength,
             'signal_name': signal_name_ar,
-            # Statistical Engine data
-            'score': strength * 16,  # rough mapping to 100 scale
+            'score': strength * 16,
             'filters': {
                 'alma_cross': (a9p <= a50p and a9c > a50c) if potential_direction == "CALL" else (a9p >= a50p and a9c < a50c),
                 'price_above_alma': price > alma9 if potential_direction == "CALL" else price < alma9,
@@ -1754,9 +2461,23 @@ def analyze_pair(pair, timeframe="5m"):
 
     return None
 
-# ========== King of Signals — التحليل الرئيسي ==========
+# ========== King of Signals — التحليل الرئيسي (مع الإعدادات الديناميكية) ==========
 def analyze_pair_king(pair, timeframe="5m"):
     tf_seconds, duration_text = 300, "5 دقائق"
+
+    # ========== تحميل الإعدادات الديناميكية للسوق (مع Fallback آمن) ==========
+    settings = get_settings_for_pair(pair)
+    adx_threshold = settings.get("adx_threshold", 22)
+    rsi_low_call = settings.get("rsi_low_call", 45)
+    rsi_high_call = settings.get("rsi_high_call", 60)
+    rsi_low_put = settings.get("rsi_low_put", 40)
+    rsi_high_put = settings.get("rsi_high_put", 55)
+    sweep_threshold = settings.get("sweep_threshold", 0.0003)
+    body_pct_min = settings.get("body_pct_min", 0.60)
+
+    # تحديد نوع السوق للـ Adaptive Threshold
+    market_type = "otc" if is_otc_pair(pair) else "live"
+
     df = get_cached_df_king(pair, tf_seconds, 80)
     if df is None or len(df) < 60:
         return None
@@ -1794,22 +2515,25 @@ def analyze_pair_king(pair, timeframe="5m"):
 
     sup_levels, res_levels = get_smart_sr_levels(df, lookback=30)
 
-    sweep_ok, sweep_level = detect_liquidity_sweep(df, potential_direction, sweep_threshold=0.0003)
+    # استخدام sweep_threshold الديناميكي من الإعدادات
+    sweep_ok, sweep_level = detect_liquidity_sweep(df, potential_direction, sweep_threshold=sweep_threshold)
     if not sweep_ok:
         return None
 
-    trend_ok = (potential_direction == "CALL" and alma20 > alma80) or                (potential_direction == "PUT" and alma20 < alma80)
+    trend_ok = (potential_direction == "CALL" and alma20 > alma80) or (potential_direction == "PUT" and alma20 < alma80)
 
-    momentum_ok = (potential_direction == "CALL" and roc > 0) or                   (potential_direction == "PUT" and roc < 0)
+    momentum_ok = (potential_direction == "CALL" and roc > 0) or (potential_direction == "PUT" and roc < 0)
 
     volatility_ok = (atr_avg * 0.8 <= atr <= atr_avg * 2.0) if atr_avg > 0 else False
 
-    adx_ok = adx >= 22
+    # استخدام adx_threshold الديناميكي
+    adx_ok = adx >= adx_threshold
 
+    # استخدام نطاقات RSI الديناميكية
     if potential_direction == "CALL":
-        rsi_ok = 45 <= rsi <= 60
+        rsi_ok = rsi_low_call <= rsi <= rsi_high_call
     else:
-        rsi_ok = 40 <= rsi <= 55
+        rsi_ok = rsi_low_put <= rsi <= rsi_high_put
 
     if potential_direction == "CALL":
         stoch_ok = stoch_k > stoch_d
@@ -1852,11 +2576,13 @@ def analyze_pair_king(pair, timeframe="5m"):
         candle_ok=candle_ok
     )
 
-    level = get_king_level(score)
+    # استخدام Adaptive Threshold المنفصل للسوق
+    level = get_adaptive_king_level(score, market_type=market_type)
     if level == 0:
         return None
 
-    if body_pct < 0.30:
+    # استخدام body_pct_min الديناميكي
+    if body_pct < body_pct_min:
         return None
 
     htf_trend = get_king_htf_trend(pair)
@@ -1912,7 +2638,6 @@ def analyze_pair_king(pair, timeframe="5m"):
             'signal_level': level,
             'signal_name': signal_name_ar,
             'score': score,
-            # Statistical Engine data
             'filters': {
                 'structure_ok': structure in ["BULLISH", "BEARISH"],
                 'sweep_ok': sweep_ok,
@@ -1937,6 +2662,9 @@ def analyze_pair_king(pair, timeframe="5m"):
             'strategy': 'king'
         })
 
+        # إظهار الإعدادات المستخدمة في الرسالة (للشفافية)
+        settings_used = f"ADX≥{adx_threshold} | RSI:{rsi_low_call}-{rsi_high_call}(C) {rsi_low_put}-{rsi_high_put}(P)"
+
         final_signal = (
             f"{emoji} *{signal_name_ar}* {emoji}\n"
             f"الزوج: `{pair}` (IQ Option) [5m]\n"
@@ -1944,6 +2672,7 @@ def analyze_pair_king(pair, timeframe="5m"):
             f"⏱️ *مدة الصفقة:* {duration_text}\n"
             f"📊 *النقاط:* {score}/100 | *ADX:* {adx:.1f} | *RSI:* {rsi:.1f}\n"
             f"📈 *ROC:* {roc:.2f} | *ATR:* {atr:.5f} | *BBW:* {bbw:.4f}\n"
+            f"⚙️ *إعدادات:* `{settings_used}`\n"
             f"⚡ *ادخل فوراً مع بداية الشمعة التالية!*"
         )
         return final_signal
@@ -1963,6 +2692,7 @@ def analyze_pair_wrapper_king(pair):
     except Exception as e:
         logger.error(f"خطأ King Strategy في {pair}: {e}")
         return pair, None
+
 
 # --- 16. تشغيل البوت ---
 
@@ -2013,6 +2743,9 @@ def telegram_reply_worker():
             logger.error(f"خطأ في Telegram Reply Worker: {e}")
 
         time.sleep(30)
+
+STRATEGY_SCORE_WINDOW = 100
+
 def run_bot():
     global cycle_count, last_hunt_message_time
 
@@ -2034,9 +2767,9 @@ def run_bot():
     pairs, mode_text = get_pairs_for_today()
     current_mode = mode_text
 
-    logger.info(f"🚀 البوت يعمل بالنسخة V7.0 (وضع {mode_text})...")
+    logger.info(f"🚀 البوت يعمل بالنسخة V7.2 (وضع {mode_text})...")
     send_telegram_message(
-        f"🤖 *تم تشغيل بوت IQ Option V7.0!*\n"
+        f"🤖 *تم تشغيل بوت IQ Option V7.2!*\n"
         f"📅 *اليوم:* {datetime.now(CAIRO_TZ).strftime('%A %d/%m/%Y')}\n"
         f"🌐 *وضع الأزواج:* {mode_text}\n"
         f"📋 *الأزواج المتاحة:* {len(pairs)} زوج\n"
@@ -2047,11 +2780,20 @@ def run_bot():
         f"  🟠 قوية سوبر ماكس (4)\n"
         f"  🔥 ماكس (5)\n"
         f"  👑 سوبر ماكس (6)\n\n"
-        f"👑 *King of Signals Strategy (جديد — منفصل):*\n"
+        f"👑 *King of Signals Strategy:*\n"
         f"  🥉 King Bronze (80–84)\n"
         f"  🥈 King Silver (85–89)\n"
         f"  👑 King Gold (90–94)\n"
         f"  👑🔥 King Elite (95–100)\n\n"
+        f"📊 *Statistical Engine V7.2 — الجديد:*\n"
+        f"  ✅ تقارير LIVE/OTC منفصلة\n"
+        f"  ✅ Walk Forward منفصل لكل سوق\n"
+        f"  ✅ إعدادات ديناميكية: `settings_live.json` + `settings_otc.json`\n"
+        f"  ✅ Adaptive Threshold منفصل لكل سوق\n"
+        f"  ✅ Feature Importance Weights\n"
+        f"  ✅ Market Regime Detection\n"
+        f"  ✅ Dynamic Pair Disable\n"
+        f"  ✅ Monte Carlo Simulation (شهري)\n\n"
         f"🎯 *وضع المضاعفة:* مفعل (للاستراتيجيات الأصلية فقط)\n"
         f"🌐 *مزامنة السيرفر:* مفعلة\n"
         f"🛡️ *الحماية:* مصدران للأخبار + مراقبة الاتصال + فلتر الساعة"
@@ -2078,7 +2820,6 @@ def run_bot():
                         f"🌐 الوضع الجديد: *{mode_text}*\n"
                         f"📋 الأزواج: *{len(pairs)}* زوج"
                     )
-                    # تنظيف caches لما يتبدل الوضع
                     invalid_assets.clear()
 
                 check_connection_health()
@@ -2101,38 +2842,90 @@ def run_bot():
                             f"👑 King Strategy شغال منفصل."
                         )
 
-                # ========== الاستراتيجيات الأصلية (6 مستويات) ==========
-                with ThreadPoolExecutor(max_workers=7) as executor:
-                    results = executor.map(analyze_pair_wrapper, valid_pairs)
-
-                    if martingale_queue:
-                        martingale_found = False
-                        for pair, signal in results:
-                            if signal and not martingale_found:
-                                logger.info(f"✅ مضاعفة ممتازة: {pair}")
-                                send_telegram_message(signal)
-                                martingale_found = True
-                                martingale_queue.clear()
-                                alerted_pairs.clear()
+                # ========== Phase 1: فحص الأزواج المتوقفة ==========
+                active_pairs = []
+                disabled_count = 0
+                for pair in valid_pairs:
+                    is_disabled, reason = check_pair_disabled(pair)
+                    if is_disabled:
+                        disabled_count += 1
+                        if cycle_count % 300 == 0:
+                            logger.info(f"🚫 {pair}: {reason}")
                     else:
-                        for pair, signal in results:
-                            if signal:
-                                logger.info(f"✅ إشارة ممتازة: {pair}")
-                                send_telegram_message(signal)
+                        active_pairs.append(pair)
+
+                if disabled_count > 0 and cycle_count % 300 == 0:
+                    logger.info(f"📋 أزواج متاحة: {len(active_pairs)} | متوقفة: {disabled_count}")
+
+                # ========== Phase 2: Market Regime Detection ==========
+                regime_by_pair = {}
+                for pair in active_pairs[:5]:
+                    regime = detect_market_regime(pair)
+                    regime_by_pair[pair] = regime
+                    if cycle_count % 300 == 0:
+                        logger.info(f"📊 حالة السوق {pair}: {regime}")
+
+                # ========== Phase 3: Adaptive Strategy Selection ==========
+                update_strategy_scores()
+
+                strategies_to_run = set()
+                for pair in active_pairs:
+                    regime = regime_by_pair.get(pair, "mixed")
+                    pair_strategies = select_strategy_for_regime(regime)
+                    strategies_to_run.update(pair_strategies)
+
+                if cycle_count % 300 == 0:
+                    logger.info(f"🎯 الاستراتيجيات النشطة: {list(strategies_to_run)}")
+                    for st, data in strategy_scores.items():
+                        if data["total"] > 0:
+                            logger.info(f"   {st}: Score={data['score']}, WR={data.get('wr', 0)}%")
+
+                # ========== عرض Adaptive Thresholds الحالية ==========
+                if cycle_count % 300 == 0:
+                    for market in ["live", "otc"]:
+                        thresh = adaptive_thresholds.get(market, 80)
+                        logger.info(f"📊 Adaptive Threshold [{market.upper()}]: {thresh}")
+
+                # ========== الاستراتيجيات الأصلية (5 مستويات) ==========
+                if "original" in strategies_to_run:
+                    with ThreadPoolExecutor(max_workers=7) as executor:
+                        results = executor.map(analyze_pair_wrapper, active_pairs)
+
+                        if martingale_queue:
+                            martingale_found = False
+                            for pair, signal in results:
+                                if signal and not martingale_found:
+                                    logger.info(f"✅ مضاعفة ممتازة: {pair}")
+                                    send_telegram_message(signal)
+                                    martingale_found = True
+                                    martingale_queue.clear()
+                                    alerted_pairs.clear()
+                        else:
+                            for pair, signal in results:
+                                if signal:
+                                    logger.info(f"✅ إشارة ممتازة: {pair}")
+                                    send_telegram_message(signal)
+                else:
+                    if cycle_count % 300 == 0:
+                        logger.info("⏸️ الاستراتيجيات الأصلية متوقفة (حالة السوق غير مناسبة)")
 
                 # ========== King of Signals Strategy (منفصل تماماً) ==========
-                king_signals_found = []
-                for pair in valid_pairs:
-                    try:
-                        king_signal = analyze_pair_king(pair, "5m")
-                        if king_signal:
-                            king_signals_found.append((pair, king_signal))
-                    except Exception as e:
-                        logger.error(f"خطأ King Strategy في {pair}: {e}")
+                if "king" in strategies_to_run:
+                    king_signals_found = []
+                    for pair in active_pairs:
+                        try:
+                            king_signal = analyze_pair_king(pair, "5m")
+                            if king_signal:
+                                king_signals_found.append((pair, king_signal))
+                        except Exception as e:
+                            logger.error(f"خطأ King Strategy في {pair}: {e}")
 
-                for pair, signal in king_signals_found:
-                    logger.info(f"👑 King Signal: {pair}")
-                    send_telegram_message(signal)
+                    for pair, signal in king_signals_found:
+                        logger.info(f"👑 King Signal: {pair}")
+                        send_telegram_message(signal)
+                else:
+                    if cycle_count % 300 == 0:
+                        logger.info("⏸️ King Strategy متوقفة (حالة السوق غير مناسبة)")
 
                 check_trade_results()
 
