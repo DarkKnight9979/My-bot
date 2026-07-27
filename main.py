@@ -20,7 +20,7 @@ from collections import defaultdict
 # ========== V7.5 HYBRID: V7.4 Structure + V7.3 Logic ==========
 # ============================================================
 
-VERSION = "7.5-Hybrid"
+VERSION = "7.5-Hybrid-TrendTag"
 
 # ========== الثوابت المركزية (من V7.4) ==========
 CAIRO_TZ = pytz.timezone('Africa/Cairo')
@@ -43,6 +43,7 @@ WALK_FORWARD_TRAIN_RATIO = 0.70
 WALK_FORWARD_FILE = "walk_forward_state.json"
 MONTE_CARLO_MIN_TRADES = 500
 MONTE_CARLO_SIMULATIONS = 1000
+MONTE_CARLO_FILE = "monte_carlo_results.json"
 BLOCK_SIZE = 20
 REGIME_CACHE_TTL = 300
 ADAPTIVE_THRESHOLD_ENABLED = True
@@ -203,7 +204,7 @@ FILES = {
     "walk_forward_state.json": {},
     "stats_state.json": {},
     "stats_state_live.json": {},
-    "stats_state_otc.json": {}
+    "stats_state_otc.json": {},
 }
 
 JSONL_FILES = ["trade_log_live.jsonl", "trade_log_otc.jsonl"]
@@ -1050,7 +1051,7 @@ def run_walk_forward_validation(trades, strategy="king", market_type="live"):
     return result["approved"], result, msg
 
 # ========== Monte Carlo ==========
-def run_monte_carlo(trades, strategy="king"):
+def run_monte_carlo(trades, strategy="king", market_type=None):
     st_trades = [t for t in trades if t.get("strategy") == strategy]
     if len(st_trades) < MONTE_CARLO_MIN_TRADES:
         return None, f"غير كافي — محتاج {MONTE_CARLO_MIN_TRADES}+ صفقة"
@@ -1090,7 +1091,7 @@ def run_monte_carlo(trades, strategy="king"):
     stable_count = sum(1 for s in simulations if s["wr"] >= 60)
     stability = (stable_count / MONTE_CARLO_SIMULATIONS) * 100
     return {
-        "strategy": strategy, "trades": n, "simulations": MONTE_CARLO_SIMULATIONS,
+        "strategy": strategy, "market_type": market_type, "trades": n, "simulations": MONTE_CARLO_SIMULATIONS,
         "baseline_wr": round(baseline_wr, 1), "mc_mean_wr": round(wr_mean, 1),
         "mc_wr_std": round(wr_std, 1), "mc_wr_5th": round(wr_5th, 1),
         "mc_wr_95th": round(wr_95th, 1), "mc_mean_dd": round(dd_mean, 1),
@@ -1102,8 +1103,10 @@ def run_monte_carlo(trades, strategy="king"):
 def format_monte_carlo_message(result):
     if not result:
         return "📊 *Monte Carlo: لا توجد بيانات كافية*"
+    market_label = result.get("market_type", "")
+    market_prefix = f" [{market_label.upper()}]" if market_label else ""
     return (
-        f"🎲 *Monte Carlo Simulation*\n"
+        f"🎲 *Monte Carlo Simulation{market_prefix}*\n"
         f"الاستراتيجية: `{result['strategy']}`\n"
         f"الصفقات: {result['trades']} | المحاكاة: {result['simulations']:,}\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -1119,6 +1122,42 @@ def format_monte_carlo_message(result):
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"{result['status']}"
     )
+
+
+def save_monte_carlo_results(results_dict):
+    """Save Monte Carlo results to JSON file with LIVE/OTC separation."""
+    try:
+        with data_lock:
+            with open(MONTE_CARLO_FILE, 'w', encoding='utf-8') as f:
+                json.dump(results_dict, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error(f"خطأ في حفظ نتائج Monte Carlo: {e}")
+
+
+def format_monte_carlo_summary(results_dict):
+    """Format a combined summary message for all Monte Carlo results."""
+    if not results_dict:
+        return "📊 *Monte Carlo: لا توجد بيانات*"
+    msg = "🎲 *Monte Carlo Simulation — ملخص شهري*" + "\n"
+    msg += f"📅 {datetime.now(CAIRO_TZ).strftime('%d/%m/%Y %I:%M %p')}" + "\n"
+    msg += "━━━━━━━━━━━━━━━━━━━━" + "\n" + "\n"
+    for market in ["live", "otc"]:
+        market_data = results_dict.get(market, {})
+        if not market_data:
+            continue
+        market_emoji = "🟢" if market == "live" else "🔵"
+        msg += f"{market_emoji} *{market.upper()}*" + "\n"
+        for strategy, result in market_data.items():
+            msg += f"  📌 `{strategy}`:" + "\n"
+            msg += f"     ⚠️ Risk of Ruin: {result.get('risk_of_ruin', 'N/A')}%" + "\n"
+            msg += f"     📉 Max Drawdown: {result.get('mc_dd_95th', 'N/A')} صفقات" + "\n"
+            msg += f"     🛡️ Stability: {result.get('stability', 'N/A')}%" + "\n"
+            msg += f"     📊 Baseline WR: {result.get('baseline_wr', 'N/A')}%" + "\n"
+            msg += f"     {result.get('status', '')}" + "\n"
+        msg += "\n"
+    msg += "━━━━━━━━━━━━━━━━━━━━"
+    return msg
+
 
 # ========== Market Regime + Pair Disable + Strategy Scores ==========
 
@@ -1226,16 +1265,9 @@ def update_strategy_scores():
         logger.error(f"خطأ في تحديث Strategy Scores: {e}")
 
 def select_strategy_for_regime(regime):
-    if regime == "trending":
-        return ["king", "original"]
-    elif regime == "ranging":
-        return ["original"]
-    elif regime == "high_vol":
-        return ["original"]
-    elif regime == "low_vol":
-        return []
-    else:
-        return ["original", "king"]
+    """تم تعديل هذه الدالة لتشغيل كلا الاستراتيجيتين في كل الظروف (زي القديم)"""
+    # تم إلغاء الفلتر بناءً على طلب المستخدم - يعمل في كل الظروف
+    return ["original", "king"]
 
 def calculate_adaptive_threshold(trades, market_type="live"):
     if not ADAPTIVE_THRESHOLD_ENABLED:
@@ -1798,7 +1830,7 @@ def evaluate_signal_strength(direction, curr, prev, df, price, alma9, alma50,
         return 2
     return 0
 
-# ========== analyze_pair (Original Strategy - من V7.3) ==========
+# ========== analyze_pair (Original Strategy - معدل) ==========
 
 def analyze_pair(pair, timeframe="5m"):
     tf_seconds, duration_text = 300, "5 دقائق"
@@ -1861,6 +1893,13 @@ def analyze_pair(pair, timeframe="5m"):
     emoji = SIGNAL_EMOJIS[strength]
     da = "صعود (CALL)" if potential_direction == "CALL" else "هبوط (PUT)"
 
+    # ======== إضافة علامة الترند (Trending market) ========
+    htf_trend = get_higher_tf_trend(pair)
+    is_trending = (potential_direction == "CALL" and htf_trend == "CALL") or \
+                  (potential_direction == "PUT" and htf_trend == "PUT")
+    trend_tag = " 🌊 Trending market" if is_trending else ""
+    # =====================================================
+
     with data_lock:
         in_hunt_mode = len(state.martingale_queue) > 0
 
@@ -1920,6 +1959,7 @@ def analyze_pair(pair, timeframe="5m"):
             f"الاتجاه: *{da}*\n"
             f"⏱️ *مدة الصفقة:* {duration_text}\n"
             f"📊 *مؤشرات:* ADX={adx:.1f} | BBW={bbw:.4f} | RSI={rsi:.1f}\n"
+            f"{trend_tag}\n"
             f"⚡ *ادخل فوراً مع بداية الشمعة التالية!*"
         )
 
@@ -1957,7 +1997,7 @@ def analyze_pair(pair, timeframe="5m"):
 
     return None
 
-# ========== analyze_pair_king (King Strategy - من V7.3) ==========
+# ========== analyze_pair_king (King Strategy - معدل) ==========
 
 def analyze_pair_king(pair, timeframe="5m"):
     tf_seconds, duration_text = 300, "5 دقائق"
@@ -2055,6 +2095,12 @@ def analyze_pair_king(pair, timeframe="5m"):
     if htf_trend is not None and htf_trend != potential_direction:
         return None
 
+    # ======== إضافة علامة الترند (Trending market) ========
+    is_trending = (potential_direction == "CALL" and htf_trend == "CALL") or \
+                  (potential_direction == "PUT" and htf_trend == "PUT")
+    trend_tag = " 🌊 Trending market" if is_trending else ""
+    # =====================================================
+
     pair_key = f"{pair}_king_5m"
     cn = get_cairo_time()
     cts = cn.strftime('%I:%M %p')
@@ -2133,7 +2179,7 @@ def analyze_pair_king(pair, timeframe="5m"):
             f"⏱️ *مدة الصفقة:* {duration_text}\n"
             f"📊 *النقاط:* {score}/100 | *ADX:* {adx:.1f} | *RSI:* {rsi:.1f}\n"
             f"📈 *ROC:* {roc:.2f} | *ATR:* {atr:.5f} | *BBW:* {bbw:.4f}\n"
-            f"⚙️ *إعدادات:* `{settings_used}`\n"
+            f"{trend_tag}\n"
             f"⚡ *ادخل فوراً مع بداية الشمعة التالية!*"
         )
         return final_signal
@@ -2375,14 +2421,25 @@ def stats_engine_worker():
                     msg = format_report_message(report)
                     if msg and "لا توجد بيانات" not in msg:
                         send_telegram_message(msg)
-                all_trades = read_trade_log(max_entries=10000)
-                for strategy in ["original", "king"]:
-                    mc_result, mc_status = run_monte_carlo(all_trades, strategy=strategy)
-                    if mc_result:
-                        mc_msg = format_monte_carlo_message(mc_result)
-                        send_telegram_message(mc_msg)
+                # Monte Carlo: separate for LIVE and OTC
+                mc_results = {}
+                for market in ["live", "otc"]:
+                    market_trades = read_trade_log(max_entries=10000, market_type=market)
+                    mc_results[market] = {}
+                    for strategy in ["original", "king"]:
+                        mc_result, mc_status = run_monte_carlo(market_trades, strategy=strategy, market_type=market)
+                        if mc_result:
+                            mc_results[market][strategy] = mc_result
+                            mc_msg = format_monte_carlo_message(mc_result)
+                            send_telegram_message(mc_msg)
+                        else:
+                            logger.info(f"📊 Monte Carlo [{market.upper()}/{strategy}]: {mc_status}")
+                if mc_results:
+                    save_monte_carlo_results(mc_results)
+                    summary_msg = format_monte_carlo_summary(mc_results)
+                    send_telegram_message(summary_msg)
                 last_monthly_report = now
-                logger.info("📊 تم إرسال التقرير الشهري + Monte Carlo")
+                logger.info("📊 تم إرسال التقرير الشهري + Monte Carlo (LIVE/OTC منفصل)")
 
             for market in ["live", "otc"]:
                 market_trades = read_trade_log(max_entries=10000, market_type=market)
@@ -2515,7 +2572,7 @@ def run_bot():
         f"  ✅ Feature Importance Weights\n"
         f"  ✅ Market Regime Detection\n"
         f"  ✅ Dynamic Pair Disable\n"
-        f"  ✅ Monte Carlo Simulation (شهري)\n"
+        f"  ✅ Monte Carlo Simulation (شهري — LIVE/OTC منفصل)\n"
         f"  ✅ Thread-Safe Shared State (RLock)\n"
         f"  ✅ Atomic Trade Entry\n"
         f"  ✅ Parallel King Strategy\n"
@@ -2595,20 +2652,10 @@ def run_bot():
                 if disabled_count > 0 and current_cycle % 300 == 0:
                     logger.info(f"📋 أزواج متاحة: {len(active_pairs)} | متوقفة: {disabled_count}")
 
-                regime_by_pair = {}
-                for pair in active_pairs[:5]:
-                    regime = detect_market_regime(pair)
-                    regime_by_pair[pair] = regime
-                    if current_cycle % 300 == 0:
-                        logger.info(f"📊 حالة السوق {pair}: {regime}")
-
-                update_strategy_scores()
-
-                strategies_to_run = set()
-                for pair in active_pairs:
-                    regime = regime_by_pair.get(pair, "mixed")
-                    pair_strategies = select_strategy_for_regime(regime)
-                    strategies_to_run.update(pair_strategies)
+                # ======== تم تعديل هذا الجزء ========
+                # تشغيل الاستراتيجيات في كل الظروف (زي القديم)
+                strategies_to_run = ['original', 'king']  # دايمًا
+                # =====================================
 
                 if current_cycle % 300 == 0:
                     logger.info(f"🎯 الاستراتيجيات النشطة: {list(strategies_to_run)}")
