@@ -43,7 +43,6 @@ WALK_FORWARD_TRAIN_RATIO = 0.70
 WALK_FORWARD_FILE = "walk_forward_state.json"
 MONTE_CARLO_MIN_TRADES = 500
 MONTE_CARLO_SIMULATIONS = 1000
-MONTE_CARLO_FILE = "monte_carlo_results.json"
 BLOCK_SIZE = 20
 REGIME_CACHE_TTL = 300
 ADAPTIVE_THRESHOLD_ENABLED = True
@@ -204,7 +203,7 @@ FILES = {
     "walk_forward_state.json": {},
     "stats_state.json": {},
     "stats_state_live.json": {},
-    "stats_state_otc.json": {},
+    "stats_state_otc.json": {}
 }
 
 JSONL_FILES = ["trade_log_live.jsonl", "trade_log_otc.jsonl"]
@@ -1051,7 +1050,7 @@ def run_walk_forward_validation(trades, strategy="king", market_type="live"):
     return result["approved"], result, msg
 
 # ========== Monte Carlo ==========
-def run_monte_carlo(trades, strategy="king", market_type=None):
+def run_monte_carlo(trades, strategy="king"):
     st_trades = [t for t in trades if t.get("strategy") == strategy]
     if len(st_trades) < MONTE_CARLO_MIN_TRADES:
         return None, f"غير كافي — محتاج {MONTE_CARLO_MIN_TRADES}+ صفقة"
@@ -1091,7 +1090,7 @@ def run_monte_carlo(trades, strategy="king", market_type=None):
     stable_count = sum(1 for s in simulations if s["wr"] >= 60)
     stability = (stable_count / MONTE_CARLO_SIMULATIONS) * 100
     return {
-        "strategy": strategy, "market_type": market_type, "trades": n, "simulations": MONTE_CARLO_SIMULATIONS,
+        "strategy": strategy, "trades": n, "simulations": MONTE_CARLO_SIMULATIONS,
         "baseline_wr": round(baseline_wr, 1), "mc_mean_wr": round(wr_mean, 1),
         "mc_wr_std": round(wr_std, 1), "mc_wr_5th": round(wr_5th, 1),
         "mc_wr_95th": round(wr_95th, 1), "mc_mean_dd": round(dd_mean, 1),
@@ -1103,10 +1102,8 @@ def run_monte_carlo(trades, strategy="king", market_type=None):
 def format_monte_carlo_message(result):
     if not result:
         return "📊 *Monte Carlo: لا توجد بيانات كافية*"
-    market_label = result.get("market_type", "")
-    market_prefix = f" [{market_label.upper()}]" if market_label else ""
     return (
-        f"🎲 *Monte Carlo Simulation{market_prefix}*\n"
+        f"🎲 *Monte Carlo Simulation*\n"
         f"الاستراتيجية: `{result['strategy']}`\n"
         f"الصفقات: {result['trades']} | المحاكاة: {result['simulations']:,}\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -1122,42 +1119,6 @@ def format_monte_carlo_message(result):
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"{result['status']}"
     )
-
-
-def save_monte_carlo_results(results_dict):
-    """Save Monte Carlo results to JSON file with LIVE/OTC separation."""
-    try:
-        with data_lock:
-            with open(MONTE_CARLO_FILE, 'w', encoding='utf-8') as f:
-                json.dump(results_dict, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        logger.error(f"خطأ في حفظ نتائج Monte Carlo: {e}")
-
-
-def format_monte_carlo_summary(results_dict):
-    """Format a combined summary message for all Monte Carlo results."""
-    if not results_dict:
-        return "📊 *Monte Carlo: لا توجد بيانات*"
-    msg = "🎲 *Monte Carlo Simulation — ملخص شهري*" + "\n"
-    msg += f"📅 {datetime.now(CAIRO_TZ).strftime('%d/%m/%Y %I:%M %p')}" + "\n"
-    msg += "━━━━━━━━━━━━━━━━━━━━" + "\n" + "\n"
-    for market in ["live", "otc"]:
-        market_data = results_dict.get(market, {})
-        if not market_data:
-            continue
-        market_emoji = "🟢" if market == "live" else "🔵"
-        msg += f"{market_emoji} *{market.upper()}*" + "\n"
-        for strategy, result in market_data.items():
-            msg += f"  📌 `{strategy}`:" + "\n"
-            msg += f"     ⚠️ Risk of Ruin: {result.get('risk_of_ruin', 'N/A')}%" + "\n"
-            msg += f"     📉 Max Drawdown: {result.get('mc_dd_95th', 'N/A')} صفقات" + "\n"
-            msg += f"     🛡️ Stability: {result.get('stability', 'N/A')}%" + "\n"
-            msg += f"     📊 Baseline WR: {result.get('baseline_wr', 'N/A')}%" + "\n"
-            msg += f"     {result.get('status', '')}" + "\n"
-        msg += "\n"
-    msg += "━━━━━━━━━━━━━━━━━━━━"
-    return msg
-
 
 # ========== Market Regime + Pair Disable + Strategy Scores ==========
 
@@ -2414,25 +2375,14 @@ def stats_engine_worker():
                     msg = format_report_message(report)
                     if msg and "لا توجد بيانات" not in msg:
                         send_telegram_message(msg)
-                # Monte Carlo: separate for LIVE and OTC
-                mc_results = {}
-                for market in ["live", "otc"]:
-                    market_trades = read_trade_log(max_entries=10000, market_type=market)
-                    mc_results[market] = {}
-                    for strategy in ["original", "king"]:
-                        mc_result, mc_status = run_monte_carlo(market_trades, strategy=strategy, market_type=market)
-                        if mc_result:
-                            mc_results[market][strategy] = mc_result
-                            mc_msg = format_monte_carlo_message(mc_result)
-                            send_telegram_message(mc_msg)
-                        else:
-                            logger.info(f"📊 Monte Carlo [{market.upper()}/{strategy}]: {mc_status}")
-                if mc_results:
-                    save_monte_carlo_results(mc_results)
-                    summary_msg = format_monte_carlo_summary(mc_results)
-                    send_telegram_message(summary_msg)
+                all_trades = read_trade_log(max_entries=10000)
+                for strategy in ["original", "king"]:
+                    mc_result, mc_status = run_monte_carlo(all_trades, strategy=strategy)
+                    if mc_result:
+                        mc_msg = format_monte_carlo_message(mc_result)
+                        send_telegram_message(mc_msg)
                 last_monthly_report = now
-                logger.info("📊 تم إرسال التقرير الشهري + Monte Carlo (LIVE/OTC منفصل)")
+                logger.info("📊 تم إرسال التقرير الشهري + Monte Carlo")
 
             for market in ["live", "otc"]:
                 market_trades = read_trade_log(max_entries=10000, market_type=market)
@@ -2565,7 +2515,7 @@ def run_bot():
         f"  ✅ Feature Importance Weights\n"
         f"  ✅ Market Regime Detection\n"
         f"  ✅ Dynamic Pair Disable\n"
-        f"  ✅ Monte Carlo Simulation (شهري — LIVE/OTC منفصل)\n"
+        f"  ✅ Monte Carlo Simulation (شهري)\n"
         f"  ✅ Thread-Safe Shared State (RLock)\n"
         f"  ✅ Atomic Trade Entry\n"
         f"  ✅ Parallel King Strategy\n"
