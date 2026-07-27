@@ -20,7 +20,7 @@ from collections import defaultdict
 # ========== V7.5 HYBRID: V7.4 Structure + V7.3 Logic ==========
 # ============================================================
 
-VERSION = "7.5-Hybrid-TrendTag-OTC-Methodology"
+VERSION = "7.5-Hybrid-TrendTag-OTC-Methodology-FINAL"
 
 # ========== الثوابت المركزية (من V7.4) ==========
 CAIRO_TZ = pytz.timezone('Africa/Cairo')
@@ -92,8 +92,8 @@ def run_web_server():
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
 
-# ========== Locks (من V7.4: 3 Locks بس) ==========
-data_lock = threading.RLock()    # RLock لمنع Deadlock
+# ========== Locks ==========
+data_lock = threading.RLock()
 api_lock = threading.Lock()
 telegram_lock = threading.Lock()
 stop_event = threading.Event()
@@ -101,7 +101,7 @@ stop_event = threading.Event()
 # ========== Queue thread-safe للـ Telegram ==========
 telegram_queue = queue.Queue()
 
-# ========== Class لإدارة الـ Cache بحجم محدد (من V7.4) ==========
+# ========== Class لإدارة الـ Cache بحجم محدد ==========
 class LimitedCache:
     def __init__(self, maxsize=1000):
         self.cache = {}
@@ -132,7 +132,7 @@ class LimitedCache:
                 if now - self.cache[key][1] > CACHE_TTL:
                     del self.cache[key]
 
-# ========== المتغيرات العامة الموحدة (BotState من V7.4) ==========
+# ========== المتغيرات العامة الموحدة (BotState) ==========
 class BotState:
     def __init__(self):
         self.active_trades = []
@@ -162,12 +162,12 @@ class BotState:
         self.server_time_offset = 0
         self.cycle_count = 0
         self.is_reconnecting = False
-        # ===== تم إضافة king_htf_cache (يستخدم في King HTF) =====
+        # ===== تم إضافة king_htf_cache =====
         self.king_htf_cache = {}
 
 state = BotState()
 
-# ========== Caches منفصلة (من V7.4) ==========
+# ========== Caches منفصلة ==========
 candles_cache = LimitedCache(maxsize=500)
 df_cache = LimitedCache(maxsize=200)
 king_df_cache = LimitedCache(maxsize=200)
@@ -467,7 +467,7 @@ CURRENCY_PAIRS = {
 }
 
 
-# ========== Statistical Engine Functions (من V7.3) ==========
+# ========== Statistical Engine Functions ==========
 
 def evaluate_filters(trades, market_type=None):
     if market_type:
@@ -1309,7 +1309,7 @@ def get_adaptive_king_level(score, market_type="live"):
         return 1
     return 0
 
-# ========== News Functions (من V7.3 الكامل) ==========
+# ========== News Functions ==========
 def update_news():
     if get_iq_time() - state.last_news_update < 1800:
         return
@@ -1573,7 +1573,7 @@ def calculate_king_score(structure_ok, sweep_ok, trend_ok, momentum_ok,
     if candle_ok: score += w.get('candle', 15)
     return score
 
-# ========== Cache Functions (مع LimitedCache من V7.4) ==========
+# ========== Cache Functions ==========
 
 def get_cached_candles(pair, tf, count, max_age=30):
     key = f"{pair}_{tf}_{count}"
@@ -1693,13 +1693,36 @@ def get_king_htf_trend(pair):
 
 def _build_trade_dict(pair, direction, entry_price, expire_offset, is_king, is_martingale,
                       signal_level, signal_name, score, filters, indicators, strategy):
+    # ===== تحويل القيم المنطقية (bool) إلى أرقام (int) عشان JSON =====
+    def convert_bool_to_int(obj):
+        if isinstance(obj, dict):
+            return {k: convert_bool_to_int(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [convert_bool_to_int(item) for item in obj]
+        elif isinstance(obj, bool):
+            return int(obj)
+        else:
+            return obj
+
+    filters_clean = convert_bool_to_int(filters)
+    indicators_clean = convert_bool_to_int(indicators)
+
     return {
-        'pair': pair, 'timeframe': '5m', 'direction': direction,
-        'entry_price': entry_price, 'expire_time': get_iq_time() + expire_offset,
-        'warned_loss': False, 'is_martingale': is_martingale, 'is_king': is_king,
-        'signal_level': signal_level, 'signal_name': signal_name, 'score': score,
-        'filters': filters, 'indicators': indicators,
-        'hour': datetime.now(CAIRO_TZ).hour, 'strategy': strategy
+        'pair': pair,
+        'timeframe': '5m',
+        'direction': direction,
+        'entry_price': entry_price,
+        'expire_time': get_iq_time() + expire_offset,
+        'warned_loss': False,
+        'is_martingale': is_martingale,
+        'is_king': is_king,
+        'signal_level': signal_level,
+        'signal_name': signal_name,
+        'score': score,
+        'filters': filters_clean,
+        'indicators': indicators_clean,
+        'hour': datetime.now(CAIRO_TZ).hour,
+        'strategy': strategy
     }
 
 def add_trade_atomic(trade_dict):
@@ -2194,7 +2217,7 @@ def analyze_pair_wrapper_king(pair):
         logger.error(f"خطأ King Strategy في {pair}: {e}")
         return pair, None
 
-# ========== Trade Results Check (من V7.3 الكامل) ==========
+# ========== Trade Results Check ==========
 
 def check_trade_results():
     current_time = get_iq_time()
@@ -2256,7 +2279,7 @@ def check_trade_results():
                         "is_martingale": is_mg, "is_king": is_king
                     })
                 except Exception as e:
-                    logger.error(f"خطأ في تسجيل صفقة للـ Statistical Engine: {e}")
+                    logger.error(f"خطأ في تسجيل الصفقة: {e}")
 
                 if is_mg:
                     msg = f"✅ *نتيجة المضاعفة: رابحة*" if is_win else f"❌ *نتيجة المضاعفة: خاسرة*"
@@ -2351,7 +2374,7 @@ def check_connection_health():
         if (time.time() - start) > 0.5:
             logger.warning("⚠️ بطء في استجابة الاتصال (High Latency)")
 
-# ========== Stats Engine Worker (من V7.3 الكامل) ==========
+# ========== Stats Engine Worker ==========
 
 def stats_engine_worker():
     logger.info("📊 Statistical Engine Worker started")
