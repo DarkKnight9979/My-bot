@@ -162,6 +162,8 @@ class BotState:
         self.server_time_offset = 0
         self.cycle_count = 0
         self.is_reconnecting = False
+        # ===== تم إضافة king_htf_cache (يستخدم في King HTF) =====
+        self.king_htf_cache = {}
 
 state = BotState()
 
