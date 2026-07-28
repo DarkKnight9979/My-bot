@@ -17,12 +17,12 @@ from iqoptionapi.stable_api import IQ_Option
 from collections import defaultdict
 
 # ============================================================
-# ========== V7.5 HYBRID: V7.4 Structure + V7.3 Logic ==========
+# ========== V7.5 FINAL: All Strategies Optimized ============
 # ============================================================
 
-VERSION = "7.5-Hybrid-TrendTag-OTC-Methodology-FINAL"
+VERSION = "7.5-FINAL-ALL-OPTIMIZED"
 
-# ========== الثوابت المركزية (من V7.4) ==========
+# ========== الثوابت المركزية ==========
 CAIRO_TZ = pytz.timezone('Africa/Cairo')
 UTC_TZ = pytz.utc
 TIMEFRAME_5M = 300
@@ -144,12 +144,15 @@ class BotState:
         self.king_recent_signals = {}
         self.alerted_pairs = {}
         self.king_alerted_pairs = {}
+        self.smart_alerted_pairs = {}
+        self.smart_sent_signals = {}
         self.disabled_pairs = {}
         self.regime_cache = {}
         self.adaptive_thresholds = {"live": 80, "otc": 80}
         self.strategy_scores = {}
         self.stats = defaultdict(lambda: {"win": 0, "loss": 0, "total": 0})
         self.king_stats = defaultdict(lambda: {"win": 0, "loss": 0, "total": 0})
+        self.smart_stats = defaultdict(lambda: {"win": 0, "loss": 0, "total": 0})
         self.settings_cache = {}
         self.invalid_assets = set()
         self.news_data = []
@@ -162,7 +165,6 @@ class BotState:
         self.server_time_offset = 0
         self.cycle_count = 0
         self.is_reconnecting = False
-        # ===== تم إضافة king_htf_cache =====
         self.king_htf_cache = {}
 
 state = BotState()
@@ -171,6 +173,7 @@ state = BotState()
 candles_cache = LimitedCache(maxsize=500)
 df_cache = LimitedCache(maxsize=200)
 king_df_cache = LimitedCache(maxsize=200)
+smart_df_cache = LimitedCache(maxsize=200)
 
 # ========== API Global ==========
 API = None
@@ -198,9 +201,9 @@ FILES = {
     "settings_live.json": {},
     "settings_otc.json": {},
     "king_weights.json": {
-        "structure": 20, "sweep": 20, "trend": 10,
-        "momentum": 15, "volatility": 10, "adx": 10,
-        "rsi": 5, "stochastic": 5, "candle": 15
+        "structure": 25, "sweep": 25, "trend": 15,
+        "momentum": 10, "volatility": 10, "adx": 10,
+        "rsi": 0, "stochastic": 0, "candle": 5
     },
     "optimization_proposal.json": {},
     "walk_forward_state.json": {},
@@ -243,9 +246,9 @@ def init_log_files():
 
 # ========== الأوزان ==========
 DEFAULT_KING_WEIGHTS = {
-    "structure": 20, "sweep": 20, "trend": 10,
-    "momentum": 15, "volatility": 10, "adx": 10,
-    "rsi": 5, "stochastic": 5, "candle": 15
+    "structure": 25, "sweep": 25, "trend": 15,
+    "momentum": 10, "volatility": 10, "adx": 10,
+    "rsi": 0, "stochastic": 0, "candle": 5
 }
 
 WEIGHTS_FILE = "king_weights.json"
@@ -277,10 +280,10 @@ def load_settings(market_type="live"):
     file_path = SETTINGS_LIVE_FILE if market_type == "live" else SETTINGS_OTC_FILE
     default = {
         "adx_threshold": 22,
-        "rsi_low_call": 45,
-        "rsi_high_call": 60,
-        "rsi_low_put": 40,
-        "rsi_high_put": 55,
+        "rsi_low_call": 30,
+        "rsi_high_call": 50,
+        "rsi_low_put": 50,
+        "rsi_high_put": 70,
         "sweep_threshold": 0.0003,
         "body_pct_min": 0.60,
         "last_updated": 0,
@@ -455,6 +458,15 @@ KING_SIGNAL_NAMES = {
     4: ("King Elite 👑🔥", "KING ELITE")
 }
 KING_EMOJIS = {1: "🥉", 2: "🥈", 3: "👑", 4: "👑🔥"}
+
+# ========== SMC Signal Names ==========
+SMC_SIGNAL_NAMES = {
+    1: ("SMC Bronze 🥉", "SMC BRONZE"),
+    2: ("SMC Silver 🥈", "SMC SILVER"),
+    3: ("SMC Gold 🥇", "SMC GOLD"),
+    4: ("SMC Elite 🏆", "SMC ELITE")
+}
+SMC_EMOJIS = {1: "🥉", 2: "🥈", 3: "🥇", 4: "🏆"}
 
 CURRENCY_PAIRS = {
     'USD': ['EURUSD','GBPUSD','USDJPY','AUDUSD','USDCAD','USDCHF'],
@@ -795,8 +807,10 @@ def generate_report(trades, period="daily", market_type=None):
     worst_hour = list(hour_stats.items())[-1] if hour_stats else None
     orig_trades = [t for t in trades if t.get("strategy") == "original"]
     king_trades = [t for t in trades if t.get("strategy") == "king"]
+    smart_trades = [t for t in trades if t.get("strategy") == "smart"]
     orig_wr = (sum(1 for t in orig_trades if t.get("outcome") == "win") / len(orig_trades) * 100) if orig_trades else 0
     king_wr = (sum(1 for t in king_trades if t.get("outcome") == "win") / len(king_trades) * 100) if king_trades else 0
+    smart_wr = (sum(1 for t in smart_trades if t.get("outcome") == "win") / len(smart_trades) * 100) if smart_trades else 0
     return {
         "period": period, "market_type": market_type or "all",
         "total_trades": total, "wins": wins, "losses": losses,
@@ -806,6 +820,7 @@ def generate_report(trades, period="daily", market_type=None):
         "worst_pair": worst_pair, "best_hour": best_hour, "worst_hour": worst_hour,
         "original": {"total": len(orig_trades), "wr": round(orig_wr, 1)},
         "king": {"total": len(king_trades), "wr": round(king_wr, 1)},
+        "smart": {"total": len(smart_trades), "wr": round(smart_wr, 1)},
         "filter_eval": evaluate_filters(trades),
         "calibration": analyze_confidence_calibration(trades),
         "pair_rankings": pair_rank[:5] if len(pair_rank) >= 5 else pair_rank,
@@ -837,6 +852,7 @@ def format_report_message(report):
     msg += f"\n📋 *الاستراتيجيات:*\n"
     msg += f"  أصلية: {report['original']['total']} صفقة — WR: {report['original']['wr']}%\n"
     msg += f"  👑 King: {report['king']['total']} صفقة — WR: {report['king']['wr']}%\n"
+    msg += f"  🏆 SMC: {report['smart']['total']} صفقة — WR: {report['smart']['wr']}%\n"
     if report.get("filter_eval"):
         msg += f"\n🔬 *ترتيب الفلاتر:*\n"
         for i, (fname, fdata) in enumerate(list(report["filter_eval"].items())[:5], 1):
@@ -1244,7 +1260,7 @@ def update_disabled_pairs():
 def update_strategy_scores():
     try:
         all_trades = read_trade_log(max_entries=STRATEGY_SCORE_WINDOW * 2)
-        for strategy in ["original", "king"]:
+        for strategy in ["original", "king", "smart"]:
             trades = [t for t in all_trades if t.get("strategy") == strategy]
             if len(trades) >= 20:
                 wins = sum(1 for t in trades if t.get("outcome") == "win")
@@ -1268,8 +1284,7 @@ def update_strategy_scores():
 
 def select_strategy_for_regime(regime):
     """تم تعديل هذه الدالة لتشغيل كلا الاستراتيجيتين في كل الظروف (زي القديم)"""
-    # تم إلغاء الفلتر بناءً على طلب المستخدم - يعمل في كل الظروف
-    return ["original", "king"]
+    return ["original", "king", "smart"]
 
 def calculate_adaptive_threshold(trades, market_type="live"):
     if not ADAPTIVE_THRESHOLD_ENABLED:
@@ -1345,7 +1360,6 @@ def is_news_for_pair(pair):
         return False
     update_news()
     with data_lock:
-        # ===== تم التعديل: أصبح مثل V7.0 (يسمح بالإشارات عند فشل جلب الأخبار) =====
         if state.news_fetch_failed:
             logger.warning("⚠️ شبكة الأخبار غير متاحة، الإشارات مستمرة مع مراقبة يدوية")
             return False
@@ -1562,15 +1576,15 @@ def calculate_king_score(structure_ok, sweep_ok, trend_ok, momentum_ok,
     with data_lock:
         w = dict(KING_WEIGHTS)
     score = 0
-    if structure_ok: score += w.get('structure', 20)
-    if sweep_ok: score += w.get('sweep', 20)
-    if trend_ok: score += w.get('trend', 10)
-    if momentum_ok: score += w.get('momentum', 15)
+    if structure_ok: score += w.get('structure', 25)
+    if sweep_ok: score += w.get('sweep', 25)
+    if trend_ok: score += w.get('trend', 15)
+    if momentum_ok: score += w.get('momentum', 10)
     if volatility_ok: score += w.get('volatility', 10)
     if adx_ok: score += w.get('adx', 10)
-    if rsi_ok: score += w.get('rsi', 5)
-    if stoch_ok: score += w.get('stochastic', 5)
-    if candle_ok: score += w.get('candle', 15)
+    if rsi_ok: score += w.get('rsi', 0)
+    if stoch_ok: score += w.get('stochastic', 0)
+    if candle_ok: score += w.get('candle', 5)
     return score
 
 # ========== Cache Functions ==========
@@ -1631,6 +1645,19 @@ def get_cached_df_king(pair, tf, count):
     king_df_cache.set(key, df)
     return df
 
+def get_cached_df_smart(pair, tf, count):
+    key = f"smart_{pair}_{tf}_{count}"
+    data = smart_df_cache.get(key)
+    if data is not None:
+        return data
+    raw = get_cached_candles(pair, tf, count, max_age=15)
+    if not raw or len(raw) < 80:
+        return None
+    df = pd.DataFrame(raw)
+    df.rename(columns={'open':'Open','max':'High','min':'Low','close':'Close','volume':'Volume'}, inplace=True)
+    smart_df_cache.set(key, df)
+    return df
+
 # ========== Higher Timeframe Trends ==========
 
 def get_higher_tf_trend(pair):
@@ -1667,18 +1694,19 @@ def get_king_htf_trend(pair):
         if key in state.king_htf_cache and now - state.king_htf_cache[key][1] < 900:
             return state.king_htf_cache[key][0]
     try:
-        candles = get_cached_candles(pair, TIMEFRAME_15M, 20, max_age=300)
-        if not candles or len(candles) < 10:
+        # ===== تم التعديل: HTF من 1H بدلاً من 15m =====
+        candles = get_cached_candles(pair, TIMEFRAME_1H, 10, max_age=300)
+        if not candles or len(candles) < 5:
             return None
         df_h = pd.DataFrame(candles)
         df_h.rename(columns={'close':'Close'}, inplace=True)
-        df_h['ALMA_20'] = calculate_alma(df_h['Close'], 20, 0.85, 6)
-        df_h['ALMA_80'] = calculate_alma(df_h['Close'], 80, 0.85, 6)
+        df_h['ALMA_9'] = calculate_alma(df_h['Close'], 9, 0.85, 6)
+        df_h['ALMA_50'] = calculate_alma(df_h['Close'], 50, 0.85, 6)
         curr_h = df_h.iloc[-1]
         prev_h = df_h.iloc[-2]
-        if curr_h['ALMA_20'] > curr_h['ALMA_80'] and prev_h['ALMA_20'] > prev_h['ALMA_80']:
+        if curr_h['ALMA_9'] > curr_h['ALMA_50'] and prev_h['ALMA_9'] > prev_h['ALMA_50']:
             trend = "CALL"
-        elif curr_h['ALMA_20'] < curr_h['ALMA_80'] and prev_h['ALMA_20'] < prev_h['ALMA_80']:
+        elif curr_h['ALMA_9'] < curr_h['ALMA_50'] and prev_h['ALMA_9'] < prev_h['ALMA_50']:
             trend = "PUT"
         else:
             trend = None
@@ -1693,7 +1721,6 @@ def get_king_htf_trend(pair):
 
 def _build_trade_dict(pair, direction, entry_price, expire_offset, is_king, is_martingale,
                       signal_level, signal_name, score, filters, indicators, strategy):
-    # ===== تحويل القيم المنطقية (bool) إلى أرقام (int) عشان JSON =====
     def convert_bool_to_int(obj):
         if isinstance(obj, dict):
             return {k: convert_bool_to_int(v) for k, v in obj.items()}
@@ -1736,17 +1763,14 @@ def add_trade_atomic(trade_dict):
 
 # ===== تم إلغاء دالة has_open_trade_for_pair (زي V7.0) =====
 
-def check_candle_quality(c, min_body_pct=0.12):
+# ========== تم تخفيف check_candle_quality (0.12 → 0.08) ==========
+def check_candle_quality(c, min_body_pct=0.08):
     body = abs(c['Close'] - c['Open'])
     rng = c['High'] - c['Low']
     if rng == 0:
         return False
     bp = body / rng
     if bp < min_body_pct:
-        return False
-    up_sh = c['High'] - max(c['Close'], c['Open'])
-    lo_sh = min(c['Close'], c['Open']) - c['Low']
-    if bp > 0.94 and (up_sh < rng*0.02 or lo_sh < rng*0.02):
         return False
     return True
 
@@ -1774,12 +1798,20 @@ def already_sent_this_candle_king(pair):
         state.king_sent_signals[key] = get_iq_time()
     return False
 
-# ========== Signal Evaluation (Original) ==========
+def already_sent_this_candle_smart(pair):
+    key = f"smart_{pair}_{(int(get_iq_time()) // 300) * 300}"
+    with data_lock:
+        if key in state.smart_sent_signals:
+            return True
+        state.smart_sent_signals[key] = get_iq_time()
+    return False
+
+# ========== Signal Evaluation (Original - معدل للتخفيف) ==========
 _SIGNAL_LEVEL_CONFIG = [
-    (6, 0.25, 1.00, 25, 0.0020, 0.00040, 0.050),
-    (5, 0.20, 0.90, 20, 0.0015, 0.00030, 0.040),
-    (4, 0.18, 0.85, 18, 0.0012, 0.00028, 0.035),
-    (3, 0.16, 0.80, 16, 0.0010, 0.00025, 0.030),
+    (6, 0.22, 0.85, 22, 0.0015, 0.00035, 0.040),
+    (5, 0.18, 0.80, 18, 0.0012, 0.00028, 0.035),
+    (4, 0.15, 0.75, 16, 0.0010, 0.00025, 0.030),
+    (3, 0.12, 0.70, 14, 0.0008, 0.00022, 0.025),
 ]
 
 def evaluate_signal_strength(direction, curr, prev, df, price, alma9, alma50,
@@ -1794,6 +1826,7 @@ def evaluate_signal_strength(direction, curr, prev, df, price, alma9, alma50,
     rng = curr['High'] - curr['Low']
     body_pct = body / rng if rng > 0 else 0
 
+    # === المستويات العالية (3-6) ===
     if has_cross:
         if direction == "CALL":
             cond_stoch = stoch_k > stoch_d
@@ -1801,6 +1834,7 @@ def evaluate_signal_strength(direction, curr, prev, df, price, alma9, alma50,
         else:
             cond_stoch = stoch_k < stoch_d
             cond_price = price < alma9
+        
         for level, min_body, vol_ratio, min_adx, min_bbw, atr_ratio, min_roc in _SIGNAL_LEVEL_CONFIG:
             if (cond_stoch and cond_price and
                 body_pct >= min_body and
@@ -1809,45 +1843,31 @@ def evaluate_signal_strength(direction, curr, prev, df, price, alma9, alma50,
                 bbw >= min_bbw and
                 atr >= (price * atr_ratio) and
                 abs(roc) >= min_roc):
-                if level == 6:
-                    if direction == "CALL" and near_sup and rsi <= 45:
-                        return 6
-                    if direction == "PUT" and near_res and rsi >= 55:
-                        return 6
-                elif level == 5:
-                    if direction == "CALL" and near_sup and rsi <= 50:
-                        return 5
-                    if direction == "PUT" and near_res and rsi >= 50:
-                        return 5
-                elif level == 4:
-                    if direction == "CALL" and near_sup and rsi <= 52:
-                        return 4
-                    if direction == "PUT" and near_res and rsi >= 48:
-                        return 4
-                elif level == 3:
-                    if direction == "CALL" and near_sup and rsi <= 55:
-                        return 3
-                    if direction == "PUT" and near_res and rsi >= 45:
-                        return 3
+                
+                if level >= 3:
+                    return level
 
+    # === المستوى 2 (الأضعف) — خففناه جداً ===
     if direction == "CALL":
-        cond_base = (price > alma9 * 1.0003) and (stoch_k > stoch_d)
-        cond_rsi = 30 <= rsi <= 52
-        cond_zone = near_sup or (price <= curr['BBL'] * 1.001)
-        cond_stoch_zone = stoch_k <= 42
+        cond_base = (price > alma9 * 1.0002) and (stoch_k >= stoch_d)
+        cond_rsi = 28 <= rsi <= 55
+        cond_zone = near_sup or (price <= curr['BBL'] * 1.002)
+        cond_stoch_zone = stoch_k <= 45
     else:
-        cond_base = (price < alma9 * 0.9997) and (stoch_k < stoch_d)
-        cond_rsi = 48 <= rsi <= 70
-        cond_zone = near_res or (price >= curr['BBU'] * 0.999)
-        cond_stoch_zone = stoch_k >= 58
+        cond_base = (price < alma9 * 0.9998) and (stoch_k <= stoch_d)
+        cond_rsi = 45 <= rsi <= 72
+        cond_zone = near_res or (price >= curr['BBU'] * 0.998)
+        cond_stoch_zone = stoch_k >= 55
+    
     if (cond_base and cond_rsi and cond_zone and cond_stoch_zone and
-        body_pct >= 0.16 and
-        volume >= vol_ma * 0.78 and
-        adx >= 15 and
-        bbw >= 0.0009 and
-        atr >= (price * 0.00024) and
-        abs(roc) >= 0.027):
+        body_pct >= 0.12 and
+        volume >= vol_ma * 0.65 and
+        adx >= 12 and
+        bbw >= 0.0007 and
+        atr >= (price * 0.00020) and
+        abs(roc) >= 0.020):
         return 2
+    
     return 0
 
 # ========== analyze_pair (Original Strategy - معدل) ==========
@@ -1856,6 +1876,7 @@ def analyze_pair(pair, timeframe="5m"):
     tf_seconds, duration_text = 300, "5 دقائق"
     df = get_cached_df(pair, tf_seconds, 60)
     if df is None or len(df) < 55:
+        logger.warning(f"⛔ {pair}: مفيش بيانات كافية (df={df is not None}, len={len(df) if df is not None else 0})")
         return None
 
     curr = df.iloc[-1]
@@ -1893,12 +1914,13 @@ def analyze_pair(pair, timeframe="5m"):
         potential_direction = "CALL"
     elif bearish_cross and stoch_k < stoch_d:
         potential_direction = "PUT"
-    elif price > alma9 and stoch_k > stoch_d and rsi <= 65:
+    elif price > alma9 and stoch_k > stoch_d and rsi <= 68:
         potential_direction = "CALL"
-    elif price < alma9 and stoch_k < stoch_d and rsi >= 35:
+    elif price < alma9 and stoch_k < stoch_d and rsi >= 32:
         potential_direction = "PUT"
 
     if potential_direction is None:
+        logger.info(f"⛔ {pair}: مفيش اتجاه محتمل (cross={bullish_cross or bearish_cross}, price_vs_alma={price > alma9})")
         return None
 
     strength = evaluate_signal_strength(
@@ -1907,18 +1929,23 @@ def analyze_pair(pair, timeframe="5m"):
     )
 
     if strength == 0:
+        body_pct = abs(curr['Close'] - curr['Open']) / (curr['High'] - curr['Low']) if curr['High'] != curr['Low'] else 0
+        logger.info(f"⛔ {pair}: الاستراتيجية رفضت — القوة=0 (ADX={adx:.1f}, RSI={rsi:.1f}, Body={body_pct:.2f}, Vol={volume:.0f}/MA={vol_ma:.0f})")
         return None
 
     signal_name_ar, signal_name_en = SIGNAL_NAMES[strength]
     emoji = SIGNAL_EMOJIS[strength]
     da = "صعود (CALL)" if potential_direction == "CALL" else "هبوط (PUT)"
 
-    # ======== إضافة علامة الترند (Trending market) ========
+    # ======== HTF: Warning بس مش رفض ========
     htf_trend = get_higher_tf_trend(pair)
     is_trending = (potential_direction == "CALL" and htf_trend == "CALL") or \
                   (potential_direction == "PUT" and htf_trend == "PUT")
     trend_tag = " 🌊 Trending market" if is_trending else ""
-    # =====================================================
+    
+    if htf_trend is not None and htf_trend != potential_direction:
+        logger.warning(f"⚠️ {pair}: HTF عكسي ({htf_trend} vs {potential_direction}) بس هنبعت الإشارة")
+        trend_tag = " ⚠️ HTF عكسي"
 
     with data_lock:
         in_hunt_mode = len(state.martingale_queue) > 0
@@ -1926,8 +1953,9 @@ def analyze_pair(pair, timeframe="5m"):
     if in_hunt_mode and strength < 2:
         return None
 
-    # Early alert (285-292)
-    if 285 <= csec <= 292:
+    # ===== توسيع نافذة الوقت: 270-299 (20 ثانية بدلاً من 5) =====
+    # Early alert (270-280)
+    if 270 <= csec <= 280:
         with data_lock:
             if pair_key not in state.alerted_pairs:
                 prefix = "⚠️ *تجهّز! مضاعفة" if in_hunt_mode else "⚠️ *تجهّز! إشارة"
@@ -1937,39 +1965,34 @@ def analyze_pair(pair, timeframe="5m"):
                     f"الاتجاه: *{da}*\n"
                     f"💡 النوع: *{signal_name_en}* {emoji}\n"
                     f"📊 القوة: *{strength}/6*\n"
-                    f"⏱️ *انتظر إشارة الدخول النهائية في آخر 5 ثواني من الشمعة!*"
+                    f"⏱️ *انتظر إشارة الدخول النهائية في آخر 20 ثانية من الشمعة!*"
                 )
                 state.alerted_pairs[pair_key] = potential_direction
 
-    # Final signal (295-299)
-    if 295 <= csec <= 299:
+    # Final signal (280-299)
+    if 280 <= csec <= 299:
         if already_sent_this_candle(pair):
+            logger.info(f"⛔ {pair}: الإشارة اتبعتت قبل كده في الشمعة دي")
             return None
 
         ok, reason = passes_common_entry_filters(pair)
         if not ok:
-            logger.info(f"🛑 إشارة {pair} مرفوضة ({reason})")
+            logger.info(f"🛑 {pair} مرفوضة ({reason})")
             return None
 
-        min_body = {6: 0.25, 5: 0.20, 4: 0.18, 3: 0.16, 2: 0.15, 1: 0.12}
-        if not check_candle_quality(curr, min_body_pct=min_body.get(strength, 0.12)):
-            logger.info(f"🛑 إشارة {pair} مرفوضة (شمعة ضعيفة)")
+        min_body = {6: 0.22, 5: 0.18, 4: 0.15, 3: 0.12, 2: 0.10, 1: 0.08}
+        if not check_candle_quality(curr, min_body_pct=min_body.get(strength, 0.08)):
+            body_pct = abs(curr['Close'] - curr['Open']) / (curr['High'] - curr['Low']) if curr['High'] != curr['Low'] else 0
+            logger.info(f"🛑 {pair} مرفوضة (شمعة ضعيفة: body={body_pct:.2%})")
             return None
 
         with data_lock:
             if pair_key in state.alerted_pairs:
                 del state.alerted_pairs[pair_key]
 
-        ht = get_higher_tf_trend(pair)
-        if ht is not None and ht != potential_direction:
-            logger.info(f"🛑 إشارة {pair} مرفوضة (فريم الساعة عكس: {ht})")
-            return None
-
         if not can_take_signal(pair, potential_direction):
-            logger.info(f"🛑 إشارة {pair} مرفوضة (إشارة متعاكسة قريبة)")
+            logger.info(f"🛑 {pair} مرفوضة (إشارة متعاكسة قريبة)")
             return None
-
-        # ===== تم إلغاء شرط has_open_trade_for_pair (زي V7.0) =====
 
         final_signal = (
             f"{emoji} *إشارة {signal_name_ar}* {emoji}\n"
@@ -1992,12 +2015,12 @@ def analyze_pair(pair, timeframe="5m"):
                 'alma_cross': (a9p <= a50p and a9c > a50c) if potential_direction == "CALL" else (a9p >= a50p and a9c < a50c),
                 'price_above_alma': price > alma9 if potential_direction == "CALL" else price < alma9,
                 'stoch_aligned': stoch_k > stoch_d if potential_direction == "CALL" else stoch_k < stoch_d,
-                'rsi_zone': (30 <= rsi <= 52) if potential_direction == "CALL" else (48 <= rsi <= 70),
+                'rsi_zone': (28 <= rsi <= 55) if potential_direction == "CALL" else (45 <= rsi <= 72),
                 'near_sr': near_sup if potential_direction == "CALL" else near_res,
-                'volume_ok': volume >= vol_ma * 0.78,
-                'adx_ok': adx >= 15,
-                'bbw_ok': bbw >= 0.0009,
-                'atr_ok': atr >= (price * 0.00024)
+                'volume_ok': volume >= vol_ma * 0.65,
+                'adx_ok': adx >= 12,
+                'bbw_ok': bbw >= 0.0007,
+                'atr_ok': atr >= (price * 0.00020)
             },
             indicators={
                 'adx': float(adx), 'rsi': float(rsi), 'bbw': float(bbw),
@@ -2008,11 +2031,15 @@ def analyze_pair(pair, timeframe="5m"):
         )
 
         if add_trade_atomic(new_trade):
+            logger.info(f"✅ {pair}: إشارة {signal_name_ar} تم إرسالها (قوة={strength})")
             return final_signal
         else:
-            logger.info(f"🛑 إشارة {pair} مرفوضة (صفقة تانية اتفتحت على نفس الزوج في نفس اللحظة)")
+            logger.info(f"🛑 {pair} مرفوضة (صفقة تانية على نفس الزوج)")
             return None
 
+    if csec < 270:
+        logger.debug(f"⏳ {pair}: لسه بدري ({csec}s)، النافذة بتبدأ 270s")
+    
     return None
 
 # ========== analyze_pair_king (King Strategy - معدل) ==========
@@ -2021,21 +2048,23 @@ def analyze_pair_king(pair, timeframe="5m"):
     tf_seconds, duration_text = 300, "5 دقائق"
     settings = get_settings_for_pair(pair)
     adx_threshold = settings.get("adx_threshold", 22)
-    rsi_low_call = settings.get("rsi_low_call", 45)
-    rsi_high_call = settings.get("rsi_high_call", 60)
-    rsi_low_put = settings.get("rsi_low_put", 40)
-    rsi_high_put = settings.get("rsi_high_put", 55)
+    rsi_low_call = settings.get("rsi_low_call", 30)
+    rsi_high_call = settings.get("rsi_high_call", 50)
+    rsi_low_put = settings.get("rsi_low_put", 50)
+    rsi_high_put = settings.get("rsi_high_put", 70)
     sweep_threshold = settings.get("sweep_threshold", 0.0003)
     body_pct_min = settings.get("body_pct_min", 0.60)
     market_type = "otc" if is_otc_pair(pair) else "live"
 
     df = get_cached_df_king(pair, tf_seconds, 80)
     if df is None or len(df) < 60:
+        logger.info(f"🛑 King {pair} رفضت: بيانات غير كافية")
         return None
 
     df = detect_swings(df, window=2)
     structure, last_sh_idx, last_sl_idx = get_market_structure(df, lookback=30)
     if structure == "NEUTRAL":
+        logger.info(f"🛑 King {pair} رفضت: structure = NEUTRAL")
         return None
 
     potential_direction = "CALL" if structure == "BULLISH" else "PUT"
@@ -2063,20 +2092,28 @@ def analyze_pair_king(pair, timeframe="5m"):
     bbw = bollinger_bandwidth(df, 20)
     sup_levels, res_levels = get_smart_sr_levels(df, lookback=30)
 
+    # ===== SWEEP إجباري (تم إرجاع الشرط) =====
     sweep_ok, sweep_level = detect_liquidity_sweep(df, potential_direction, sweep_threshold=sweep_threshold)
-    # ===== تم إلغاء الشرط الإجباري (أصبح اختياريًا مثل V7.0) =====
-    # if not sweep_ok:
-    #     return None
+    if not sweep_ok:
+        logger.info(f"🛑 King {pair} رفضت: no sweep")
+        return None
 
     trend_ok = (potential_direction == "CALL" and alma20 > alma80) or (potential_direction == "PUT" and alma20 < alma80)
     momentum_ok = (potential_direction == "CALL" and roc > 0) or (potential_direction == "PUT" and roc < 0)
     volatility_ok = (atr_avg * 0.8 <= atr <= atr_avg * 2.0) if atr_avg > 0 else False
+    
+    # ===== ATR حد أدنى =====
+    min_atr = price * 0.0004
+    if atr < min_atr:
+        logger.info(f"🛑 King {pair} رفضت: ATR={atr:.5f} < {min_atr:.5f}")
+        return None
+
     adx_ok = adx >= adx_threshold
 
     if potential_direction == "CALL":
-        rsi_ok = rsi_low_call <= rsi <= rsi_high_call
+        rsi_ok = rsi_low_call <= rsi <= rsi_high_call  # 30-50
     else:
-        rsi_ok = rsi_low_put <= rsi <= rsi_high_put
+        rsi_ok = rsi_low_put <= rsi <= rsi_high_put    # 50-70
 
     if potential_direction == "CALL":
         stoch_ok = stoch_k > stoch_d
@@ -2085,6 +2122,7 @@ def analyze_pair_king(pair, timeframe="5m"):
 
     candle_ok, body_pct = check_king_candle_quality(curr)
     if body_pct < body_pct_min:
+        logger.info(f"🛑 King {pair} رفضت: body_pct < {body_pct_min}")
         return None
 
     near_sr = False
@@ -2108,17 +2146,18 @@ def analyze_pair_king(pair, timeframe="5m"):
 
     level = get_adaptive_king_level(score, market_type=market_type)
     if level == 0:
+        logger.info(f"🛑 King {pair} رفضت: Score={score} أقل من 80")
         return None
 
+    # ===== HTF من 1H (تم التعديل) =====
     htf_trend = get_king_htf_trend(pair)
     if htf_trend is not None and htf_trend != potential_direction:
-        return None
+        logger.warning(f"⚠️ King HTF عكسي لـ {pair} لكن الإشارة مستمرة")
 
-    # ======== إضافة علامة الترند (Trending market) ========
+    # ======== إضافة علامة الترند ========
     is_trending = (potential_direction == "CALL" and htf_trend == "CALL") or \
                   (potential_direction == "PUT" and htf_trend == "PUT")
     trend_tag = " 🌊 Trending market" if is_trending else ""
-    # =====================================================
 
     pair_key = f"{pair}_king_5m"
     cn = get_cairo_time()
@@ -2130,8 +2169,8 @@ def analyze_pair_king(pair, timeframe="5m"):
     emoji = KING_EMOJIS[level]
     da = "صعود (CALL)" if potential_direction == "CALL" else "هبوط (PUT)"
 
-    # Early alert (285-292)
-    if 285 <= csec <= 292:
+    # Early alert (270-280)
+    if 270 <= csec <= 280:
         with data_lock:
             if pair_key not in state.king_alerted_pairs:
                 send_telegram_message(
@@ -2140,25 +2179,24 @@ def analyze_pair_king(pair, timeframe="5m"):
                     f"الاتجاه: *{da}*\n"
                     f"💡 النوع: *{signal_name_en}* {emoji}\n"
                     f"📊 النقاط: *{score}/100*\n"
-                    f"⏱️ *انتظر إشارة الدخول النهائية في آخر 5 ثواني من الشمعة!*"
+                    f"⏱️ *انتظر إشارة الدخول النهائية في آخر 20 ثانية من الشمعة!*"
                 )
                 state.king_alerted_pairs[pair_key] = potential_direction
 
-    # Final signal (295-299)
-    if 295 <= csec <= 299:
+    # Final signal (280-299)
+    if 280 <= csec <= 299:
         if already_sent_this_candle_king(pair):
+            logger.info(f"🛑 King {pair} رفضت: already_sent_this_candle_king")
             return None
 
         ok, reason = passes_common_entry_filters(pair)
         if not ok:
-            logger.info(f"🛑 King إشارة {pair} مرفوضة ({reason})")
+            logger.info(f"🛑 King {pair} رفضت: {reason}")
             return None
 
         with data_lock:
             if pair_key in state.king_alerted_pairs:
                 del state.king_alerted_pairs[pair_key]
-
-        # ===== تم إلغاء شرط has_open_trade_for_pair (زي V7.0) =====
 
         with data_lock:
             state.king_recent_signals[pair] = (get_iq_time(), potential_direction)
@@ -2184,7 +2222,7 @@ def analyze_pair_king(pair, timeframe="5m"):
         )
 
         if not add_trade_atomic(new_trade):
-            logger.info(f"🛑 King إشارة {pair} مرفوضة (صفقة تانية اتفتحت على نفس الزوج في نفس اللحظة)")
+            logger.info(f"🛑 King {pair} رفضت: add_trade_atomic فشل")
             return None
 
         settings_used = f"ADX≥{adx_threshold} | RSI:{rsi_low_call}-{rsi_high_call}(C) {rsi_low_put}-{rsi_high_put}(P)"
@@ -2217,7 +2255,191 @@ def analyze_pair_wrapper_king(pair):
         logger.error(f"خطأ King Strategy في {pair}: {e}")
         return pair, None
 
-# ========== Trade Results Check ==========
+# ========== SMC Strategy - Smart Money Concepts ==========
+
+def detect_fvg(df):
+    fvg_bull, fvg_bear = [], []
+    for i in range(2, len(df)):
+        if df['Low'].iloc[i] > df['High'].iloc[i-2]:
+            fvg_bull.append({'top': df['Low'].iloc[i], 'bottom': df['High'].iloc[i-2], 'idx': i})
+        elif df['High'].iloc[i] < df['Low'].iloc[i-2]:
+            fvg_bear.append({'top': df['Low'].iloc[i-2], 'bottom': df['High'].iloc[i], 'idx': i})
+    return fvg_bull, fvg_bear
+
+def detect_order_blocks(df, lookback=30):
+    obs = {'bull': [], 'bear': []}
+    recent = df.tail(lookback)
+    for i in range(3, len(recent)):
+        c, p = recent.iloc[i], recent.iloc[i-1]
+        if c['Close'] > c['Open'] and c['Close'] > p['High'] and p['Close'] < p['Open'] and (c['Close']-c['Open']) > abs(p['Close']-p['Open'])*1.5:
+            obs['bull'].append({'high': p['High'], 'low': p['Low'], 'idx': i-1})
+        elif c['Close'] < c['Open'] and c['Close'] < p['Low'] and p['Close'] > p['Open'] and (c['Open']-c['Close']) > abs(p['Close']-p['Open'])*1.5:
+            obs['bear'].append({'high': p['High'], 'low': p['Low'], 'idx': i-1})
+    return obs
+
+def detect_breaker_blocks(df, lookback=40):
+    df = detect_swings(df, window=2)
+    swings = df[df['is_swing_high'] | df['is_swing_low']].tail(lookback)
+    breakers = {'bull': [], 'bear': []}
+    if len(swings) < 4: return breakers
+    for i in range(3, len(swings)):
+        s = [swings.iloc[j] for j in range(i-3, i+1)]
+        if s[0]['is_swing_low'] and s[1]['is_swing_high'] and s[2]['is_swing_low'] and s[3]['is_swing_high']:
+            if s[2]['Low'] < s[0]['Low'] and s[3]['High'] > s[1]['High']:
+                breakers['bear'].append({'high': s[2]['High'], 'low': s[2]['Low'], 'idx': swings.index[i-2]})
+        elif s[0]['is_swing_high'] and s[1]['is_swing_low'] and s[2]['is_swing_high'] and s[3]['is_swing_low']:
+            if s[2]['High'] > s[0]['High'] and s[3]['Low'] < s[1]['Low']:
+                breakers['bull'].append({'high': s[2]['High'], 'low': s[2]['Low'], 'idx': swings.index[i-2]})
+    return breakers
+
+def analyze_pair_smc(pair, timeframe="5m"):
+    tf_seconds, duration_text = 300, "5 دقائق"
+    df = get_cached_df_smart(pair, tf_seconds, 100)
+    if df is None or len(df) < 80:
+        logger.info(f"🛑 SMC {pair} رفضت: بيانات غير كافية")
+        return None
+
+    htf = get_higher_tf_trend(pair)
+    mtf = get_king_htf_trend(pair)
+    if htf != mtf or htf is None:
+        logger.info(f"🛑 SMC {pair} رفضت: HTF ({htf}) != MTF ({mtf}) أو None")
+        return None
+    
+    bias = htf
+
+    df = detect_swings(df, window=2)
+    df['ALMA_20'] = calculate_alma(df['Close'], 20, 0.85, 6)
+    df['ALMA_50'] = calculate_alma(df['Close'], 50, 0.85, 6)
+    df['RSI'] = wilder_rsi(df['Close'], 14)
+
+    curr = df.iloc[-1]
+    price = curr['Close']
+    rsi = curr['RSI']
+
+    fvg_bull, fvg_bear = detect_fvg(df)
+    obs = detect_order_blocks(df)
+    breakers = detect_breaker_blocks(df)
+    structure, _, _ = get_market_structure(df, lookback=40)
+
+    score = 0
+    conf = []
+
+    if (bias == "CALL" and structure == "BULLISH") or (bias == "PUT" and structure == "BEARISH"):
+        score += 25; conf.append("Structure")
+
+    sweep_ok, _ = detect_liquidity_sweep(df, bias, 0.0003)
+    if sweep_ok: score += 25; conf.append("Sweep")
+
+    ob_hit = False
+    target_obs = obs['bull'][-3:] if bias == "CALL" else obs['bear'][-3:]
+    for ob in reversed(target_obs):
+        if (bias == "CALL" and ob['low'] <= price <= ob['high']*1.001) or (bias == "PUT" and ob['high']*0.999 <= price <= ob['low']):
+            ob_hit = True; score += 20; conf.append("OB"); break
+
+    bb_hit = False
+    target_bb = breakers['bull'][-2:] if bias == "CALL" else breakers['bear'][-2:]
+    for bb in reversed(target_bb):
+        if bb['low'] <= price <= bb['high']:
+            bb_hit = True; score += 15; conf.append("Breaker"); break
+
+    fvg_hit = False
+    target_fvg = fvg_bull[-3:] if bias == "CALL" else fvg_bear[-3:]
+    for fvg in reversed(target_fvg):
+        if fvg['bottom'] <= price <= fvg['top']:
+            fvg_hit = True; score += 15; conf.append("FVG"); break
+
+    if (bias == "CALL" and curr['ALMA_20'] > curr['ALMA_50']) or (bias == "PUT" and curr['ALMA_20'] < curr['ALMA_50']):
+        score += 10; conf.append("Trend")
+
+    if (bias == "CALL" and 30 <= rsi <= 50) or (bias == "PUT" and 50 <= rsi <= 70):
+        score += 10; conf.append("RSI")
+
+    if score < 60:
+        logger.info(f"🛑 SMC {pair} رفضت: Score={score} أقل من 60")
+        return None
+
+    if not (sweep_ok or ob_hit or bb_hit or fvg_hit):
+        logger.info(f"🛑 SMC {pair} رفضت: لا يوجد Sweep/OB/Breaker/FVG")
+        return None
+
+    if score >= 95:
+        level, name = 4, "SMC Elite 🏆"
+    elif score >= 85:
+        level, name = 3, "SMC Gold 🥇"
+    elif score >= 75:
+        level, name = 2, "SMC Silver 🥈"
+    else:
+        level, name = 1, "SMC Bronze 🥉"
+    
+    emoji = SMC_EMOJIS[level]
+
+    iq_now = get_iq_time()
+    csec = int(iq_now) % 300
+
+    if not (280 <= csec <= 299):
+        logger.info(f"🛑 SMC {pair} رفضت: الوقت غير مناسب ({csec})")
+        return None
+
+    if already_sent_this_candle_smart(pair):
+        logger.info(f"🛑 SMC {pair} رفضت: already_sent_this_candle_smart")
+        return None
+
+    ok, reason = passes_common_entry_filters(pair)
+    if not ok:
+        logger.info(f"🛑 SMC {pair} رفضت: {reason}")
+        return None
+
+    da = "صعود (CALL)" if bias == "CALL" else "هبوط (PUT)"
+    
+    new_trade = _build_trade_dict(
+        pair=pair,
+        direction=bias,
+        entry_price=price,
+        expire_offset=300,
+        is_king=False,
+        is_martingale=False,
+        signal_level=level,
+        signal_name=name,
+        score=score,
+        filters={
+            'structure': structure in ["BULLISH", "BEARISH"],
+            'sweep': sweep_ok,
+            'ob': ob_hit,
+            'breaker': bb_hit,
+            'fvg': fvg_hit
+        },
+        indicators={
+            'rsi': float(rsi),
+            'score': score,
+            'conf': conf,
+            'htf': htf,
+            'mtf': mtf
+        },
+        strategy='smart'
+    )
+
+    if not add_trade_atomic(new_trade):
+        logger.info(f"🛑 SMC {pair} رفضت: add_trade_atomic فشل")
+        return None
+
+    conf_str = ', '.join(conf)
+    return (
+        f"{emoji} *{name}* {emoji}\n"
+        f"الزوج: `{pair}` (IQ Option) [5m]\n"
+        f"الاتجاه: *{da}*\n"
+        f"⏱️ *مدة الصفقة:* {duration_text}\n"
+        f"📊 *النقاط:* {score}/100 | *العوامل:* {conf_str}\n"
+        f"⚡ *ادخل فوراً مع بداية الشمعة التالية!*"
+    )
+
+def analyze_pair_wrapper_smc(pair):
+    try:
+        return pair, analyze_pair_smc(pair, "5m")
+    except Exception as e:
+        logger.error(f"خطأ SMC Strategy في {pair}: {e}")
+        return pair, None
+
+# ========== Trade Results Check (المعدل) ==========
 
 def check_trade_results():
     current_time = get_iq_time()
@@ -2228,7 +2450,7 @@ def check_trade_results():
     for trade in trades_snapshot:
         time_left = trade['expire_time'] - current_time
         try:
-            if 0 < time_left <= 20 and not trade.get('warned_loss', False) and not trade.get('is_martingale', False) and not trade.get('is_king', False):
+            if 0 < time_left <= 20 and not trade.get('warned_loss', False) and not trade.get('is_martingale', False) and not trade.get('is_king', False) and trade.get('strategy') != 'smart':
                 candles = get_cached_candles(trade['pair'], 300, 1, max_age=5)
                 if not candles:
                     continue
@@ -2246,15 +2468,24 @@ def check_trade_results():
                     last_candle_ts = candles[-1].get('from', candles[-1].get('to', 0))
                     if last_candle_ts and last_candle_ts < trade['expire_time'] and time_left > -5:
                         continue
-                fp = candles[-2]['close'] if len(candles) >= 2 else candles[-1]['close']
+                # ===== التعديل الأساسي: استخدام سعر الافتتاح بدلاً من الإغلاق =====
+                if len(candles) >= 2:
+                    fp = candles[-1]['open']
+                else:
+                    fp = candles[-1]['close']
                 ep, d = trade['entry_price'], trade['direction']
                 is_win = (d == "CALL" and fp > ep) or (d == "PUT" and fp < ep)
                 ts = get_cairo_time().strftime('%I:%M %p')
                 pair = trade['pair']
                 is_mg = trade.get('is_martingale', False)
                 is_king = trade.get('is_king', False)
+                strategy = trade.get('strategy', 'unknown')
 
-                if is_king:
+                if strategy == 'smart':
+                    with data_lock:
+                        state.smart_stats[pair]['total'] += 1
+                        state.smart_stats[pair]['win' if is_win else 'loss'] += 1
+                elif is_king:
                     with data_lock:
                         state.king_stats[pair]['total'] += 1
                         state.king_stats[pair]['win' if is_win else 'loss'] += 1
@@ -2266,17 +2497,20 @@ def check_trade_results():
                 try:
                     log_trade({
                         "timestamp": get_iq_time(),
-                        "pair": pair, "direction": d,
-                        "strategy": trade.get('strategy', 'unknown'),
+                        "pair": pair,
+                        "direction": d,
+                        "strategy": strategy,
                         "level": trade.get('signal_level', 0),
                         "score": trade.get('score', 0),
-                        "entry_price": float(ep), "exit_price": float(fp),
+                        "entry_price": float(ep),
+                        "exit_price": float(fp),
                         "outcome": "win" if is_win else "loss",
                         "filters": trade.get('filters', {}),
                         "indicators": trade.get('indicators', {}),
                         "hour": trade.get('hour', datetime.now(CAIRO_TZ).hour),
                         "day_of_week": datetime.now(CAIRO_TZ).weekday(),
-                        "is_martingale": is_mg, "is_king": is_king
+                        "is_martingale": is_mg,
+                        "is_king": is_king
                     })
                 except Exception as e:
                     logger.error(f"خطأ في تسجيل الصفقة: {e}")
@@ -2288,13 +2522,21 @@ def check_trade_results():
                     trades_to_remove.append(trade)
                 else:
                     if is_win:
-                        if is_king:
+                        if strategy == 'smart':
+                            send_telegram_message(f"🏆 *SMC — رابحة* 🎯\nالزوج: `{pair}` [5m]\n⏰ `{ts}`")
+                        elif is_king:
                             send_telegram_message(f"👑 *{trade.get('signal_name', 'ملك الإشارات')} — رابحة*\nالزوج: `{pair}` [5m]\n⏰ `{ts}`")
                         else:
                             send_telegram_message(f"✅ *نتيجة الصفقة: رابحة* 🎯\nالزوج: `{pair}` [5m]\n⏰ `{ts}`")
                         trades_to_remove.append(trade)
                     else:
-                        if is_king:
+                        if strategy == 'smart':
+                            send_telegram_message(
+                                f"❌ *SMC — خاسرة*\n"
+                                f"الزوج: `{pair}` [5m]\n"
+                                f"⏰ `{ts}`"
+                            )
+                        elif is_king:
                             send_telegram_message(
                                 f"❌ *{trade.get('signal_name', 'ملك الإشارات')} — خاسرة*\n"
                                 f"الزوج: `{pair}` [5m]\n"
@@ -2438,12 +2680,11 @@ def stats_engine_worker():
                     msg = format_report_message(report)
                     if msg and "لا توجد بيانات" not in msg:
                         send_telegram_message(msg)
-                # Monte Carlo: separate for LIVE and OTC
                 mc_results = {}
                 for market in ["live", "otc"]:
                     market_trades = read_trade_log(max_entries=10000, market_type=market)
                     mc_results[market] = {}
-                    for strategy in ["original", "king"]:
+                    for strategy in ["original", "king", "smart"]:
                         mc_result, mc_status = run_monte_carlo(market_trades, strategy=strategy, market_type=market)
                         if mc_result:
                             mc_results[market][strategy] = mc_result
@@ -2461,7 +2702,7 @@ def stats_engine_worker():
             for market in ["live", "otc"]:
                 market_trades = read_trade_log(max_entries=10000, market_type=market)
                 if len(market_trades) >= WALK_FORWARD_MIN_TRADES and now - last_walk_forward > 1209600:
-                    for strategy in ["original", "king"]:
+                    for strategy in ["original", "king", "smart"]:
                         approved, wf_result, wf_msg = run_walk_forward_validation(
                             market_trades, strategy=strategy, market_type=market
                         )
@@ -2503,11 +2744,13 @@ def cleanup_memory():
     candles_cache.cleanup()
     df_cache.cleanup()
     king_df_cache.cleanup()
+    smart_df_cache.cleanup()
     with data_lock:
         state.sent_signals = {k:v for k,v in state.sent_signals.items() if now - v < 600}
         state.recent_signals = {k:v for k,v in state.recent_signals.items() if now - v[0] < 1200}
         state.king_sent_signals = {k:v for k,v in state.king_sent_signals.items() if now - v < 600}
         state.king_recent_signals = {k:v for k,v in state.king_recent_signals.items() if now - v[0] < 1200}
+        state.smart_sent_signals = {k:v for k,v in state.smart_sent_signals.items() if now - v < 600}
         state.settings_cache = {k:v for k,v in state.settings_cache.items() if now - v[1] < SETTINGS_CACHE_TTL}
         for k in list(state.alerted_pairs.keys()):
             val = state.alerted_pairs[k]
@@ -2523,6 +2766,13 @@ def cleanup_memory():
                     del state.king_alerted_pairs[k]
             else:
                 del state.king_alerted_pairs[k]
+        for k in list(state.smart_alerted_pairs.keys()):
+            val = state.smart_alerted_pairs[k]
+            if isinstance(val, tuple) and len(val) >= 2:
+                if now - val[1] > 480:
+                    del state.smart_alerted_pairs[k]
+            else:
+                del state.smart_alerted_pairs[k]
         for k in list(state.hunt_mode_announced.keys()):
             if now - state.hunt_mode_announced[k] > 1200:
                 del state.hunt_mode_announced[k]
@@ -2570,34 +2820,39 @@ def run_bot():
         f"🌐 *وضع الأزواج:* {mode_text}\n"
         f"📋 *الأزواج المتاحة:* {len(pairs)} زوج\n"
         f"⏱️ *الفريم:* 5 دقائق\n\n"
-        f"📊 *مستويات الإشارات الأصلية (5 مستويات):*\n"
+        f"📊 *الاستراتيجيات النشطة:*\n"
+        f"  🔵 الأصلية (Original) — تم تخفيف الشروط\n"
+        f"  👑 King of Signals — تم تعديل الأوزان و RSI و HTF\n"
+        f"  🏆 Smart Money Concepts (SMC) — جديد\n\n"
+        f"📊 *مستويات الإشارات الأصلية:*\n"
         f"  🔵 قوية جداً (2)\n"
         f"  🟣 قوية ماكس (3)\n"
         f"  🟠 قوية سوبر ماكس (4)\n"
         f"  🔥 ماكس (5)\n"
         f"  👑 سوبر ماكس (6)\n\n"
-        f"👑 *King of Signals Strategy:*\n"
+        f"👑 *King of Signals:*\n"
         f"  🥉 King Bronze (80–84)\n"
         f"  🥈 King Silver (85–89)\n"
         f"  👑 King Gold (90–94)\n"
         f"  👑🔥 King Elite (95–100)\n\n"
-        f"📊 *Statistical Engine {VERSION}:*\n"
-        f"  ✅ تقارير LIVE/OTC منفصلة\n"
-        f"  ✅ Walk Forward منفصل لكل سوق\n"
-        f"  ✅ إعدادات ديناميكية: `settings_live.json` + `settings_otc.json`\n"
-        f"  ✅ Adaptive Threshold منفصل لكل سوق\n"
-        f"  ✅ Feature Importance Weights\n"
-        f"  ✅ Market Regime Detection\n"
-        f"  ✅ Dynamic Pair Disable\n"
-        f"  ✅ Monte Carlo Simulation (شهري — LIVE/OTC منفصل)\n"
-        f"  ✅ Thread-Safe Shared State (RLock)\n"
-        f"  ✅ Atomic Trade Entry\n"
-        f"  ✅ Parallel King Strategy\n"
-        f"  ✅ LimitedCache (Bounded Memory)\n"
-        f"  ✅ BotState Class (منظم)\n\n"
+        f"🏆 *SMC:*\n"
+        f"  🥉 SMC Bronze (60–74)\n"
+        f"  🥈 SMC Silver (75–84)\n"
+        f"  🥇 SMC Gold (85–94)\n"
+        f"  🏆 SMC Elite (95–100)\n\n"
+        f"📊 *التعديلات:\n"
+        f"  ✅ نافذة الوقت: 280-299 (20 ثانية)\n"
+        f"  ✅ HTF: تحذير فقط (مش رفض)\n"
+        f"  ✅ Logging مفصّل\n"
+        f"  ✅ King: Sweep إجباري\n"
+        f"  ✅ King: RSI (30-50 / 50-70)\n"
+        f"  ✅ King: Weights جديدة\n"
+        f"  ✅ King: HTF 1H\n"
+        f"  ✅ King: ATR ≥ 4 pips\n"
+        f"  ✅ Original: شروط مخففة\n"
+        f"  ✅ SMC: استراتيجية جديدة\n\n"
         f"🎯 *وضع المضاعفة:* مفعل (للاستراتيجيات الأصلية فقط)\n"
-        f"🌐 *مزامنة السيرفر:* مفعلة\n"
-        f"🛡️ *الحماية:* مصدران للأخبار (Fail-Safe) + مراقبة الاتصال بالخلفية + فلتر الساعة"
+        f"🌐 *مزامنة السيرفر:* مفعلة"
     )
 
     threading.Thread(target=telegram_worker, daemon=True).start()
@@ -2652,7 +2907,8 @@ def run_bot():
                             f"⏳ نبحث عن *قوية جداً* 🔵 أو أعلى.\n"
                             f"⏱️ البحث مفتوح لحد ما يلاقي إشارة مناسبة.\n"
                             f"✅ كل الإشارات العادية شغالة طبيعي.\n"
-                            f"👑 King Strategy شغال منفصل."
+                            f"👑 King Strategy شغال منفصل.\n"
+                            f"🏆 SMC Strategy شغال منفصل."
                         )
 
                 active_pairs = []
@@ -2669,12 +2925,9 @@ def run_bot():
                 if disabled_count > 0 and current_cycle % 300 == 0:
                     logger.info(f"📋 أزواج متاحة: {len(active_pairs)} | متوقفة: {disabled_count}")
 
-                # ======== تم تعديل هذا الجزء ========
-                # تشغيل الاستراتيجيات في كل الظروف (زي القديم)
-                strategies_to_run = ['original', 'king']  # دايمًا
-                # =====================================
+                strategies_to_run = ['original', 'king', 'smart']
 
-                if current_cycle % 300 == 0:
+                if current_cycle % 10 == 0:
                     logger.info(f"🎯 الاستراتيجيات النشطة: {list(strategies_to_run)}")
                     with data_lock:
                         scores_copy = dict(state.strategy_scores)
@@ -2682,14 +2935,14 @@ def run_bot():
                         if data["total"] > 0:
                             logger.info(f"   {st}: Score={data['score']}, WR={data.get('wr', 0)}%")
 
-                if current_cycle % 300 == 0:
+                if current_cycle % 10 == 0:
                     with data_lock:
                         thresh_copy = dict(state.adaptive_thresholds)
                     for market in ["live", "otc"]:
                         thresh = thresh_copy.get(market, 80)
                         logger.info(f"📊 Adaptive Threshold [{market.upper()}]: {thresh}")
 
-                # ========== Original Strategy (Parallel) ==========
+                # ========== Original Strategy ==========
                 if "original" in strategies_to_run:
                     results = list(executor.map(analyze_pair_wrapper, active_pairs))
 
@@ -2712,24 +2965,26 @@ def run_bot():
                             if signal:
                                 logger.info(f"✅ إشارة ممتازة: {pair}")
                                 send_telegram_message(signal)
-                else:
-                    if current_cycle % 300 == 0:
-                        logger.info("⏸️ الاستراتيجيات الأصلية متوقفة (حالة السوق غير مناسبة)")
 
-                # ========== King Strategy (Parallel) ==========
+                # ========== King Strategy ==========
                 if "king" in strategies_to_run:
                     king_results = list(executor.map(analyze_pair_wrapper_king, active_pairs))
                     for pair, signal in king_results:
                         if signal:
                             logger.info(f"👑 King Signal: {pair}")
                             send_telegram_message(signal)
-                else:
-                    if current_cycle % 300 == 0:
-                        logger.info("⏸️ King Strategy متوقفة (حالة السوق غير مناسبة)")
+
+                # ========== SMC Strategy ==========
+                if "smart" in strategies_to_run:
+                    smc_results = list(executor.map(analyze_pair_wrapper_smc, active_pairs))
+                    for pair, signal in smc_results:
+                        if signal:
+                            logger.info(f"🏆 SMC Signal: {pair}")
+                            send_telegram_message(signal)
 
                 check_trade_results()
 
-                if current_cycle % 60 == 0:
+                if current_cycle % 10 == 0:
                     cleanup_memory()
                     sync_server_time(API)
                     with data_lock:
@@ -2739,7 +2994,10 @@ def run_bot():
                         king_total_wins = sum(s['win'] for s in state.king_stats.values())
                         king_total_loss = sum(s['loss'] for s in state.king_stats.values())
                         king_wr = (king_total_wins / (king_total_wins + king_total_loss) * 100) if (king_total_wins + king_total_loss) > 0 else 0
-                    logger.info(f"📊 دورة #{current_cycle} | Original WR: {wr:.1f}% | King WR: {king_wr:.1f}% | Total: {total_wins+total_loss} | King Total: {king_total_wins+king_total_loss}")
+                        smart_total_wins = sum(s['win'] for s in state.smart_stats.values())
+                        smart_total_loss = sum(s['loss'] for s in state.smart_stats.values())
+                        smart_wr = (smart_total_wins / (smart_total_wins + smart_total_loss) * 100) if (smart_total_wins + smart_total_loss) > 0 else 0
+                    logger.info(f"📊 دورة #{current_cycle} | Original WR: {wr:.1f}% | King WR: {king_wr:.1f}% | SMC WR: {smart_wr:.1f}% | Total: {total_wins+total_loss} | King Total: {king_total_wins+king_total_loss} | SMC Total: {smart_total_wins+smart_total_loss}")
 
             except Exception as e:
                 logger.error(f"خطأ في الحلقة الرئيسية: {e}")
