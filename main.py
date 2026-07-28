@@ -17,10 +17,10 @@ from iqoptionapi.stable_api import IQ_Option
 from collections import defaultdict
 
 # ============================================================
-# VERSION FINAL - 3-STAGE ALERT SYSTEM (ARABIC) - FIXED
+# VERSION FINAL - 3-STAGE ALERT SYSTEM (ARABIC)
 # ============================================================
 
-VERSION = "7.5-FINAL-3STAGE-FIXED"
+VERSION = "7.5-FINAL-3STAGE-ARABIC"
 
 # ========== CONSTANTS ==========
 CAIRO_TZ = pytz.timezone('Africa/Cairo')
@@ -1943,7 +1943,7 @@ def evaluate_signal_strength(direction, curr, prev, df, price, alma9, alma50,
     
     return 0
 
-# ========== analyze_pair (Original Strategy - FIXED) ==========
+# ========== analyze_pair (Original Strategy - 3-Stage Arabic) ==========
 
 def analyze_pair(pair, timeframe="5m"):
     tf_seconds, duration_text = 300, "5 دقائق"
@@ -2037,8 +2037,7 @@ def analyze_pair(pair, timeframe="5m"):
                     'strategy': 'original'
                 }
                 send_early_alert(pair, potential_direction, signal_name_ar, strength * 16, 'original')
-                # تخزين tuple مع timestamp
-                state.alerted_pairs[pair_key] = (potential_direction, iq_now)
+                state.alerted_pairs[pair_key] = potential_direction
         return None
 
     # ===== المرحلة 2 & 3: تأكيد وإشارة نهائية (ثانية 280-299) =====
@@ -2054,9 +2053,6 @@ def analyze_pair(pair, timeframe="5m"):
         # التحقق من تطابق الاتجاه
         if pending and pending['direction'] != potential_direction:
             send_cancelled_alert(pair, pending['direction'], "الاتجاه تغير", 'original')
-            with data_lock:
-                if pair in state.pending_alerts:
-                    del state.pending_alerts[pair]
             logger.info(f"🛑 {pair}: إلغاء — الاتجاه تغير")
             return None
 
@@ -2064,9 +2060,6 @@ def analyze_pair(pair, timeframe="5m"):
         if not ok:
             if pending:
                 send_cancelled_alert(pair, potential_direction, reason, 'original')
-            with data_lock:
-                if pair in state.pending_alerts:
-                    del state.pending_alerts[pair]
             logger.info(f"🛑 {pair}: إلغاء ({reason})")
             return None
 
@@ -2075,18 +2068,12 @@ def analyze_pair(pair, timeframe="5m"):
             body_pct = abs(curr['Close'] - curr['Open']) / (curr['High'] - curr['Low']) if curr['High'] != curr['Low'] else 0
             if pending:
                 send_cancelled_alert(pair, potential_direction, f"شمعة ضعيفة ({body_pct:.1%})", 'original')
-            with data_lock:
-                if pair in state.pending_alerts:
-                    del state.pending_alerts[pair]
             logger.info(f"🛑 {pair}: إلغاء — شمعة ضعيفة ({body_pct:.2%})")
             return None
 
         if not can_take_signal(pair, potential_direction):
             if pending:
                 send_cancelled_alert(pair, potential_direction, "إشارة معاكسة حديثة", 'original')
-            with data_lock:
-                if pair in state.pending_alerts:
-                    del state.pending_alerts[pair]
             logger.info(f"🛑 {pair}: إلغاء — إشارة معاكسة")
             return None
 
@@ -2143,7 +2130,7 @@ def analyze_pair(pair, timeframe="5m"):
 
     return None
 
-# ========== analyze_pair_king (King Strategy - FIXED) ==========
+# ========== analyze_pair_king (King Strategy - 3-Stage Arabic) ==========
 
 def analyze_pair_king(pair, timeframe="5m"):
     tf_seconds, duration_text = 300, "5 دقائق"
@@ -2285,8 +2272,7 @@ def analyze_pair_king(pair, timeframe="5m"):
                     'strategy': 'king'
                 }
                 send_early_alert(pair, potential_direction, signal_name_ar, score, 'king')
-                # تخزين tuple مع timestamp
-                state.king_alerted_pairs[pair_key] = (potential_direction, iq_now)
+                state.king_alerted_pairs[pair_key] = potential_direction
         return None
 
     # ===== المرحلة 2 & 3 (280-299) =====
@@ -2300,9 +2286,6 @@ def analyze_pair_king(pair, timeframe="5m"):
 
         if pending and pending['direction'] != potential_direction:
             send_cancelled_alert(pair, pending['direction'], "الاتجاه تغير", 'king')
-            with data_lock:
-                if f"king_{pair}" in state.pending_alerts:
-                    del state.pending_alerts[f"king_{pair}"]
             logger.info(f"🛑 King {pair}: إلغاء — الاتجاه تغير")
             return None
 
@@ -2310,9 +2293,6 @@ def analyze_pair_king(pair, timeframe="5m"):
         if not ok:
             if pending:
                 send_cancelled_alert(pair, potential_direction, reason, 'king')
-            with data_lock:
-                if f"king_{pair}" in state.pending_alerts:
-                    del state.pending_alerts[f"king_{pair}"]
             logger.info(f"🛑 King {pair}: إلغاء ({reason})")
             return None
 
@@ -2378,7 +2358,7 @@ def analyze_pair_wrapper_king(pair):
         logger.error(f"خطأ King في {pair}: {e}")
         return pair, None
 
-# ========== SMC STRATEGY - FIXED ==========
+# ========== SMC STRATEGY - 3-STAGE ARABIC ==========
 
 def detect_fvg(df):
     fvg_bull, fvg_bear = [], []
@@ -2489,7 +2469,7 @@ def analyze_pair_smc(pair, timeframe="5m"):
     if (bias == "CALL" and 30 <= rsi <= 50) or (bias == "PUT" and 50 <= rsi <= 70):
         score += 10; conf.append("RSI")
 
-    # SMC Score = 80
+    # ===== SMC Score = 80 (تم التعديل) =====
     if score < 80:
         logger.info(f"🛑 SMC {pair}: Score={score} < 80")
         return None
@@ -2526,8 +2506,7 @@ def analyze_pair_smc(pair, timeframe="5m"):
                     'strategy': 'smart'
                 }
                 send_early_alert(pair, bias, name, score, 'smart')
-                # تخزين timestamp
-                state.smart_alerted_pairs[pair_key] = iq_now
+                state.smart_alerted_pairs[pair_key] = True
         return None
 
     # ===== المرحلة 2 & 3 (280-299) =====
@@ -2544,9 +2523,6 @@ def analyze_pair_smc(pair, timeframe="5m"):
 
     if pending and pending['direction'] != bias:
         send_cancelled_alert(pair, pending['direction'], "الاتجاه تغير", 'smart')
-        with data_lock:
-            if f"smart_{pair}" in state.pending_alerts:
-                del state.pending_alerts[f"smart_{pair}"]
         logger.info(f"🛑 SMC {pair}: إلغاء — الاتجاه تغير")
         return None
 
@@ -2554,9 +2530,6 @@ def analyze_pair_smc(pair, timeframe="5m"):
     if not ok:
         if pending:
             send_cancelled_alert(pair, bias, reason, 'smart')
-        with data_lock:
-            if f"smart_{pair}" in state.pending_alerts:
-                del state.pending_alerts[f"smart_{pair}"]
         logger.info(f"🛑 SMC {pair}: إلغاء ({reason})")
         return None
 
@@ -2621,7 +2594,7 @@ def analyze_pair_wrapper_smc(pair):
         logger.error(f"خطأ SMC في {pair}: {e}")
         return pair, None
 
-# ========== PRO STRATEGY - FIXED ==========
+# ========== PRO STRATEGY - 3-STAGE ARABIC ==========
 
 def analyze_pair_pro(pair, timeframe="5m"):
     tf_seconds, duration_text = 300, "5 دقائق"
@@ -2739,8 +2712,7 @@ def analyze_pair_pro(pair, timeframe="5m"):
                     'strategy': 'pro'
                 }
                 send_early_alert(pair, direction, name_ar, score, 'pro')
-                # تخزين timestamp بدلاً من True
-                state.pa_alerted_pairs[pair] = iq_now
+                state.pa_alerted_pairs[pair] = True
         return None
     
     # ===== المرحلة 2 & 3 (280-299) =====
@@ -2757,9 +2729,6 @@ def analyze_pair_pro(pair, timeframe="5m"):
     
     if pending and pending['direction'] != direction:
         send_cancelled_alert(pair, pending['direction'], "الاتجاه تغير", 'pro')
-        with data_lock:
-            if f"pro_{pair}" in state.pending_alerts:
-                del state.pending_alerts[f"pro_{pair}"]
         logger.info(f"🛑 Pro {pair}: إلغاء — الاتجاه تغير")
         return None
     
@@ -2767,9 +2736,6 @@ def analyze_pair_pro(pair, timeframe="5m"):
     if not ok:
         if pending:
             send_cancelled_alert(pair, direction, reason, 'pro')
-        with data_lock:
-            if f"pro_{pair}" in state.pending_alerts:
-                del state.pending_alerts[f"pro_{pair}"]
         logger.info(f"🛑 Pro {pair}: إلغاء ({reason})")
         return None
     
@@ -2839,33 +2805,37 @@ def check_trade_results():
     for trade in trades_snapshot:
         time_left = trade['expire_time'] - current_time
         try:
-            if 0 < time_left <= 20 and not trade.get('warned_loss', False) and not trade.get('is_martingale', False) and not trade.get('is_king', False) and trade.get('strategy') not in ['smart', 'pro']:
+            # التنبيه المبكر (اختياري)
+            if 0 < time_left <= 20 and not trade.get('warned_loss', False) and not trade.get('is_martingale', False) and trade.get('strategy') not in ['smart', 'pro']:
                 candles = get_cached_candles(trade['pair'], 300, 1, max_age=5)
                 if not candles:
                     continue
-                cp, ep, d = candles[-1]['close'], trade['entry_price'], trade['direction']
+                cp, ep, d = candles[-1]['close'], trade['entry_price'], trade['direction']  # ← استخدم close مش open
                 losing = (d == "CALL" and cp < ep) or (d == "PUT" and cp > ep)
                 if losing:
-                    send_telegram_message(f"⏳ *تنبيه مبكر*\nالزوج: `{trade['pair']}` [5m]\nالصفقة تتجه للخسارة...")
+                    send_telegram_message(f"⏳ *تنبيه مبكر*\nالزوج: `{trade['pair']}` [5m]\nالصفقة رايحة للخسارة...")
                     trade['warned_loss'] = True
 
+            # التحقق من النتيجة النهائية
             if time_left <= 0:
-                candles = get_cached_candles(trade['pair'], 300, 3, max_age=5)
+                candles = get_cached_candles(trade['pair'], 300, 3, max_age=5)  # ← جيب 3 شمعات عشان تضمن المكتملة
                 if not candles or len(candles) < 2:
                     continue
                 
+                # تأكد إن الشمعة الأخيرة فعلاً اتقفلت (timestamp >= expire_time)
                 last_candle_ts = candles[-1].get('from', candles[-1].get('to', 0))
                 if last_candle_ts and last_candle_ts < trade['expire_time'] and time_left > -10:
-                    continue
+                    continue  # ← استنى لحد ما الشمعة تقفل تماماً
                 
-                # ===== التصحيح: fp = candles[-2]['close'] =====
+                # ✅ السعر النهائي = close للشمعة المكتملة (اللي قبل الأخيرة)
                 fp = candles[-2]['close'] if len(candles) >= 2 else candles[-1]['close']
                 
                 ep, d = trade['entry_price'], trade['direction']
                 
+                # ✅ حساب النتيجة بدقة
                 if d == "CALL":
                     is_win = fp > ep
-                    is_tie = abs(fp - ep) < (ep * 0.00005)
+                    is_tie = abs(fp - ep) < (ep * 0.00005)  # تعادل (تقريباً نفس السعر)
                 else:  # PUT
                     is_win = fp < ep
                     is_tie = abs(fp - ep) < (ep * 0.00005)
@@ -2876,11 +2846,12 @@ def check_trade_results():
                 is_king = trade.get('is_king', False)
                 strategy = trade.get('strategy', 'unknown')
 
+                # تحديث الإحصائيات
                 if strategy == 'smart':
                     with data_lock:
                         state.smart_stats[pair]['total'] += 1
                         if is_tie:
-                            state.smart_stats[pair]['win'] += 0.5
+                            state.smart_stats[pair]['win'] += 0.5  # تعادل = نصف ربح
                         else:
                             state.smart_stats[pair]['win' if is_win else 'loss'] += 1
                 elif strategy == 'pro':
@@ -2896,6 +2867,7 @@ def check_trade_results():
                         state.stats[pair]['total'] += 1
                         state.stats[pair]['win' if is_win else 'loss'] += 1
 
+                # تسجيل التداول
                 try:
                     log_trade({
                         "timestamp": get_iq_time(),
@@ -2915,8 +2887,9 @@ def check_trade_results():
                         "is_king": is_king
                     })
                 except Exception as e:
-                    logger.error(f"خطأ في تسجيل الصفقة: {e}")
+                    logger.error(f"Trade log error: {e}")
 
+                # إرسال النتيجة
                 if is_tie:
                     result_msg = f"➖ *تعادل*\nالزوج: `{pair}` [5m]\n⏰ `{ts}`\nالدخول: {ep:.5f} | الخروج: {fp:.5f}"
                     send_telegram_message(result_msg)
@@ -2958,7 +2931,7 @@ def check_trade_results():
                 trades_to_remove.append(trade)
                 
         except Exception as e:
-            logger.error(f"خطأ في متابعة {trade['pair']}: {e}")
+            logger.error(f"Error checking {trade['pair']}: {e}")
 
     if trades_to_remove:
         with data_lock:
@@ -3139,7 +3112,7 @@ def stats_engine_worker():
 
         stop_event.wait(3600)
 
-# ========== CLEANUP MEMORY - FIXED ==========
+# ========== CLEANUP MEMORY ==========
 
 def cleanup_memory():
     now = time.time()
@@ -3148,28 +3121,15 @@ def cleanup_memory():
     king_df_cache.cleanup()
     smart_df_cache.cleanup()
     with data_lock:
-        # ==== FIX 1: pending_alerts ====
-        state.pending_alerts = {
-            k: v for k, v in state.pending_alerts.items()
-            if isinstance(v, dict) and now - v.get('alert_time', 0) < 600
-        }
-        
         state.sent_signals = {k:v for k,v in state.sent_signals.items() if now - v < 600}
         state.recent_signals = {k:v for k,v in state.recent_signals.items() if now - v[0] < 1200}
         state.king_sent_signals = {k:v for k,v in state.king_sent_signals.items() if now - v < 600}
         state.king_recent_signals = {k:v for k,v in state.king_recent_signals.items() if now - v[0] < 1200}
         state.smart_sent_signals = {k:v for k,v in state.smart_sent_signals.items() if now - v < 600}
         state.pa_sent_signals = {k:v for k,v in state.pa_sent_signals.items() if now - v < 600}
-        
-        # ==== FIX 2: pa_alerted_pairs ====
-        state.pa_alerted_pairs = {
-            k: v for k, v in state.pa_alerted_pairs.items()
-            if isinstance(v, (int, float)) and now - v < 600
-        }
-        
+        state.pa_alerted_pairs = {k:v for k,v in state.pa_alerted_pairs.items() if now - v < 600}
+        state.pending_alerts = {k:v for k,v in state.pending_alerts.items() if now - v < 600}
         state.settings_cache = {k:v for k,v in state.settings_cache.items() if now - v[1] < SETTINGS_CACHE_TTL}
-        
-        # ==== FIX 3: alerted_pairs — keys are tuples (direction, timestamp) ====
         for k in list(state.alerted_pairs.keys()):
             val = state.alerted_pairs[k]
             if isinstance(val, tuple) and len(val) >= 2:
@@ -3177,7 +3137,6 @@ def cleanup_memory():
                     del state.alerted_pairs[k]
             else:
                 del state.alerted_pairs[k]
-        
         for k in list(state.king_alerted_pairs.keys()):
             val = state.king_alerted_pairs[k]
             if isinstance(val, tuple) and len(val) >= 2:
@@ -3185,15 +3144,13 @@ def cleanup_memory():
                     del state.king_alerted_pairs[k]
             else:
                 del state.king_alerted_pairs[k]
-        
         for k in list(state.smart_alerted_pairs.keys()):
             val = state.smart_alerted_pairs[k]
-            if isinstance(val, (int, float)):
-                if now - val > 480:
+            if isinstance(val, tuple) and len(val) >= 2:
+                if now - val[1] > 480:
                     del state.smart_alerted_pairs[k]
             else:
                 del state.smart_alerted_pairs[k]
-        
         for k in list(state.hunt_mode_announced.keys()):
             if now - state.hunt_mode_announced[k] > 1200:
                 del state.hunt_mode_announced[k]
