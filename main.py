@@ -17,10 +17,10 @@ from iqoptionapi.stable_api import IQ_Option
 from collections import defaultdict
 
 # ============================================================
-# VERSION FINAL - FIXED ALL ISSUES
+# VERSION FINAL - ONLY 3 FIXES
 # ============================================================
 
-VERSION = "7.5-FINAL-FIXED"
+VERSION = "7.5-FINAL-3FIXES"
 
 # ========== CONSTANTS ==========
 CAIRO_TZ = pytz.timezone('Africa/Cairo')
@@ -1801,7 +1801,7 @@ def already_sent_this_candle_smart(pair):
         state.smart_sent_signals[key] = get_iq_time()
     return False
 
-# ========== SIGNAL EVALUATION - ORIGINAL (FIXED) ==========
+# ========== SIGNAL EVALUATION - ORIGINAL (FIXED: Cross not required for level 2) ==========
 
 _SIGNAL_LEVEL_CONFIG = [
     (6, 0.22, 0.85, 22, 0.0015, 0.00035, 0.040),
@@ -1822,7 +1822,7 @@ def evaluate_signal_strength(direction, curr, prev, df, price, alma9, alma50,
     rng = curr['High'] - curr['Low']
     body_pct = body / rng if rng > 0 else 0
 
-    # === Higher levels (3-6) ===
+    # === Higher levels (3-6) — Cross required ===
     if has_cross:
         if direction == "CALL":
             cond_stoch = stoch_k > stoch_d
@@ -1843,7 +1843,7 @@ def evaluate_signal_strength(direction, curr, prev, df, price, alma9, alma50,
                 if level >= 3:
                     return level
 
-    # === Level 2 (weakest) — FIXED: body 0.10, vol 0.55 ===
+    # === Level 2 (weakest) — Cross NOT required (FIXED) ===
     if direction == "CALL":
         cond_base = (price > alma9 * 1.0002) and (stoch_k >= stoch_d)
         cond_rsi = 28 <= rsi <= 55
@@ -1856,8 +1856,8 @@ def evaluate_signal_strength(direction, curr, prev, df, price, alma9, alma50,
         cond_stoch_zone = stoch_k >= 55
     
     if (cond_base and cond_rsi and cond_zone and cond_stoch_zone and
-        body_pct >= 0.10 and        # FIXED: was 0.12, now 0.10
-        volume >= vol_ma * 0.55 and  # FIXED: was 0.65, now 0.55
+        body_pct >= 0.10 and
+        volume >= vol_ma * 0.55 and
         adx >= 12 and
         bbw >= 0.0007 and
         atr >= (price * 0.00020) and
@@ -1947,7 +1947,7 @@ def analyze_pair(pair, timeframe="5m"):
     if in_hunt_mode and strength < 2:
         return None
 
-    # ===== EXPANDED WINDOW: 270-299 (20s) =====
+    # Window: 270-299
     if 270 <= csec <= 280:
         with data_lock:
             if pair_key not in state.alerted_pairs:
@@ -2031,7 +2031,7 @@ def analyze_pair(pair, timeframe="5m"):
 
     return None
 
-# ========== analyze_pair_king (King Strategy - FIXED) ==========
+# ========== analyze_pair_king (King Strategy - FIXED: ATR 0.0003) ==========
 
 def analyze_pair_king(pair, timeframe="5m"):
     tf_seconds, duration_text = 300, "5 دقائق"
@@ -2053,7 +2053,6 @@ def analyze_pair_king(pair, timeframe="5m"):
     df = detect_swings(df, window=2)
     structure, last_sh_idx, last_sl_idx = get_market_structure(df, lookback=30)
     
-    # FIXED: NEUTRAL allowed if ADX >= 20
     if structure == "NEUTRAL":
         adx_check, _, _ = calculate_adx(df, 14)
         if adx_check < 20:
@@ -2087,10 +2086,8 @@ def analyze_pair_king(pair, timeframe="5m"):
     bbw = bollinger_bandwidth(df, 20)
     sup_levels, res_levels = get_smart_sr_levels(df, lookback=30)
 
-    # FIXED: Sweep optional (not mandatory) for quiet markets
     sweep_ok, sweep_level = detect_liquidity_sweep(df, potential_direction, sweep_threshold=sweep_threshold)
     if not sweep_ok:
-        # Only reject if ADX < 20 AND sweep is missing
         if adx < 20:
             logger.info(f"🛑 King {pair}: No sweep and ADX={adx:.1f} < 20")
             return None
@@ -2101,8 +2098,8 @@ def analyze_pair_king(pair, timeframe="5m"):
     momentum_ok = (potential_direction == "CALL" and roc > 0) or (potential_direction == "PUT" and roc < 0)
     volatility_ok = (atr_avg * 0.8 <= atr <= atr_avg * 2.0) if atr_avg > 0 else False
     
-    # Minimum ATR
-    min_atr = price * 0.0004
+    # ===== FIXED: ATR = 0.0003 (was 0.0004) =====
+    min_atr = price * 0.0003
     if atr < min_atr:
         logger.info(f"🛑 King {pair}: ATR={atr:.5f} < {min_atr:.5f}")
         return None
@@ -2248,7 +2245,7 @@ def analyze_pair_wrapper_king(pair):
         logger.error(f"King error in {pair}: {e}")
         return pair, None
 
-# ========== SMC STRATEGY - SMART MONEY CONCEPTS ==========
+# ========== SMC STRATEGY - SCORE = 50 (FIXED) ==========
 
 def detect_fvg(df):
     fvg_bull, fvg_bear = [], []
@@ -2292,12 +2289,10 @@ def analyze_pair_smc(pair, timeframe="5m"):
         logger.info(f"🛑 SMC {pair}: No data")
         return None
 
-    # FIXED: If HTF/MTF = None, use 10-candle bias
     htf = get_higher_tf_trend(pair)
     mtf = get_king_htf_trend(pair)
     
     if htf is None and mtf is None:
-        # Use last 10 candles to determine bias
         last10 = df.tail(10)
         avg_close = last10['Close'].mean()
         last_close = last10['Close'].iloc[-1]
@@ -2306,7 +2301,6 @@ def analyze_pair_smc(pair, timeframe="5m"):
     elif htf == mtf and htf is not None:
         bias = htf
     else:
-        # If one is None, use the one that's available
         if htf is not None:
             bias = htf
         elif mtf is not None:
@@ -2362,8 +2356,9 @@ def analyze_pair_smc(pair, timeframe="5m"):
     if (bias == "CALL" and 30 <= rsi <= 50) or (bias == "PUT" and 50 <= rsi <= 70):
         score += 10; conf.append("RSI")
 
-    if score < 60:
-        logger.info(f"🛑 SMC {pair}: Score={score} < 60")
+    # ===== FIXED: SMC Score = 50 (was 60) =====
+    if score < 50:
+        logger.info(f"🛑 SMC {pair}: Score={score} < 50")
         return None
 
     if not (sweep_ok or ob_hit or bb_hit or fvg_hit):
@@ -2476,7 +2471,6 @@ def check_trade_results():
                     last_candle_ts = candles[-1].get('from', candles[-1].get('to', 0))
                     if last_candle_ts and last_candle_ts < trade['expire_time'] and time_left > -5:
                         continue
-                # ===== ENTRY PRICE FIX: Use open price of next candle =====
                 if len(candles) >= 2:
                     fp = candles[-1]['open']
                 else:
@@ -2823,7 +2817,6 @@ def run_bot():
 
     logger.info(f"🚀 Bot running {VERSION} ({mode_text})...")
     
-    # ===== SEND STARTUP MESSAGE =====
     send_telegram_message(
         f"🤖 *Bot {VERSION} Started!*\n"
         f"📅 {datetime.now(CAIRO_TZ).strftime('%A %d/%m/%Y')}\n"
