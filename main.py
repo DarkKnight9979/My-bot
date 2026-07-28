@@ -2380,7 +2380,7 @@ def analyze_pair_smc(pair, timeframe="5m"):
     if (bias == "CALL" and 30 <= rsi <= 50) or (bias == "PUT" and 50 <= rsi <= 70):
         score += 10; conf.append("RSI")
 
-    if score < 50:
+    if score < 80:
         logger.info(f"🛑 SMC {pair}: Score={score} < 50")
         return None
 
