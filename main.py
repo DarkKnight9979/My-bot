@@ -2042,9 +2042,6 @@ def analyze_pair(pair, timeframe="5m"):
 
     # ===== المرحلة 2 & 3: تأكيد وإشارة نهائية (ثانية 280-299) =====
     if 280 <= csec <= 299:
-        if already_sent_this_candle(pair):
-            logger.info(f"⛔ {pair}: تم الإرسال مسبقاً")
-            return None
 
         # التحقق من الشروط النهائية
         with data_lock:
@@ -2091,6 +2088,9 @@ def analyze_pair(pair, timeframe="5m"):
 
         # ===== المرحلة 3: الإشارة النهائية (قبل 7 ثواني = 293-299) =====
         if csec >= 293:
+            if already_sent_this_candle(pair):
+                logger.info(f"⛔ {pair}: تم الإرسال مسبقاً")
+                return None
             with data_lock:
                 if pair_key in state.alerted_pairs:
                     del state.alerted_pairs[pair_key]
@@ -2289,9 +2289,6 @@ def analyze_pair_king(pair, timeframe="5m"):
 
     # ===== المرحلة 2 & 3 (280-299) =====
     if 280 <= csec <= 299:
-        if already_sent_this_candle_king(pair):
-            logger.info(f"🛑 King {pair}: تم الإرسال مسبقاً")
-            return None
 
         with data_lock:
             pending = state.pending_alerts.get(f"king_{pair}")
@@ -2320,6 +2317,9 @@ def analyze_pair_king(pair, timeframe="5m"):
 
         # ===== المرحلة 3: الإشارة النهائية (293-299) =====
         if csec >= 293:
+            if already_sent_this_candle_king(pair):
+                logger.info(f"🛑 King {pair}: تم الإرسال مسبقاً")
+                return None
             with data_lock:
                 if f"king_{pair}" in state.pending_alerts:
                     del state.pending_alerts[f"king_{pair}"]
@@ -2532,9 +2532,6 @@ def analyze_pair_smc(pair, timeframe="5m"):
         logger.info(f"🛑 SMC {pair}: الوقت غير مناسب ({csec})")
         return None
 
-    if already_sent_this_candle_smart(pair):
-        logger.info(f"🛑 SMC {pair}: تم الإرسال مسبقاً")
-        return None
 
     with data_lock:
         pending = state.pending_alerts.get(f"smart_{pair}")
@@ -2559,6 +2556,9 @@ def analyze_pair_smc(pair, timeframe="5m"):
 
     # ===== المرحلة 3: الإشارة النهائية (293-299) =====
     if csec >= 293:
+        if already_sent_this_candle_smart(pair):
+            logger.info(f"🛑 SMC {pair}: تم الإرسال مسبقاً")
+            return None
         with data_lock:
             pair_key = f"smart_{pair}"
             if pair_key in state.smart_alerted_pairs:
@@ -2744,9 +2744,6 @@ def analyze_pair_pro(pair, timeframe="5m"):
         logger.info(f"🛑 Pro {pair}: الوقت غير مناسب ({csec})")
         return None
     
-    if already_sent_this_candle_pro(pair):
-        logger.info(f"🛑 Pro {pair}: تم الإرسال مسبقاً")
-        return None
     
     with data_lock:
         pending = state.pending_alerts.get(f"pro_{pair}")
@@ -2771,6 +2768,9 @@ def analyze_pair_pro(pair, timeframe="5m"):
     
     # ===== المرحلة 3: الإشارة النهائية (293-299) =====
     if csec >= 293:
+        if already_sent_this_candle_pro(pair):
+            logger.info(f"🛑 Pro {pair}: تم الإرسال مسبقاً")
+            return None
         with data_lock:
             if pair in state.pa_alerted_pairs:
                 del state.pa_alerted_pairs[pair]
