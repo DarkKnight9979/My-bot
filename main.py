@@ -17,10 +17,10 @@ from iqoptionapi.stable_api import IQ_Option
 from collections import defaultdict
 
 # ============================================================
-# VERSION FINAL - ONLY 3 FIXES
+# VERSION FINAL - 4 STRATEGIES (Original + King + SMC + Pro)
 # ============================================================
 
-VERSION = "7.5-FINAL-3FIXES"
+VERSION = "7.5-FINAL-4-STRATEGIES"
 
 # ========== CONSTANTS ==========
 CAIRO_TZ = pytz.timezone('Africa/Cairo')
@@ -146,6 +146,10 @@ class BotState:
         self.king_alerted_pairs = {}
         self.smart_alerted_pairs = {}
         self.smart_sent_signals = {}
+        # ===== Pro Strategy =====
+        self.pa_sent_signals = {}
+        self.pa_alerted_pairs = {}
+        # ===== =====
         self.disabled_pairs = {}
         self.regime_cache = {}
         self.adaptive_thresholds = {"live": 80, "otc": 80}
@@ -153,6 +157,7 @@ class BotState:
         self.stats = defaultdict(lambda: {"win": 0, "loss": 0, "total": 0})
         self.king_stats = defaultdict(lambda: {"win": 0, "loss": 0, "total": 0})
         self.smart_stats = defaultdict(lambda: {"win": 0, "loss": 0, "total": 0})
+        self.pro_stats = defaultdict(lambda: {"win": 0, "loss": 0, "total": 0})
         self.settings_cache = {}
         self.invalid_assets = set()
         self.news_data = []
@@ -464,6 +469,15 @@ SMC_SIGNAL_NAMES = {
     4: ("SMC Elite 🏆", "SMC ELITE")
 }
 SMC_EMOJIS = {1: "🥉", 2: "🥈", 3: "🥇", 4: "🏆"}
+
+# ===== PRO STRATEGY SIGNAL NAMES =====
+PRO_SIGNAL_NAMES = {
+    1: ("Pro Bronze 🥉", "PRO BRONZE"),
+    2: ("Pro Silver 🥈", "PRO SILVER"),
+    3: ("Pro Gold 🥇", "PRO GOLD"),
+    4: ("Pro Elite 🔥", "PRO ELITE")
+}
+PRO_EMOJIS = {1: "🥉", 2: "🥈", 3: "🥇", 4: "🔥"}
 
 CURRENCY_PAIRS = {
     'USD': ['EURUSD','GBPUSD','USDJPY','AUDUSD','USDCAD','USDCHF'],
@@ -804,9 +818,11 @@ def generate_report(trades, period="daily", market_type=None):
     orig_trades = [t for t in trades if t.get("strategy") == "original"]
     king_trades = [t for t in trades if t.get("strategy") == "king"]
     smart_trades = [t for t in trades if t.get("strategy") == "smart"]
+    pro_trades = [t for t in trades if t.get("strategy") == "pro"]
     orig_wr = (sum(1 for t in orig_trades if t.get("outcome") == "win") / len(orig_trades) * 100) if orig_trades else 0
     king_wr = (sum(1 for t in king_trades if t.get("outcome") == "win") / len(king_trades) * 100) if king_trades else 0
     smart_wr = (sum(1 for t in smart_trades if t.get("outcome") == "win") / len(smart_trades) * 100) if smart_trades else 0
+    pro_wr = (sum(1 for t in pro_trades if t.get("outcome") == "win") / len(pro_trades) * 100) if pro_trades else 0
     return {
         "period": period, "market_type": market_type or "all",
         "total_trades": total, "wins": wins, "losses": losses,
@@ -817,6 +833,7 @@ def generate_report(trades, period="daily", market_type=None):
         "original": {"total": len(orig_trades), "wr": round(orig_wr, 1)},
         "king": {"total": len(king_trades), "wr": round(king_wr, 1)},
         "smart": {"total": len(smart_trades), "wr": round(smart_wr, 1)},
+        "pro": {"total": len(pro_trades), "wr": round(pro_wr, 1)},
         "filter_eval": evaluate_filters(trades),
         "calibration": analyze_confidence_calibration(trades),
         "pair_rankings": pair_rank[:5] if len(pair_rank) >= 5 else pair_rank,
@@ -849,6 +866,7 @@ def format_report_message(report):
     msg += f"  Original: {report['original']['total']} trades — WR: {report['original']['wr']}%\n"
     msg += f"  👑 King: {report['king']['total']} trades — WR: {report['king']['wr']}%\n"
     msg += f"  🏆 SMC: {report['smart']['total']} trades — WR: {report['smart']['wr']}%\n"
+    msg += f"  🔥 Pro: {report['pro']['total']} trades — WR: {report['pro']['wr']}%\n"
     if report.get("filter_eval"):
         msg += f"\n🔬 *Filter Ranking:*\n"
         for i, (fname, fdata) in enumerate(list(report["filter_eval"].items())[:5], 1):
@@ -1257,7 +1275,7 @@ def update_disabled_pairs():
 def update_strategy_scores():
     try:
         all_trades = read_trade_log(max_entries=STRATEGY_SCORE_WINDOW * 2)
-        for strategy in ["original", "king", "smart"]:
+        for strategy in ["original", "king", "smart", "pro"]:
             trades = [t for t in all_trades if t.get("strategy") == strategy]
             if len(trades) >= 20:
                 wins = sum(1 for t in trades if t.get("outcome") == "win")
@@ -1280,7 +1298,7 @@ def update_strategy_scores():
         logger.error(f"Error updating strategy scores: {e}")
 
 def select_strategy_for_regime(regime):
-    return ["original", "king", "smart"]
+    return ["original", "king", "smart", "pro"]
 
 def calculate_adaptive_threshold(trades, market_type="live"):
     if not ADAPTIVE_THRESHOLD_ENABLED:
@@ -1801,7 +1819,16 @@ def already_sent_this_candle_smart(pair):
         state.smart_sent_signals[key] = get_iq_time()
     return False
 
-# ========== SIGNAL EVALUATION - ORIGINAL (FIXED: Cross not required for level 2) ==========
+# ===== PRO STRATEGY: already_sent_this_candle_pro =====
+def already_sent_this_candle_pro(pair):
+    key = f"pro_{pair}_{(int(get_iq_time()) // 300) * 300}"
+    with data_lock:
+        if key in state.pa_sent_signals:
+            return True
+        state.pa_sent_signals[key] = get_iq_time()
+    return False
+
+# ========== SIGNAL EVALUATION - ORIGINAL ==========
 
 _SIGNAL_LEVEL_CONFIG = [
     (6, 0.22, 0.85, 22, 0.0015, 0.00035, 0.040),
@@ -1843,7 +1870,7 @@ def evaluate_signal_strength(direction, curr, prev, df, price, alma9, alma50,
                 if level >= 3:
                     return level
 
-    # === Level 2 (weakest) — Cross NOT required (FIXED) ===
+    # === Level 2 — Cross NOT required ===
     if direction == "CALL":
         cond_base = (price > alma9 * 1.0002) and (stoch_k >= stoch_d)
         cond_rsi = 28 <= rsi <= 55
@@ -1866,7 +1893,7 @@ def evaluate_signal_strength(direction, curr, prev, df, price, alma9, alma50,
     
     return 0
 
-# ========== analyze_pair (Original Strategy - FIXED) ==========
+# ========== analyze_pair (Original Strategy) ==========
 
 def analyze_pair(pair, timeframe="5m"):
     tf_seconds, duration_text = 300, "5 دقائق"
@@ -1931,7 +1958,6 @@ def analyze_pair(pair, timeframe="5m"):
     emoji = SIGNAL_EMOJIS[strength]
     da = "صعود (CALL)" if potential_direction == "CALL" else "هبوط (PUT)"
 
-    # HTF: Warning only
     htf_trend = get_higher_tf_trend(pair)
     is_trending = (potential_direction == "CALL" and htf_trend == "CALL") or \
                   (potential_direction == "PUT" and htf_trend == "PUT")
@@ -1947,7 +1973,6 @@ def analyze_pair(pair, timeframe="5m"):
     if in_hunt_mode and strength < 2:
         return None
 
-    # Window: 270-299
     if 270 <= csec <= 280:
         with data_lock:
             if pair_key not in state.alerted_pairs:
@@ -2031,7 +2056,7 @@ def analyze_pair(pair, timeframe="5m"):
 
     return None
 
-# ========== analyze_pair_king (King Strategy - FIXED: ATR 0.0003) ==========
+# ========== analyze_pair_king (King Strategy) ==========
 
 def analyze_pair_king(pair, timeframe="5m"):
     tf_seconds, duration_text = 300, "5 دقائق"
@@ -2098,7 +2123,6 @@ def analyze_pair_king(pair, timeframe="5m"):
     momentum_ok = (potential_direction == "CALL" and roc > 0) or (potential_direction == "PUT" and roc < 0)
     volatility_ok = (atr_avg * 0.8 <= atr <= atr_avg * 2.0) if atr_avg > 0 else False
     
-    # ===== FIXED: ATR = 0.0003 (was 0.0004) =====
     min_atr = price * 0.0003
     if atr < min_atr:
         logger.info(f"🛑 King {pair}: ATR={atr:.5f} < {min_atr:.5f}")
@@ -2245,7 +2269,7 @@ def analyze_pair_wrapper_king(pair):
         logger.error(f"King error in {pair}: {e}")
         return pair, None
 
-# ========== SMC STRATEGY - SCORE = 50 (FIXED) ==========
+# ========== SMC STRATEGY ==========
 
 def detect_fvg(df):
     fvg_bull, fvg_bear = [], []
@@ -2356,7 +2380,6 @@ def analyze_pair_smc(pair, timeframe="5m"):
     if (bias == "CALL" and 30 <= rsi <= 50) or (bias == "PUT" and 50 <= rsi <= 70):
         score += 10; conf.append("RSI")
 
-    # ===== FIXED: SMC Score = 50 (was 60) =====
     if score < 50:
         logger.info(f"🛑 SMC {pair}: Score={score} < 50")
         return None
@@ -2442,6 +2465,180 @@ def analyze_pair_wrapper_smc(pair):
         logger.error(f"SMC error in {pair}: {e}")
         return pair, None
 
+# ========== PRO STRATEGY - PRICE ACTION (WICK REJECTION) ==========
+
+def analyze_pair_pro(pair, timeframe="5m"):
+    tf_seconds, duration_text = 300, "5 دقائق"
+    
+    df = get_cached_df_king(pair, tf_seconds, 60)
+    if df is None or len(df) < 40:
+        logger.info(f"🛑 Pro {pair}: No data")
+        return None
+    
+    df = detect_swings(df, window=2)
+    structure, _, _ = get_market_structure(df, lookback=30)
+    if structure == "NEUTRAL":
+        logger.info(f"🛑 Pro {pair}: Structure NEUTRAL")
+        return None
+    
+    recent = df.tail(30)
+    highs = recent[recent['is_swing_high']]['High'].values
+    lows = recent[recent['is_swing_low']]['Low'].values
+    if len(highs) < 2 or len(lows) < 2:
+        logger.info(f"🛑 Pro {pair}: Not enough swings")
+        return None
+    
+    last_res = highs[-1]
+    last_sup = lows[-1]
+    
+    curr = df.iloc[-1]
+    prev = df.iloc[-2]
+    price = curr['Close']
+    
+    vol_ma = df['Volume'].tail(20).mean()
+    vol_ok = curr['Volume'] >= vol_ma * 0.65
+    
+    body = abs(curr['Close'] - curr['Open'])
+    rng = curr['High'] - curr['Low']
+    if rng == 0:
+        return None
+    
+    upper_wick = curr['High'] - max(curr['Close'], curr['Open'])
+    lower_wick = min(curr['Close'], curr['Open']) - curr['Low']
+    
+    score = 0
+    direction = None
+    factors = []
+    
+    # ===== CALL: Support rejection (long lower wick) =====
+    if structure == "BULLISH":
+        at_sup = (abs(price - last_sup) <= price * 0.0005) or (curr['Low'] <= last_sup * 1.0003)
+        
+        if at_sup and lower_wick > body and curr['Close'] > curr['Open']:
+            score = 60
+            direction = "CALL"
+            factors.append("Support rejection")
+            
+            if lower_wick > upper_wick * 1.5:
+                score += 15
+                factors.append("Strong wick")
+            if curr['Close'] > prev['High']:
+                score += 10
+                factors.append("Momentum")
+            if vol_ok:
+                score += 10
+                factors.append("Volume")
+            if curr['Low'] < last_sup and curr['Close'] > last_sup:
+                score += 5
+                factors.append("Liquidity sweep")
+    
+    # ===== PUT: Resistance rejection (long upper wick) =====
+    elif structure == "BEARISH":
+        at_res = (abs(price - last_res) <= price * 0.0005) or (curr['High'] >= last_res * 0.9997)
+        
+        if at_res and upper_wick > body and curr['Close'] < curr['Open']:
+            score = 60
+            direction = "PUT"
+            factors.append("Resistance rejection")
+            
+            if upper_wick > lower_wick * 1.5:
+                score += 15
+                factors.append("Strong wick")
+            if curr['Close'] < prev['Low']:
+                score += 10
+                factors.append("Momentum")
+            if vol_ok:
+                score += 10
+                factors.append("Volume")
+            if curr['High'] > last_res and curr['Close'] < last_res:
+                score += 5
+                factors.append("Liquidity sweep")
+    
+    if direction is None or score < 75:
+        logger.info(f"🛑 Pro {pair}: Score={score} < 75 or no direction")
+        return None
+    
+    if score >= 95: level = 4
+    elif score >= 85: level = 3
+    elif score >= 80: level = 2
+    else: level = 1
+    
+    csec = int(get_iq_time()) % 300
+    if not (280 <= csec <= 299):
+        logger.info(f"🛑 Pro {pair}: Time not right ({csec})")
+        return None
+    
+    if already_sent_this_candle_pro(pair):
+        logger.info(f"🛑 Pro {pair}: Already sent")
+        return None
+    
+    ok, reason = passes_common_entry_filters(pair)
+    if not ok:
+        logger.info(f"🛑 Pro {pair}: {reason}")
+        return None
+    
+    name_ar, name_en = PRO_SIGNAL_NAMES[level]
+    emoji = PRO_EMOJIS[level]
+    da = "صعود (CALL)" if direction == "CALL" else "هبوط (PUT)"
+    
+    # ===== Early Alert (270-280) =====
+    if 270 <= csec <= 280:
+        with data_lock:
+            if pair not in state.pa_alerted_pairs:
+                send_telegram_message(
+                    f"⚠️ *{name_ar}* approaching\n"
+                    f"Pair: `{pair}` [5m]\n"
+                    f"Direction: *{da}*\n"
+                    f"Type: *{name_en}* {emoji}\n"
+                    f"Score: *{score}/100*\n"
+                    f"⏱️ *Wait for entry in last 20s!*"
+                )
+                state.pa_alerted_pairs[pair] = True
+    
+    with data_lock:
+        state.recent_signals[pair] = (get_iq_time(), direction)
+    
+    new_trade = _build_trade_dict(
+        pair=pair, direction=direction, entry_price=curr['Close'],
+        expire_offset=300, is_king=False, is_martingale=False,
+        signal_level=level, signal_name=name_ar, score=score,
+        filters={
+            'structure': structure,
+            'rejection': True,
+            'volume_ok': vol_ok,
+            'sweep': (curr['Low'] < last_sup and curr['Close'] > last_sup) if direction == "CALL" else (curr['High'] > last_res and curr['Close'] < last_res)
+        },
+        indicators={
+            'score': score,
+            'upper_wick': float(upper_wick),
+            'lower_wick': float(lower_wick),
+            'body': float(body),
+            'volume': float(curr['Volume']),
+            'vol_ma': float(vol_ma)
+        },
+        strategy='pro'
+    )
+    
+    if not add_trade_atomic(new_trade):
+        logger.info(f"🛑 Pro {pair}: Duplicate")
+        return None
+    
+    return (
+        f"{emoji} *{name_ar}* {emoji}\n"
+        f"Pair: `{pair}` (IQ Option) [5m]\n"
+        f"Direction: *{da}*\n"
+        f"⏱️ *Duration:* {duration_text}\n"
+        f"📊 *Score:* {score}/100 | {' | '.join(factors)}\n"
+        f"⚡ *Enter now on next candle!*"
+    )
+
+def analyze_pair_wrapper_pro(pair):
+    try:
+        return pair, analyze_pair_pro(pair, "5m")
+    except Exception as e:
+        logger.error(f"Pro error in {pair}: {e}")
+        return pair, None
+
 # ========== TRADE RESULTS CHECK ==========
 
 def check_trade_results():
@@ -2453,7 +2650,7 @@ def check_trade_results():
     for trade in trades_snapshot:
         time_left = trade['expire_time'] - current_time
         try:
-            if 0 < time_left <= 20 and not trade.get('warned_loss', False) and not trade.get('is_martingale', False) and not trade.get('is_king', False) and trade.get('strategy') != 'smart':
+            if 0 < time_left <= 20 and not trade.get('warned_loss', False) and not trade.get('is_martingale', False) and not trade.get('is_king', False) and trade.get('strategy') not in ['smart', 'pro']:
                 candles = get_cached_candles(trade['pair'], 300, 1, max_age=5)
                 if not candles:
                     continue
@@ -2487,6 +2684,10 @@ def check_trade_results():
                     with data_lock:
                         state.smart_stats[pair]['total'] += 1
                         state.smart_stats[pair]['win' if is_win else 'loss'] += 1
+                elif strategy == 'pro':
+                    with data_lock:
+                        state.pro_stats[pair]['total'] += 1
+                        state.pro_stats[pair]['win' if is_win else 'loss'] += 1
                 elif is_king:
                     with data_lock:
                         state.king_stats[pair]['total'] += 1
@@ -2524,7 +2725,9 @@ def check_trade_results():
                     trades_to_remove.append(trade)
                 else:
                     if is_win:
-                        if strategy == 'smart':
+                        if strategy == 'pro':
+                            send_telegram_message(f"🔥 *Pro — WIN* 🎯\nPair: `{pair}` [5m]\n⏰ `{ts}`")
+                        elif strategy == 'smart':
                             send_telegram_message(f"🏆 *SMC — WIN* 🎯\nPair: `{pair}` [5m]\n⏰ `{ts}`")
                         elif is_king:
                             send_telegram_message(f"👑 *{trade.get('signal_name', 'King')} — WIN*\nPair: `{pair}` [5m]\n⏰ `{ts}`")
@@ -2532,7 +2735,13 @@ def check_trade_results():
                             send_telegram_message(f"✅ *Trade: WIN* 🎯\nPair: `{pair}` [5m]\n⏰ `{ts}`")
                         trades_to_remove.append(trade)
                     else:
-                        if strategy == 'smart':
+                        if strategy == 'pro':
+                            send_telegram_message(
+                                f"❌ *Pro — LOSS*\n"
+                                f"Pair: `{pair}` [5m]\n"
+                                f"⏰ `{ts}`"
+                            )
+                        elif strategy == 'smart':
                             send_telegram_message(
                                 f"❌ *SMC — LOSS*\n"
                                 f"Pair: `{pair}` [5m]\n"
@@ -2686,7 +2895,7 @@ def stats_engine_worker():
                 for market in ["live", "otc"]:
                     market_trades = read_trade_log(max_entries=10000, market_type=market)
                     mc_results[market] = {}
-                    for strategy in ["original", "king", "smart"]:
+                    for strategy in ["original", "king", "smart", "pro"]:
                         mc_result, mc_status = run_monte_carlo(market_trades, strategy=strategy, market_type=market)
                         if mc_result:
                             mc_results[market][strategy] = mc_result
@@ -2704,7 +2913,7 @@ def stats_engine_worker():
             for market in ["live", "otc"]:
                 market_trades = read_trade_log(max_entries=10000, market_type=market)
                 if len(market_trades) >= WALK_FORWARD_MIN_TRADES and now - last_walk_forward > 1209600:
-                    for strategy in ["original", "king", "smart"]:
+                    for strategy in ["original", "king", "smart", "pro"]:
                         approved, wf_result, wf_msg = run_walk_forward_validation(
                             market_trades, strategy=strategy, market_type=market
                         )
@@ -2753,6 +2962,8 @@ def cleanup_memory():
         state.king_sent_signals = {k:v for k,v in state.king_sent_signals.items() if now - v < 600}
         state.king_recent_signals = {k:v for k,v in state.king_recent_signals.items() if now - v[0] < 1200}
         state.smart_sent_signals = {k:v for k,v in state.smart_sent_signals.items() if now - v < 600}
+        state.pa_sent_signals = {k:v for k,v in state.pa_sent_signals.items() if now - v < 600}
+        state.pa_alerted_pairs = {k:v for k,v in state.pa_alerted_pairs.items() if now - v < 600}
         state.settings_cache = {k:v for k,v in state.settings_cache.items() if now - v[1] < SETTINGS_CACHE_TTL}
         for k in list(state.alerted_pairs.keys()):
             val = state.alerted_pairs[k]
@@ -2821,7 +3032,8 @@ def run_bot():
         f"🤖 *Bot {VERSION} Started!*\n"
         f"📅 {datetime.now(CAIRO_TZ).strftime('%A %d/%m/%Y')}\n"
         f"🌐 Mode: {mode_text}\n"
-        f"📋 Pairs: {len(pairs)}"
+        f"📋 Pairs: {len(pairs)}\n"
+        f"📊 *Strategies:* Original | King | SMC | Pro"
     )
 
     threading.Thread(target=telegram_worker, daemon=True).start()
@@ -2876,7 +3088,8 @@ def run_bot():
                             f"⏳ Looking for *VERY STRONG* 🔵 or higher.\n"
                             f"✅ All regular signals active.\n"
                             f"👑 King active.\n"
-                            f"🏆 SMC active."
+                            f"🏆 SMC active.\n"
+                            f"🔥 Pro active."
                         )
 
                 active_pairs = []
@@ -2893,7 +3106,7 @@ def run_bot():
                 if disabled_count > 0 and current_cycle % 300 == 0:
                     logger.info(f"📋 Available: {len(active_pairs)} | Disabled: {disabled_count}")
 
-                strategies_to_run = ['original', 'king', 'smart']
+                strategies_to_run = ['original', 'king', 'smart', 'pro']
 
                 if current_cycle % 10 == 0:
                     logger.info(f"🎯 Active strategies: {strategies_to_run}")
@@ -2950,6 +3163,14 @@ def run_bot():
                             logger.info(f"🏆 SMC Signal: {pair}")
                             send_telegram_message(signal)
 
+                # ========== PRO ==========
+                if "pro" in strategies_to_run:
+                    pro_results = list(executor.map(analyze_pair_wrapper_pro, active_pairs))
+                    for pair, signal in pro_results:
+                        if signal:
+                            logger.info(f"🔥 Pro Signal: {pair}")
+                            send_telegram_message(signal)
+
                 check_trade_results()
 
                 if current_cycle % 10 == 0:
@@ -2965,7 +3186,10 @@ def run_bot():
                         smart_total_wins = sum(s['win'] for s in state.smart_stats.values())
                         smart_total_loss = sum(s['loss'] for s in state.smart_stats.values())
                         smart_wr = (smart_total_wins / (smart_total_wins + smart_total_loss) * 100) if (smart_total_wins + smart_total_loss) > 0 else 0
-                    logger.info(f"📊 Cycle #{current_cycle} | Original WR: {wr:.1f}% | King WR: {king_wr:.1f}% | SMC WR: {smart_wr:.1f}% | Total: {total_wins+total_loss} | King: {king_total_wins+king_total_loss} | SMC: {smart_total_wins+smart_total_loss}")
+                        pro_total_wins = sum(s['win'] for s in state.pro_stats.values())
+                        pro_total_loss = sum(s['loss'] for s in state.pro_stats.values())
+                        pro_wr = (pro_total_wins / (pro_total_wins + pro_total_loss) * 100) if (pro_total_wins + pro_total_loss) > 0 else 0
+                    logger.info(f"📊 Cycle #{current_cycle} | Original WR: {wr:.1f}% | King WR: {king_wr:.1f}% | SMC WR: {smart_wr:.1f}% | Pro WR: {pro_wr:.1f}% | Total: {total_wins+total_loss} | King: {king_total_wins+king_total_loss} | SMC: {smart_total_wins+smart_total_loss} | Pro: {pro_total_wins+pro_total_loss}")
 
             except Exception as e:
                 logger.error(f"Main loop error: {e}")
