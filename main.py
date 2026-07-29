@@ -2849,10 +2849,10 @@ def check_trade_results():
                 candles = get_cached_candles(trade['pair'], 300, 3, max_age=5)
                 if not candles or len(candles) < 2:
                     continue
-                
-                last_candle_ts = candles[-1].get('from', candles[-1].get('to', 0))
-                if last_candle_ts and last_candle_ts < trade['expire_time'] and time_left > -10:
-                    continue
+            
+                last_candle_ts = candles[-1].get('to', 0)  # نهاية الشمعة
+if last_candle_ts and last_candle_ts < trade['expire_time'] and time_left > -10:
+    continue
 
                 fp = candles[-1]['close']  # آخر شمعة مكتملة = شمعة انتهاء الصفقة
                 
