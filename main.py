@@ -2853,9 +2853,8 @@ def check_trade_results():
                 last_candle_ts = candles[-1].get('from', candles[-1].get('to', 0))
                 if last_candle_ts and last_candle_ts < trade['expire_time'] and time_left > -10:
                     continue
-                
-                # ===== التصحيح: fp = candles[-2]['close'] (سعر إغلاق الشمعة المكتملة) =====
-                fp = candles[-2]['close'] if len(candles) >= 2 else candles[-1]['close']
+
+                fp = candles[-1]['close']  # آخر شمعة مكتملة = شمعة انتهاء الصفقة
                 
                 ep, d = trade['entry_price'], trade['direction']
                 
