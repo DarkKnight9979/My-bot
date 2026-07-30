@@ -20,7 +20,7 @@ from collections import defaultdict
 # VERSION FINAL - 3-STAGE ALERT SYSTEM (ARABIC)
 # ============================================================
 
-VERSION = "7.5-FINAL-3STAGE-ARABIC"
+VERSION = "7.6-FINAL-FIXED-CANDLE"
 
 # ========== CONSTANTS ==========
 CAIRO_TZ = pytz.timezone('Africa/Cairo')
@@ -1959,8 +1959,9 @@ def analyze_pair(pair, timeframe="5m"):
         logger.warning(f"⛔ {pair}: لا يوجد بيانات")
         return None
 
-    curr = df.iloc[-1]
-    prev = df.iloc[-2]
+    # ✅ FIX: استخدام آخر شمعة مقفولة (وليس المفتوحة)
+    curr = df.iloc[-2]
+    prev = df.iloc[-3]
 
     price = curr['Close']
     alma9, alma50 = curr['ALMA_9'], curr['ALMA_50']
@@ -2212,8 +2213,9 @@ def analyze_pair_king(pair, timeframe="5m"):
     df['Stoch_K'], df['Stoch_D'] = calculate_stoch(df, 14, 3)
     df['ROC'] = calculate_roc(df['Close'], 5)
 
-    curr = df.iloc[-1]
-    prev = df.iloc[-2]
+    # ✅ FIX: استخدام آخر شمعة مقفولة (وليس المفتوحة)
+    curr = df.iloc[-2]
+    prev = df.iloc[-3]
     price = curr['Close']
     alma20 = curr['ALMA_20']
     alma80 = curr['ALMA_80']
@@ -2477,7 +2479,8 @@ def analyze_pair_smc(pair, timeframe="5m"):
     df['ALMA_50'] = calculate_alma(df['Close'], 50, 0.85, 6)
     df['RSI'] = wilder_rsi(df['Close'], 14)
 
-    curr = df.iloc[-1]
+    # ✅ FIX: استخدام آخر شمعة مقفولة (وليس المفتوحة)
+    curr = df.iloc[-2]
     price = curr['Close']
     rsi = curr['RSI']
 
@@ -2676,8 +2679,9 @@ def analyze_pair_pro(pair, timeframe="5m"):
     last_res = highs[-1]
     last_sup = lows[-1]
     
-    curr = df.iloc[-1]
-    prev = df.iloc[-2]
+    # ✅ FIX: استخدام آخر شمعة مقفولة (وليس المفتوحة)
+    curr = df.iloc[-2]
+    prev = df.iloc[-3]
     price = curr['Close']
     
     vol_ma = df['Volume'].tail(20).mean()
@@ -3036,7 +3040,9 @@ def check_trade_results():
         with data_lock:
             for trade in trades_to_remove:
                 if trade in state.active_trades:
-                    state.active_trades.remove(trade)# ========== CONNECTION ==========
+                    state.active_trades.remove(trade)
+
+# ========== CONNECTION ==========
 
 def connect_iqoption():
     logger.info("🔌 جاري الاتصال بـ IQ Option...")
