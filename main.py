@@ -3330,7 +3330,7 @@ def run_bot():
                         for pair, signal in results:
                             if signal and not martingale_found:
                                 logger.info(f"✅ تم العثور على مارتينجيل: {pair}")
-                                # تم الإرسال بالفعل داخل send_final_signal
+                                send_telegram_message(signal)
                                 martingale_found = True
                                 with data_lock:
                                     state.martingale_queue.clear()
@@ -3340,7 +3340,7 @@ def run_bot():
                         for pair, signal in results:
                             if signal:
                                 logger.info(f"✅ إشارة: {pair}")
-                                # تم الإرسال بالفعل داخل send_final_signal
+                                send_telegram_message(signal)
 
                 # ========== KING ==========
                 if "king" in strategies_to_run:
@@ -3348,7 +3348,7 @@ def run_bot():
                     for pair, signal in king_results:
                         if signal:
                             logger.info(f"👑 King Signal: {pair}")
-                            # تم الإرسال بالفعل داخل send_final_signal
+                            send_telegram_message(signal)
 
                 # ========== SMC ==========
                 if "smart" in strategies_to_run:
@@ -3356,7 +3356,7 @@ def run_bot():
                     for pair, signal in smc_results:
                         if signal:
                             logger.info(f"🏆 SMC Signal: {pair}")
-                            # تم الإرسال بالفعل داخل send_final_signal
+                            send_telegram_message(signal)
 
                 # ========== PRO ==========
                 if "pro" in strategies_to_run:
@@ -3364,7 +3364,7 @@ def run_bot():
                     for pair, signal in pro_results:
                         if signal:
                             logger.info(f"🔥 Pro Signal: {pair}")
-                            # تم الإرسال بالفعل داخل send_final_signal
+                            send_telegram_message(signal)
 
                 check_trade_results()
 
