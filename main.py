@@ -1655,16 +1655,23 @@ def calculate_king_score(structure_ok, sweep_ok, trend_ok, momentum_ok,
 
 # ========== CACHE FUNCTIONS ==========
 
-def get_cached_candles(pair, tf, count, max_age=30):
+def get_cached_candles(pair, tf, count, max_age=30, force_refresh=False):
+    """
+    force_refresh=True → يتجاهل الكاش تماماً (للنتائج فقط)
+    """
     key = f"{pair}_{tf}_{count}"
-    data = candles_cache.get(key)
-    if data is not None:
-        return data
+
+    if not force_refresh:
+        data = candles_cache.get(key)
+        if data is not None:
+            return data
+
     try:
         with api_lock:
             if API is None:
                 return None
-            data = API.get_candles(pair, tf, count, int(time.time()))
+            # ✅ نستخدم وقت السيرفر مش وقت الجهاز
+            data = API.get_candles(pair, tf, count, int(get_iq_time()))
         if data:
             candles_cache.set(key, data)
         return data
@@ -2824,53 +2831,94 @@ def analyze_pair_wrapper_pro(pair):
         logger.error(f"خطأ Pro في {pair}: {e}")
         return pair, None
 
-# ========== TRADE RESULTS CHECK (FIXED: fp = candles[-2]['close']) ==========
+# ========== TRADE RESULTS CHECK (معدل بالكامل) ==========
 
 def check_trade_results():
     current_time = get_iq_time()
     trades_to_remove = []
+
     with data_lock:
         trades_snapshot = list(state.active_trades)
 
     for trade in trades_snapshot:
         time_left = trade['expire_time'] - current_time
+        pair = trade['pair']
+        ep = trade['entry_price']
+        direction = trade['direction']
+        strategy = trade.get('strategy', 'unknown')
+        is_mg = trade.get('is_martingale', False)
+        is_king = trade.get('is_king', False)
+
         try:
-            if 0 < time_left <= 20 and not trade.get('warned_loss', False) and not trade.get('is_martingale', False) and not trade.get('is_king', False) and trade.get('strategy') not in ['smart', 'pro']:
-                candles = get_cached_candles(trade['pair'], 300, 1, max_age=5)
-                if not candles:
-                    continue
-                cp, ep, d = candles[-1]['close'], trade['entry_price'], trade['direction']
-                losing = (d == "CALL" and cp < ep) or (d == "PUT" and cp > ep)
-                if losing:
-                    send_telegram_message(f"⏳ *تنبيه مبكر*\nالزوج: `{trade['pair']}` [5m]\nالصفقة تتجه للخسارة...")
-                    trade['warned_loss'] = True
+            # ===== المرحلة 1: تنبيه الخسارة المبكرة =====
+            if 0 < time_left <= 20 and not trade.get('warned_loss', False) and not is_mg and not is_king and strategy not in ['smart', 'pro']:
+                candles = get_cached_candles(pair, 300, 1, max_age=5, force_refresh=True)
+                if candles and len(candles) >= 1:
+                    cp = candles[-1]['close']
+                    losing = (direction == "CALL" and cp < ep) or (direction == "PUT" and cp > ep)
+                    if losing:
+                        send_telegram_message(f"⏳ *تنبيه مبكر*
+الزوج: `{pair}` [5m]
+الصفقة تتجه للخسارة...")
+                        trade['warned_loss'] = True
 
+            # ===== المرحلة 2: تقييم النتيجة النهائية =====
             if time_left <= 0:
-                candles = get_cached_candles(trade['pair'], 300, 3, max_age=5)
+                # ✅ نجيب الشموع مباشرة من API بدون كاش
+                candles = get_cached_candles(pair, 300, 5, max_age=0, force_refresh=True)
+
                 if not candles or len(candles) < 2:
-                    continue
-                
-                last_candle_ts = candles[-1].get('from', candles[-1].get('to', 0))
-                if last_candle_ts and last_candle_ts < trade['expire_time'] and time_left > -10:
+                    logger.warning(f"⏳ {pair}: شموع غير كافية للتقييم، هيتم المحاولة في الدورة الجاية")
                     continue
 
-                fp = candles[-1]['close']  # آخر شمعة مكتملة = شمعة انتهاء الصفقة
-                
-                ep, d = trade['entry_price'], trade['direction']
-                
-                if d == "CALL":
+                # ✅ نحدد الشمعة الصحيحة بالـ timestamp
+                target_candle = None
+                for c in reversed(candles):
+                    candle_to = c.get('to', 0)
+                    candle_from = c.get('from', 0)
+
+                    # الشمعة اللي انتهت عند expire_time أو قبله بشوية
+                    # expire_time = وقت الدخول + 300 (نهاية الشمعة المقصودة)
+                    if candle_to <= trade['expire_time'] + 5:  # +5 ثواني تحمل
+                        target_candle = c
+                        break
+
+                # لو ملقناش الشمعة بالـ timestamp، نستخدم الشمعة قبل الأخيرة كاحتياط
+                if target_candle is None:
+                    target_candle = candles[-2] if len(candles) >= 2 else candles[-1]
+                    logger.warning(f"⚠️ {pair}: استخدام fallback للشمعة (مش متطابقة بالـ timestamp)")
+
+                fp = target_candle['close']
+                candle_to = target_candle.get('to', 0)
+                candle_from = target_candle.get('from', 0)
+
+                # ✅ Logging مفصل جداً للتتبع
+                logger.info(
+                    f"📊 RESULT DEBUG | {pair} | Dir:{direction} | "
+                    f"EP:{ep:.5f} | FP:{fp:.5f} | "
+                    f"Expire:{trade['expire_time']} | "
+                    f"CandleFrom:{candle_from} | CandleTo:{candle_to} | "
+                    f"CurrentTime:{current_time}"
+                )
+
+                # ✅ حساب النتيجة
+                if direction == "CALL":
                     is_win = fp > ep
                     is_tie = abs(fp - ep) < (ep * 0.00005)
                 else:  # PUT
                     is_win = fp < ep
                     is_tie = abs(fp - ep) < (ep * 0.00005)
-                
-                ts = get_cairo_time().strftime('%I:%M %p')
-                pair = trade['pair']
-                is_mg = trade.get('is_martingale', False)
-                is_king = trade.get('is_king', False)
-                strategy = trade.get('strategy', 'unknown')
 
+                # ✅ Verification إضافي: لو الفرق صغير جداً نتأكد
+                diff_pct = abs(fp - ep) / ep * 100 if ep != 0 else 0
+                logger.info(
+                    f"📊 RESULT | {pair} | Win:{is_win} | Tie:{is_tie} | "
+                    f"Diff:{diff_pct:.4f}% | Strategy:{strategy}"
+                )
+
+                ts = get_cairo_time().strftime('%I:%M %p')
+
+                # ===== تحديث الإحصائيات =====
                 if strategy == 'smart':
                     with data_lock:
                         state.smart_stats[pair]['total'] += 1
@@ -2891,11 +2939,12 @@ def check_trade_results():
                         state.stats[pair]['total'] += 1
                         state.stats[pair]['win' if is_win else 'loss'] += 1
 
+                # ===== تسجيل في الملف =====
                 try:
                     log_trade({
                         "timestamp": get_iq_time(),
                         "pair": pair,
-                        "direction": d,
+                        "direction": direction,
                         "strategy": strategy,
                         "level": trade.get('signal_level', 0),
                         "score": trade.get('score', 0),
@@ -2907,54 +2956,92 @@ def check_trade_results():
                         "hour": trade.get('hour', datetime.now(CAIRO_TZ).hour),
                         "day_of_week": datetime.now(CAIRO_TZ).weekday(),
                         "is_martingale": is_mg,
-                        "is_king": is_king
+                        "is_king": is_king,
+                        "candle_to": candle_to,
+                        "candle_from": candle_from,
+                        "expire_time": trade['expire_time']
                     })
                 except Exception as e:
                     logger.error(f"خطأ في تسجيل الصفقة: {e}")
 
-                # إرسال النتيجة
+                # ===== إرسال النتيجة =====
                 if is_tie:
-                    result_msg = f"➖ *تعادل*\nالزوج: `{pair}` [5m]\n⏰ `{ts}`\nالدخول: {ep:.5f} | الخروج: {fp:.5f}"
+                    result_msg = f"➖ *تعادل*
+الزوج: `{pair}` [5m]
+⏰ `{ts}`
+الدخول: {ep:.5f} | الخروج: {fp:.5f}"
                     send_telegram_message(result_msg)
                 elif is_mg:
                     msg = f"✅ *مارتينجيل: رابحة*" if is_win else f"❌ *مارتينجيل: خاسرة*"
-                    msg += f"\nالزوج: `{pair}` [5m]\n⏰ `{ts}`\nالدخول: {ep:.5f} | الخروج: {fp:.5f}"
+                    msg += f"
+الزوج: `{pair}` [5m]
+⏰ `{ts}`
+الدخول: {ep:.5f} | الخروج: {fp:.5f}"
                     send_telegram_message(msg)
                 else:
                     if is_win:
                         if strategy == 'pro':
-                            send_telegram_message(f"🔥 *Pro — رابحة* 🎯\nالزوج: `{pair}` [5m]\n⏰ `{ts}`\nالدخول: {ep:.5f} | الخروج: {fp:.5f}")
+                            send_telegram_message(f"🔥 *Pro — رابحة* 🎯
+الزوج: `{pair}` [5m]
+⏰ `{ts}`
+الدخول: {ep:.5f} | الخروج: {fp:.5f}")
                         elif strategy == 'smart':
-                            send_telegram_message(f"🏆 *SMC — رابحة* 🎯\nالزوج: `{pair}` [5m]\n⏰ `{ts}`\nالدخول: {ep:.5f} | الخروج: {fp:.5f}")
+                            send_telegram_message(f"🏆 *SMC — رابحة* 🎯
+الزوج: `{pair}` [5m]
+⏰ `{ts}`
+الدخول: {ep:.5f} | الخروج: {fp:.5f}")
                         elif is_king:
-                            send_telegram_message(f"👑 *{trade.get('signal_name', 'King')} — رابحة*\nالزوج: `{pair}` [5m]\n⏰ `{ts}`\nالدخول: {ep:.5f} | الخروج: {fp:.5f}")
+                            send_telegram_message(f"👑 *{trade.get('signal_name', 'King')} — رابحة*
+الزوج: `{pair}` [5m]
+⏰ `{ts}`
+الدخول: {ep:.5f} | الخروج: {fp:.5f}")
                         else:
-                            send_telegram_message(f"✅ *صفقة رابحة* 🎯\nالزوج: `{pair}` [5m]\n⏰ `{ts}`\nالدخول: {ep:.5f} | الخروج: {fp:.5f}")
+                            send_telegram_message(f"✅ *صفقة رابحة* 🎯
+الزوج: `{pair}` [5m]
+⏰ `{ts}`
+الدخول: {ep:.5f} | الخروج: {fp:.5f}")
                     else:
                         if strategy == 'pro':
-                            send_telegram_message(f"❌ *Pro — خاسرة*\nالزوج: `{pair}` [5m]\n⏰ `{ts}`\nالدخول: {ep:.5f} | الخروج: {fp:.5f}")
+                            send_telegram_message(f"❌ *Pro — خاسرة*
+الزوج: `{pair}` [5m]
+⏰ `{ts}`
+الدخول: {ep:.5f} | الخروج: {fp:.5f}")
                         elif strategy == 'smart':
-                            send_telegram_message(f"❌ *SMC — خاسرة*\nالزوج: `{pair}` [5m]\n⏰ `{ts}`\nالدخول: {ep:.5f} | الخروج: {fp:.5f}")
+                            send_telegram_message(f"❌ *SMC — خاسرة*
+الزوج: `{pair}` [5m]
+⏰ `{ts}`
+الدخول: {ep:.5f} | الخروج: {fp:.5f}")
                         elif is_king:
-                            send_telegram_message(f"❌ *{trade.get('signal_name', 'King')} — خاسرة*\nالزوج: `{pair}` [5m]\n⏰ `{ts}`\nالدخول: {ep:.5f} | الخروج: {fp:.5f}")
+                            send_telegram_message(f"❌ *{trade.get('signal_name', 'King')} — خاسرة*
+الزوج: `{pair}` [5m]
+⏰ `{ts}`
+الدخول: {ep:.5f} | الخروج: {fp:.5f}")
                         else:
                             with data_lock:
                                 if pair not in state.martingale_queue:
-                                    state.martingale_queue[pair] = {'original_direction': d, 'entry_price': ep, 'time': get_iq_time()}
+                                    state.martingale_queue[pair] = {'original_direction': direction, 'entry_price': ep, 'time': get_iq_time()}
                             send_telegram_message(
-                                f"❌ *صفقة خاسرة*\n"
-                                f"الزوج: `{pair}` [5m]\n"
-                                f"⏰ `{ts}`\n"
-                                f"الدخول: {ep:.5f} | الخروج: {fp:.5f}\n\n"
-                                f"🔴 *دخول وضع المارتينجيل!*\n"
-                                f"🎯 البحث في كل الأزواج عن إشارة *قوية جداً* 🔵 أو أعلى.\n"
+                                f"❌ *صفقة خاسرة*
+"
+                                f"الزوج: `{pair}` [5m]
+"
+                                f"⏰ `{ts}`
+"
+                                f"الدخول: {ep:.5f} | الخروج: {fp:.5f}
+
+"
+                                f"🔴 *دخول وضع المارتينجيل!*
+"
+                                f"🎯 البحث في كل الأزواج عن إشارة *قوية جداً* 🔵 أو أعلى.
+"
                                 f"⏳ تحليل السوق..."
                             )
-                
+
                 trades_to_remove.append(trade)
-                
+
         except Exception as e:
-            logger.error(f"خطأ في متابعة {trade['pair']}: {e}")
+            logger.error(f"خطأ في متابعة {pair}: {e}")
+            logger.error(traceback.format_exc())
 
     if trades_to_remove:
         with data_lock:
@@ -3329,7 +3416,7 @@ def run_bot():
                         for pair, signal in results:
                             if signal and not martingale_found:
                                 logger.info(f"✅ تم العثور على مارتينجيل: {pair}")
-                                # تم الإرسال بالفعل داخل send_final_signal
+                                send_telegram_message(signal)
                                 martingale_found = True
                                 with data_lock:
                                     state.martingale_queue.clear()
@@ -3339,7 +3426,7 @@ def run_bot():
                         for pair, signal in results:
                             if signal:
                                 logger.info(f"✅ إشارة: {pair}")
-                                # تم الإرسال بالفعل داخل send_final_signal
+                                send_telegram_message(signal)
 
                 # ========== KING ==========
                 if "king" in strategies_to_run:
@@ -3347,7 +3434,7 @@ def run_bot():
                     for pair, signal in king_results:
                         if signal:
                             logger.info(f"👑 King Signal: {pair}")
-                            # تم الإرسال بالفعل داخل send_final_signal
+                            send_telegram_message(signal)
 
                 # ========== SMC ==========
                 if "smart" in strategies_to_run:
@@ -3355,7 +3442,7 @@ def run_bot():
                     for pair, signal in smc_results:
                         if signal:
                             logger.info(f"🏆 SMC Signal: {pair}")
-                            # تم الإرسال بالفعل داخل send_final_signal
+                            send_telegram_message(signal)
 
                 # ========== PRO ==========
                 if "pro" in strategies_to_run:
@@ -3363,7 +3450,7 @@ def run_bot():
                     for pair, signal in pro_results:
                         if signal:
                             logger.info(f"🔥 Pro Signal: {pair}")
-                            # تم الإرسال بالفعل داخل send_final_signal
+                            send_telegram_message(signal)
 
                 check_trade_results()
 
