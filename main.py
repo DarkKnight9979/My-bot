@@ -1888,10 +1888,10 @@ def already_sent_this_candle_pro(pair):
 # ========== SIGNAL EVALUATION - ORIGINAL ==========
 
 _SIGNAL_LEVEL_CONFIG = [
-    (6, 0.22, 0.85, 22, 0.0015, 0.00035, 0.040),
-    (5, 0.18, 0.80, 18, 0.0012, 0.00028, 0.035),
-    (4, 0.15, 0.75, 16, 0.0010, 0.00025, 0.030),
-    (3, 0.12, 0.70, 14, 0.0008, 0.00022, 0.025),
+    (6, 0.22, 1.5, 22, 0.0015, 0.00035, 0.040),
+    (5, 0.18, 1.5, 18, 0.0012, 0.00028, 0.035),
+    (4, 0.18, 1.5, 16, 0.0010, 0.00025, 0.030),
+    (3, 0.18, 1.5, 14, 0.0008, 0.00022, 0.025),
 ]
 
 def evaluate_signal_strength(direction, curr, prev, df, price, alma9, alma50,
@@ -1940,8 +1940,8 @@ def evaluate_signal_strength(direction, curr, prev, df, price, alma9, alma50,
         cond_stoch_zone = stoch_k >= 55
     
     if (cond_base and cond_rsi and cond_zone and cond_stoch_zone and
-        body_pct >= 0.10 and
-        volume >= vol_ma * 0.55 and
+        body_pct >= 0.18 and
+        volume >= vol_ma * 1.5 and
         adx >= 12 and
         bbw >= 0.0007 and
         atr >= (price * 0.00020) and
@@ -1969,14 +1969,18 @@ def analyze_pair(pair, timeframe="5m"):
     roc = curr['ROC']
 
     atr = calculate_atr_wilder(df, 14)
+    atr_series = calculate_atr_series(df, 14)
     adx, _, _ = calculate_adx(df, 14)
     bbw = bollinger_bandwidth(df, 20)
     resistance, support = get_fractal_levels(df, lookback=20)
 
     low = curr['Low']
     high = curr['High']
-    near_sup = abs(price - support) <= (price * 0.0005) or low <= (curr['BBL'] * 1.001)
-    near_res = abs(price - resistance) <= (price * 0.0005) or high >= (curr['BBU'] * 0.999)
+    # فلتر الدعم/المقاومة القوي (≥3 لمسات)
+    support_hits = df[df['Low'] <= support * 1.001].shape[0]
+    resistance_hits = df[df['High'] >= resistance * 0.999].shape[0]
+    near_sup = (abs(price - support) <= (price * 0.0005) or low <= (curr['BBL'] * 1.001)) and support_hits >= 3
+    near_res = (abs(price - resistance) <= (price * 0.0005) or high >= (curr['BBU'] * 0.999)) and resistance_hits >= 3
 
     pair_key = f"{pair}_5m"
     iq_now = get_iq_time()
@@ -2001,14 +2005,35 @@ def analyze_pair(pair, timeframe="5m"):
         logger.info(f"⛔ {pair}: لا يوجد اتجاه")
         return None
 
+    # ===== فلاتر جديدة (Original Strategy Upgrade) =====
+
+    # 1. فلتر HTF صارم
+    htf_trend = get_higher_tf_trend(pair)
+    if htf_trend is not None and htf_trend != potential_direction:
+        logger.info(f"🛑 {pair}: HTF عكسي ({htf_trend} vs {potential_direction})، تم الإلغاء")
+        return None
+
+    # 2. فلتر التقلب (ATR)
+    atr_avg = atr_series.tail(20).mean()
+    if atr < atr_avg * 0.5:
+        logger.info(f"🛑 {pair}: تقلب منخفض (ATR={atr:.5f} < avg*0.5={atr_avg*0.5:.5f})، تم الإلغاء")
+        return None
+
+    # 3. فلتر حجم التداول (Volume Spike)
+    if curr['Volume'] <= vol_ma * 1.5:
+        logger.info(f"🛑 {pair}: حجم تداول ضعيف ({curr['Volume']:.0f} <= {vol_ma*1.5:.0f})، تم الإلغاء")
+        return None
+
+    # ===== نهاية الفلاتر الجديدة =====
+
     strength = evaluate_signal_strength(
         potential_direction, curr, prev, df, price, alma9, alma50,
         stoch_k, stoch_d, rsi, volume, vol_ma, atr, adx, bbw, roc, near_sup, near_res
     )
 
-    if strength == 0:
+    if strength < 3:
         body_pct = abs(curr['Close'] - curr['Open']) / (curr['High'] - curr['Low']) if curr['High'] != curr['Low'] else 0
-        logger.info(f"⛔ {pair}: مرفوضة — القوة=0 (ADX={adx:.1f}, RSI={rsi:.1f}, Body={body_pct:.2f}, Vol={volume:.0f}/MA={vol_ma:.0f})")
+        logger.info(f"🛑 {pair}: مرفوضة — القوة={strength} < 3 (ADX={adx:.1f}, RSI={rsi:.1f}, Body={body_pct:.2f}, Vol={volume:.0f}/MA={vol_ma:.0f})")
         return None
 
     signal_name_ar, signal_name_en = SIGNAL_NAMES[strength]
@@ -2073,7 +2098,7 @@ def analyze_pair(pair, timeframe="5m"):
             logger.info(f"🛑 {pair}: إلغاء ({reason})")
             return None
 
-        min_body = {6: 0.22, 5: 0.18, 4: 0.15, 3: 0.12, 2: 0.10, 1: 0.08}
+        min_body = {6: 0.22, 5: 0.18, 4: 0.18, 3: 0.18, 2: 0.18, 1: 0.08}
         if not check_candle_quality(curr, min_body_pct=min_body.get(strength, 0.08)):
             body_pct = abs(curr['Close'] - curr['Open']) / (curr['High'] - curr['Low']) if curr['High'] != curr['Low'] else 0
             if pending:
@@ -2841,6 +2866,7 @@ def check_trade_results():
         trades_snapshot = list(state.active_trades)
 
     for trade in trades_snapshot:
+        time_left = trade['expire_time'] - current_time
         pair = trade['pair']
         ep = trade['entry_price']
         direction = trade['direction']
@@ -2848,13 +2874,8 @@ def check_trade_results():
         is_mg = trade.get('is_martingale', False)
         is_king = trade.get('is_king', False)
 
-        # ✅ الحل: نحسب وقت إغلاق الشمعة الحقيقي وبدايتها
-        expected_from = (trade['expire_time'] // 300) * 300
-        candle_close_time = ((trade['expire_time'] // 300) + 1) * 300
-
         try:
             # ===== المرحلة 1: تنبيه الخسارة المبكرة =====
-            time_left = trade['expire_time'] - current_time
             if 0 < time_left <= 20 and not trade.get('warned_loss', False) and not is_mg and not is_king and strategy not in ['smart', 'pro']:
                 candles = get_cached_candles(pair, 300, 1, max_age=5, force_refresh=True)
                 if candles and len(candles) >= 1:
@@ -2865,27 +2886,30 @@ def check_trade_results():
                         trade['warned_loss'] = True
 
             # ===== المرحلة 2: تقييم النتيجة النهائية =====
-            # ✅ الحل: نستنى لحد ما الشمعة تقفل فعلاً عند نهاية الـ 300 ثانية
-            if current_time >= candle_close_time:
-                # نجيب الشموع مباشرة من API بدون كاش
+            if time_left <= 0:
+                # ✅ نجيب الشموع مباشرة من API بدون كاش
                 candles = get_cached_candles(pair, 300, 5, max_age=0, force_refresh=True)
 
                 if not candles or len(candles) < 2:
                     logger.warning("⏳ " + pair + ": شموع غير كافية للتقييم، هيتم المحاولة في الدورة الجاية")
                     continue
 
-                # ✅ الحل: نختار الشمعة المستهدفة بناءً على candle_from == expected_from
+                # ✅ نحدد الشمعة الصحيحة بالـ timestamp
                 target_candle = None
                 for c in reversed(candles):
+                    candle_to = c.get('to', 0)
                     candle_from = c.get('from', 0)
-                    if candle_from == expected_from:
+
+                    # الشمعة اللي انتهت عند expire_time أو قبله بشوية
+                    # expire_time = وقت الدخول + 300 (نهاية الشمعة المقصودة)
+                    if candle_to <= trade['expire_time'] + 5:  # +5 ثواني تحمل
                         target_candle = c
                         break
 
-                # fallback: لو ملقناش الشمعة بالـ from، نستخدم الشمعة قبل الأخيرة كاحتياط
+                # لو ملقناش الشمعة بالـ timestamp، نستخدم الشمعة قبل الأخيرة كاحتياط
                 if target_candle is None:
                     target_candle = candles[-2] if len(candles) >= 2 else candles[-1]
-                    logger.warning("⚠️ " + pair + ": استخدام fallback للشمعة (candle_from مش متطابق)")
+                    logger.warning("⚠️ " + pair + ": استخدام fallback للشمعة (مش متطابقة بالـ timestamp)")
 
                 fp = target_candle['close']
                 candle_to = target_candle.get('to', 0)
@@ -2897,8 +2921,7 @@ def check_trade_results():
                     "EP:" + "{:.5f}".format(ep) + " | FP:" + "{:.5f}".format(fp) + " | "
                     "Expire:" + str(trade['expire_time']) + " | "
                     "CandleFrom:" + str(candle_from) + " | CandleTo:" + str(candle_to) + " | "
-                    "CurrentTime:" + str(current_time) + " | "
-                    "ExpectedFrom:" + str(expected_from) + " | CloseTime:" + str(candle_close_time)
+                    "CurrentTime:" + str(current_time)
                 )
 
                 # ✅ حساب النتيجة
@@ -3013,8 +3036,7 @@ def check_trade_results():
         with data_lock:
             for trade in trades_to_remove:
                 if trade in state.active_trades:
-                    state.active_trades.remove(trade)
-# ========== CONNECTION ==========
+                    state.active_trades.remove(trade)# ========== CONNECTION ==========
 
 def connect_iqoption():
     logger.info("🔌 جاري الاتصال بـ IQ Option...")
