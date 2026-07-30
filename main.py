@@ -2841,7 +2841,6 @@ def check_trade_results():
         trades_snapshot = list(state.active_trades)
 
     for trade in trades_snapshot:
-        time_left = trade['expire_time'] - current_time
         pair = trade['pair']
         ep = trade['entry_price']
         direction = trade['direction']
@@ -2849,8 +2848,13 @@ def check_trade_results():
         is_mg = trade.get('is_martingale', False)
         is_king = trade.get('is_king', False)
 
+        # ✅ الحل: نحسب وقت إغلاق الشمعة الحقيقي وبدايتها
+        expected_from = (trade['expire_time'] // 300) * 300
+        candle_close_time = ((trade['expire_time'] // 300) + 1) * 300
+
         try:
             # ===== المرحلة 1: تنبيه الخسارة المبكرة =====
+            time_left = trade['expire_time'] - current_time
             if 0 < time_left <= 20 and not trade.get('warned_loss', False) and not is_mg and not is_king and strategy not in ['smart', 'pro']:
                 candles = get_cached_candles(pair, 300, 1, max_age=5, force_refresh=True)
                 if candles and len(candles) >= 1:
@@ -2861,30 +2865,27 @@ def check_trade_results():
                         trade['warned_loss'] = True
 
             # ===== المرحلة 2: تقييم النتيجة النهائية =====
-            if time_left <= 0:
-                # ✅ نجيب الشموع مباشرة من API بدون كاش
+            # ✅ الحل: نستنى لحد ما الشمعة تقفل فعلاً عند نهاية الـ 300 ثانية
+            if current_time >= candle_close_time:
+                # نجيب الشموع مباشرة من API بدون كاش
                 candles = get_cached_candles(pair, 300, 5, max_age=0, force_refresh=True)
 
                 if not candles or len(candles) < 2:
                     logger.warning("⏳ " + pair + ": شموع غير كافية للتقييم، هيتم المحاولة في الدورة الجاية")
                     continue
 
-                # ✅ نحدد الشمعة الصحيحة بالـ timestamp
+                # ✅ الحل: نختار الشمعة المستهدفة بناءً على candle_from == expected_from
                 target_candle = None
                 for c in reversed(candles):
-                    candle_to = c.get('to', 0)
                     candle_from = c.get('from', 0)
-
-                    # الشمعة اللي انتهت عند expire_time أو قبله بشوية
-                    # expire_time = وقت الدخول + 300 (نهاية الشمعة المقصودة)
-                    if candle_to <= trade['expire_time'] + 5:  # +5 ثواني تحمل
+                    if candle_from == expected_from:
                         target_candle = c
                         break
 
-                # لو ملقناش الشمعة بالـ timestamp، نستخدم الشمعة قبل الأخيرة كاحتياط
+                # fallback: لو ملقناش الشمعة بالـ from، نستخدم الشمعة قبل الأخيرة كاحتياط
                 if target_candle is None:
                     target_candle = candles[-2] if len(candles) >= 2 else candles[-1]
-                    logger.warning("⚠️ " + pair + ": استخدام fallback للشمعة (مش متطابقة بالـ timestamp)")
+                    logger.warning("⚠️ " + pair + ": استخدام fallback للشمعة (candle_from مش متطابق)")
 
                 fp = target_candle['close']
                 candle_to = target_candle.get('to', 0)
@@ -2896,7 +2897,8 @@ def check_trade_results():
                     "EP:" + "{:.5f}".format(ep) + " | FP:" + "{:.5f}".format(fp) + " | "
                     "Expire:" + str(trade['expire_time']) + " | "
                     "CandleFrom:" + str(candle_from) + " | CandleTo:" + str(candle_to) + " | "
-                    "CurrentTime:" + str(current_time)
+                    "CurrentTime:" + str(current_time) + " | "
+                    "ExpectedFrom:" + str(expected_from) + " | CloseTime:" + str(candle_close_time)
                 )
 
                 # ✅ حساب النتيجة
@@ -3011,7 +3013,8 @@ def check_trade_results():
         with data_lock:
             for trade in trades_to_remove:
                 if trade in state.active_trades:
-                    state.active_trades.remove(trade)# ========== CONNECTION ==========
+                    state.active_trades.remove(trade)
+# ========== CONNECTION ==========
 
 def connect_iqoption():
     logger.info("🔌 جاري الاتصال بـ IQ Option...")
