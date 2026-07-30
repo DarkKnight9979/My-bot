@@ -2857,9 +2857,7 @@ def check_trade_results():
                     cp = candles[-1]['close']
                     losing = (direction == "CALL" and cp < ep) or (direction == "PUT" and cp > ep)
                     if losing:
-                        send_telegram_message(f"⏳ *تنبيه مبكر*
-الزوج: `{pair}` [5m]
-الصفقة تتجه للخسارة...")
+                        send_telegram_message("⏳ *تنبيه مبكر*\nالزوج: `" + pair + "` [5m]\nالصفقة تتجه للخسارة...")
                         trade['warned_loss'] = True
 
             # ===== المرحلة 2: تقييم النتيجة النهائية =====
@@ -2868,7 +2866,7 @@ def check_trade_results():
                 candles = get_cached_candles(pair, 300, 5, max_age=0, force_refresh=True)
 
                 if not candles or len(candles) < 2:
-                    logger.warning(f"⏳ {pair}: شموع غير كافية للتقييم، هيتم المحاولة في الدورة الجاية")
+                    logger.warning("⏳ " + pair + ": شموع غير كافية للتقييم، هيتم المحاولة في الدورة الجاية")
                     continue
 
                 # ✅ نحدد الشمعة الصحيحة بالـ timestamp
@@ -2886,7 +2884,7 @@ def check_trade_results():
                 # لو ملقناش الشمعة بالـ timestamp، نستخدم الشمعة قبل الأخيرة كاحتياط
                 if target_candle is None:
                     target_candle = candles[-2] if len(candles) >= 2 else candles[-1]
-                    logger.warning(f"⚠️ {pair}: استخدام fallback للشمعة (مش متطابقة بالـ timestamp)")
+                    logger.warning("⚠️ " + pair + ": استخدام fallback للشمعة (مش متطابقة بالـ timestamp)")
 
                 fp = target_candle['close']
                 candle_to = target_candle.get('to', 0)
@@ -2894,11 +2892,11 @@ def check_trade_results():
 
                 # ✅ Logging مفصل جداً للتتبع
                 logger.info(
-                    f"📊 RESULT DEBUG | {pair} | Dir:{direction} | "
-                    f"EP:{ep:.5f} | FP:{fp:.5f} | "
-                    f"Expire:{trade['expire_time']} | "
-                    f"CandleFrom:{candle_from} | CandleTo:{candle_to} | "
-                    f"CurrentTime:{current_time}"
+                    "📊 RESULT DEBUG | " + str(pair) + " | Dir:" + str(direction) + " | "
+                    "EP:" + "{:.5f}".format(ep) + " | FP:" + "{:.5f}".format(fp) + " | "
+                    "Expire:" + str(trade['expire_time']) + " | "
+                    "CandleFrom:" + str(candle_from) + " | CandleTo:" + str(candle_to) + " | "
+                    "CurrentTime:" + str(current_time)
                 )
 
                 # ✅ حساب النتيجة
@@ -2912,8 +2910,8 @@ def check_trade_results():
                 # ✅ Verification إضافي: لو الفرق صغير جداً نتأكد
                 diff_pct = abs(fp - ep) / ep * 100 if ep != 0 else 0
                 logger.info(
-                    f"📊 RESULT | {pair} | Win:{is_win} | Tie:{is_tie} | "
-                    f"Diff:{diff_pct:.4f}% | Strategy:{strategy}"
+                    "📊 RESULT | " + str(pair) + " | Win:" + str(is_win) + " | Tie:" + str(is_tie) + " | "
+                    "Diff:" + "{:.4f}".format(diff_pct) + "% | Strategy:" + str(strategy)
                 )
 
                 ts = get_cairo_time().strftime('%I:%M %p')
@@ -2962,94 +2960,58 @@ def check_trade_results():
                         "expire_time": trade['expire_time']
                     })
                 except Exception as e:
-                    logger.error(f"خطأ في تسجيل الصفقة: {e}")
+                    logger.error("خطأ في تسجيل الصفقة: " + str(e))
 
                 # ===== إرسال النتيجة =====
                 if is_tie:
-                    result_msg = f"➖ *تعادل*
-الزوج: `{pair}` [5m]
-⏰ `{ts}`
-الدخول: {ep:.5f} | الخروج: {fp:.5f}"
+                    result_msg = "➖ *تعادل*\nالزوج: `" + pair + "` [5m]\n⏰ `" + ts + "`\nالدخول: " + "{:.5f}".format(ep) + " | الخروج: " + "{:.5f}".format(fp)
                     send_telegram_message(result_msg)
                 elif is_mg:
-                    msg = f"✅ *مارتينجيل: رابحة*" if is_win else f"❌ *مارتينجيل: خاسرة*"
-                    msg += f"
-الزوج: `{pair}` [5m]
-⏰ `{ts}`
-الدخول: {ep:.5f} | الخروج: {fp:.5f}"
+                    msg = "✅ *مارتينجيل: رابحة*" if is_win else "❌ *مارتينجيل: خاسرة*"
+                    msg += "\nالزوج: `" + pair + "` [5m]\n⏰ `" + ts + "`\nالدخول: " + "{:.5f}".format(ep) + " | الخروج: " + "{:.5f}".format(fp)
                     send_telegram_message(msg)
                 else:
                     if is_win:
                         if strategy == 'pro':
-                            send_telegram_message(f"🔥 *Pro — رابحة* 🎯
-الزوج: `{pair}` [5m]
-⏰ `{ts}`
-الدخول: {ep:.5f} | الخروج: {fp:.5f}")
+                            send_telegram_message("🔥 *Pro — رابحة* 🎯\nالزوج: `" + pair + "` [5m]\n⏰ `" + ts + "`\nالدخول: " + "{:.5f}".format(ep) + " | الخروج: " + "{:.5f}".format(fp))
                         elif strategy == 'smart':
-                            send_telegram_message(f"🏆 *SMC — رابحة* 🎯
-الزوج: `{pair}` [5m]
-⏰ `{ts}`
-الدخول: {ep:.5f} | الخروج: {fp:.5f}")
+                            send_telegram_message("🏆 *SMC — رابحة* 🎯\nالزوج: `" + pair + "` [5m]\n⏰ `" + ts + "`\nالدخول: " + "{:.5f}".format(ep) + " | الخروج: " + "{:.5f}".format(fp))
                         elif is_king:
-                            send_telegram_message(f"👑 *{trade.get('signal_name', 'King')} — رابحة*
-الزوج: `{pair}` [5m]
-⏰ `{ts}`
-الدخول: {ep:.5f} | الخروج: {fp:.5f}")
+                            send_telegram_message("👑 *" + trade.get('signal_name', 'King') + " — رابحة*\nالزوج: `" + pair + "` [5m]\n⏰ `" + ts + "`\nالدخول: " + "{:.5f}".format(ep) + " | الخروج: " + "{:.5f}".format(fp))
                         else:
-                            send_telegram_message(f"✅ *صفقة رابحة* 🎯
-الزوج: `{pair}` [5m]
-⏰ `{ts}`
-الدخول: {ep:.5f} | الخروج: {fp:.5f}")
+                            send_telegram_message("✅ *صفقة رابحة* 🎯\nالزوج: `" + pair + "` [5m]\n⏰ `" + ts + "`\nالدخول: " + "{:.5f}".format(ep) + " | الخروج: " + "{:.5f}".format(fp))
                     else:
                         if strategy == 'pro':
-                            send_telegram_message(f"❌ *Pro — خاسرة*
-الزوج: `{pair}` [5m]
-⏰ `{ts}`
-الدخول: {ep:.5f} | الخروج: {fp:.5f}")
+                            send_telegram_message("❌ *Pro — خاسرة*\nالزوج: `" + pair + "` [5m]\n⏰ `" + ts + "`\nالدخول: " + "{:.5f}".format(ep) + " | الخروج: " + "{:.5f}".format(fp))
                         elif strategy == 'smart':
-                            send_telegram_message(f"❌ *SMC — خاسرة*
-الزوج: `{pair}` [5m]
-⏰ `{ts}`
-الدخول: {ep:.5f} | الخروج: {fp:.5f}")
+                            send_telegram_message("❌ *SMC — خاسرة*\nالزوج: `" + pair + "` [5m]\n⏰ `" + ts + "`\nالدخول: " + "{:.5f}".format(ep) + " | الخروج: " + "{:.5f}".format(fp))
                         elif is_king:
-                            send_telegram_message(f"❌ *{trade.get('signal_name', 'King')} — خاسرة*
-الزوج: `{pair}` [5m]
-⏰ `{ts}`
-الدخول: {ep:.5f} | الخروج: {fp:.5f}")
+                            send_telegram_message("❌ *" + trade.get('signal_name', 'King') + " — خاسرة*\nالزوج: `" + pair + "` [5m]\n⏰ `" + ts + "`\nالدخول: " + "{:.5f}".format(ep) + " | الخروج: " + "{:.5f}".format(fp))
                         else:
                             with data_lock:
                                 if pair not in state.martingale_queue:
                                     state.martingale_queue[pair] = {'original_direction': direction, 'entry_price': ep, 'time': get_iq_time()}
                             send_telegram_message(
-                                f"❌ *صفقة خاسرة*
-"
-                                f"الزوج: `{pair}` [5m]
-"
-                                f"⏰ `{ts}`
-"
-                                f"الدخول: {ep:.5f} | الخروج: {fp:.5f}
-
-"
-                                f"🔴 *دخول وضع المارتينجيل!*
-"
-                                f"🎯 البحث في كل الأزواج عن إشارة *قوية جداً* 🔵 أو أعلى.
-"
-                                f"⏳ تحليل السوق..."
+                                "❌ *صفقة خاسرة*\n"
+                                "الزوج: `" + pair + "` [5m]\n"
+                                "⏰ `" + ts + "`\n"
+                                "الدخول: " + "{:.5f}".format(ep) + " | الخروج: " + "{:.5f}".format(fp) + "\n\n"
+                                "🔴 *دخول وضع المارتينجيل!*\n"
+                                "🎯 البحث في كل الأزواج عن إشارة *قوية جداً* 🔵 أو أعلى.\n"
+                                "⏳ تحليل السوق..."
                             )
 
                 trades_to_remove.append(trade)
 
         except Exception as e:
-            logger.error(f"خطأ في متابعة {pair}: {e}")
+            logger.error("خطأ في متابعة " + str(pair) + ": " + str(e))
             logger.error(traceback.format_exc())
 
     if trades_to_remove:
         with data_lock:
             for trade in trades_to_remove:
                 if trade in state.active_trades:
-                    state.active_trades.remove(trade)
-
-# ========== CONNECTION ==========
+                    state.active_trades.remove(trade)# ========== CONNECTION ==========
 
 def connect_iqoption():
     logger.info("🔌 جاري الاتصال بـ IQ Option...")
