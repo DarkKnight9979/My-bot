@@ -171,6 +171,8 @@ class BotState:
         self.king_htf_cache = {}
         # ===== نظام التنبيهات الجديد (3 مراحل) =====
         self.pending_alerts = {}
+        # ===== منع تكرار الإشارات النهائية =====
+        self.sent_final_signals = {}
 
 state = BotState()
 
@@ -518,6 +520,13 @@ def send_cancelled_alert(pair, direction, reason, strategy_name):
 def send_final_signal(pair, direction, signal_name, score, duration_text, indicators, strategy_name):
     """المرحلة 3: الإشارة النهائية (قبل 7 ثواني)"""
     da = "صعود (CALL)" if direction == "CALL" else "هبوط (PUT)"
+    
+    # منع التكرار في نفس الشمعة
+    msg_hash = f"{pair}_{direction}_{int(get_iq_time()) // 300}"
+    with data_lock:
+        if msg_hash in state.sent_final_signals:
+            return None
+        state.sent_final_signals[msg_hash] = time.time()
     
     # اختيار الإيموجي حسب الاستراتيجية
     if strategy_name == 'original':
@@ -2136,6 +2145,10 @@ def analyze_pair(pair, timeframe="5m"):
                 duration_text, indicators_str, 'original'
             )
 
+            if final_signal is None:
+                logger.info(f"⛔ {pair}: تم إرسالها مسبقاً (منع التكرار)")
+                return None
+
             with data_lock:
                 state.recent_signals[pair] = (get_iq_time(), potential_direction)
 
@@ -2387,6 +2400,11 @@ def analyze_pair_king(pair, timeframe="5m"):
                 pair, potential_direction, signal_name_ar, score,
                 duration_text, indicators_str, 'king'
             )
+            
+            if final_signal is None:
+                logger.info(f"⛔ King {pair}: تم إرسالها مسبقاً (منع التكرار)")
+                return None
+                
             logger.info(f"👑 King {pair}: {signal_name_ar} تم الإرسال")
             return final_signal
         else:
@@ -2640,6 +2658,11 @@ def analyze_pair_smc(pair, timeframe="5m"):
             pair, bias, name, score,
             duration_text, indicators_str, 'smart'
         )
+        
+        if final_signal is None:
+            logger.info(f"⛔ SMC {pair}: تم إرسالها مسبقاً (منع التكرار)")
+            return None
+            
         logger.info(f"🏆 SMC {pair}: {name} تم الإرسال")
         return final_signal
     else:
@@ -2847,6 +2870,11 @@ def analyze_pair_pro(pair, timeframe="5m"):
             pair, direction, name_ar, score,
             duration_text, indicators_str, 'pro'
         )
+        
+        if final_signal is None:
+            logger.info(f"⛔ Pro {pair}: تم إرسالها مسبقاً (منع التكرار)")
+            return None
+            
         logger.info(f"🔥 Pro {pair}: {name_ar} تم الإرسال")
         return final_signal
     else:
@@ -2898,22 +2926,19 @@ def check_trade_results():
                     logger.warning("⏳ " + pair + ": شموع غير كافية للتقييم، هيتم المحاولة في الدورة الجاية")
                     continue
 
-                # ✅ نحدد الشمعة الصحيحة بالـ timestamp
+                # ✅ نحدد الشمعة الصحيحة بالـ timestamp (تم التعديل)
                 target_candle = None
                 for c in reversed(candles):
                     candle_to = c.get('to', 0)
-                    candle_from = c.get('from', 0)
-
-                    # الشمعة اللي انتهت عند expire_time أو قبله بشوية
-                    # expire_time = وقت الدخول + 300 (نهاية الشمعة المقصودة)
-                    if candle_to <= trade['expire_time'] + 5:  # +5 ثواني تحمل
+                    # نجيب الشمعة اللي انتهت عند expire_time أو بعدها بشوية
+                    if candle_to >= trade['expire_time'] - 10:  # -10 ثواني تحمل
                         target_candle = c
                         break
 
-                # لو ملقناش الشمعة بالـ timestamp، نستخدم الشمعة قبل الأخيرة كاحتياط
+                # لو ملقناش الشمعة، نستخدم آخر شمعة مقفولة
                 if target_candle is None:
-                    target_candle = candles[-2] if len(candles) >= 2 else candles[-1]
-                    logger.warning("⚠️ " + pair + ": استخدام fallback للشمعة (مش متطابقة بالـ timestamp)")
+                    target_candle = candles[-1]
+                    logger.warning("⚠️ " + pair + ": استخدام آخر شمعة مقفولة")
 
                 fp = target_candle['close']
                 candle_to = target_candle.get('to', 0)
@@ -3230,6 +3255,8 @@ def cleanup_memory():
         state.king_recent_signals = {k:v for k,v in state.king_recent_signals.items() if now - v[0] < 1200}
         state.smart_sent_signals = {k:v for k,v in state.smart_sent_signals.items() if now - v < 600}
         state.pa_sent_signals = {k:v for k,v in state.pa_sent_signals.items() if now - v < 600}
+        # منع تكرار الإشارات النهائية
+        state.sent_final_signals = {k:v for k,v in state.sent_final_signals.items() if now - v < 600}
         # pa_alerted_pairs: values are now timestamps (iq_now), not bool
         state.pa_alerted_pairs = {k:v for k,v in state.pa_alerted_pairs.items() if isinstance(v, (int, float)) and now - v < 600}
         # pending_alerts: values are dicts with 'alert_time' key
