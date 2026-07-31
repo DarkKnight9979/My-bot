@@ -20,7 +20,7 @@ from collections import defaultdict
 # VERSION FINAL - 3-STAGE ALERT SYSTEM (ARABIC)
 # ============================================================
 
-VERSION = "7.8-FINAL-FIXED-DEDUP-TIME"
+VERSION = "7.9-FINAL-FIXED-DEDUP-V2"
 
 # ========== CONSTANTS ==========
 CAIRO_TZ = pytz.timezone('Africa/Cairo')
@@ -2707,7 +2707,8 @@ def analyze_pair_smc(pair, timeframe="5m"):
         # ✅ منع تكرار الإشارة
         if final_signal is None:
             logger.info(f"⛔ SMC {pair}: تم إرسالها مسبقاً (منع التكرار)")
-            return None            
+            return None
+            
         logger.info(f"🏆 SMC {pair}: {name} تم الإرسال")
         return final_signal
     else:
@@ -2920,7 +2921,10 @@ def analyze_pair_pro(pair, timeframe="5m"):
         if final_signal is None:
             logger.info(f"⛔ Pro {pair}: تم إرسالها مسبقاً (منع التكرار)")
             return None
-            
+        
+        # ✅ التعديل الأهم: منع إرجاع الإشارة مرة تانية
+        return None
+        
         logger.info(f"🔥 Pro {pair}: {name_ar} تم الإرسال")
         return final_signal
     else:
