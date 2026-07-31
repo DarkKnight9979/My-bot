@@ -20,7 +20,7 @@ from collections import defaultdict
 # VERSION FINAL - 3-STAGE ALERT SYSTEM (ARABIC)
 # ============================================================
 
-VERSION = "7.9-FINAL-FIXED-DEDUP-V2"
+VERSION = "7.6-FINAL-FIXED-CANDLE"
 
 # ========== CONSTANTS ==========
 CAIRO_TZ = pytz.timezone('Africa/Cairo')
@@ -171,8 +171,6 @@ class BotState:
         self.king_htf_cache = {}
         # ===== نظام التنبيهات الجديد (3 مراحل) =====
         self.pending_alerts = {}
-        # ===== منع تكرار الإشارات النهائية =====
-        self.sent_final_signals = {}
 
 state = BotState()
 
@@ -480,6 +478,48 @@ PRO_SIGNAL_NAMES = {
 }
 PRO_EMOJIS = {1: "🥉", 2: "🥈", 3: "🥇", 4: "🔥"}
 
+
+def get_regime_badge(strategy_name, regime):
+    """
+    بترجع جملة توضح مدى ملاءمة الاستراتيجية للسوق الحالي
+    """
+    badges = {
+        'original': {
+            'trending':  "🌊 السوق *ترندي* — الاستراتيجية الأصلية *ممتازة* هنا",
+            'ranging':   "↔️ السوق *متراوح* — الاستراتيجية الأصلية *متوسطة* هنا",
+            'high_vol':  "⚡ تقلب عالي — الاستراتيجية الأصلية *جيدة*",
+            'low_vol':   "😴 تقلب منخفض — الاستراتيجية الأصلية *ضعيفة* هنا",
+            'mixed':     "🌫️ سوق مختلط — الاستراتيجية الأصلية *عادية*",
+            'unknown':   "❓ نوع السوق غير واضح"
+        },
+        'king': {
+            'trending':  "🌊 السوق *ترندي* — King Strategy *ممتازة* 👑",
+            'ranging':   "↔️ السوق *متراوح* — King Strategy *متوسطة*",
+            'high_vol':  "⚡ تقلب عالي — King Strategy *جيدة*",
+            'low_vol':   "😴 تقلب منخفض — King Strategy *ضعيفة*",
+            'mixed':     "🌫️ سوق مختلط — King Strategy *عادية*",
+            'unknown':   "❓ نوع السوق غير واضح"
+        },
+        'smart': {
+            'trending':  "🌊 السوق *ترندي* — SMC Strategy *جيدة*",
+            'ranging':   "↔️ السوق *متراوح* — SMC Strategy *ضعيفة* هنا",
+            'high_vol':  "⚡ تقلب عالي — SMC Strategy *ممتازة* 🏆",
+            'low_vol':   "😴 تقلب منخفض — SMC Strategy *ضعيفة*",
+            'mixed':     "🌫️ سوق مختلط — SMC Strategy *عادية*",
+            'unknown':   "❓ نوع السوق غير واضح"
+        },
+        'pro': {
+            'trending':  "🌊 السوق *ترندي* — Pro Strategy *متوسطة*",
+            'ranging':   "↔️ السوق *متراوح* — Pro Strategy *ممتازة* 🔥",
+            'high_vol':  "⚡ تقلب عالي — Pro Strategy *متوسطة*",
+            'low_vol':   "😴 تقلب منخفض — Pro Strategy *ضعيفة*",
+            'mixed':     "🌫️ سوق مختلط — Pro Strategy *جيدة*",
+            'unknown':   "❓ نوع السوق غير واضح"
+        }
+    }
+    return badges.get(strategy_name, badges['original']).get(regime, "🌫️ سوق مختلط")
+
+
 CURRENCY_PAIRS = {
     'USD': ['EURUSD','GBPUSD','USDJPY','AUDUSD','USDCAD','USDCHF'],
     'EUR': ['EURUSD','EURJPY','EURGBP','EURAUD','EURCAD'],
@@ -492,51 +532,10 @@ CURRENCY_PAIRS = {
 
 # ========== FUNCIONES DE ALERTAS EN ÁRABE ==========
 
-def get_time_quality(strategy_name):
-    """تحديد جودة الوقت الحالي لكل استراتيجية"""
-    now = get_cairo_time()
-    hour = now.hour
-    minute = now.minute
-    current_minutes = hour * 60 + minute
-    
-    # تعريف الأوقات المثالية لكل استراتيجية
-    time_ranges = {
-        'original': {
-            'best': [(15*60, 18*60)],  # 15:00 - 18:00
-            'good': [(10*60, 14*60)]   # 10:00 - 14:00
-        },
-        'king': {
-            'best': [(10*60, 12*60)],  # 10:00 - 12:00
-            'good': [(15*60, 17*60)]   # 15:00 - 17:00
-        },
-        'smart': {
-            'best': [(11*60, 15*60)],  # 11:00 - 15:00
-            'good': [(16*60, 19*60)]   # 16:00 - 19:00
-        },
-        'pro': {
-            'best': [(15*60, 18*60)],  # 15:00 - 18:00
-            'good': [(10*60, 14*60)]   # 10:00 - 14:00
-        }
-    }
-    
-    ranges = time_ranges.get(strategy_name, {})
-    
-    # التحقق من الوقت المثالي
-    for start, end in ranges.get('best', []):
-        if start <= current_minutes <= end:
-            return "⭐ الأفضل"
-    
-    # التحقق من الوقت الجيد
-    for start, end in ranges.get('good', []):
-        if start <= current_minutes <= end:
-            return "🥈 جيد جداً"
-    
-    return "⏳ وقت عادي"
-
-def send_early_alert(pair, direction, signal_name, score, strategy_name):
+def send_early_alert(pair, direction, signal_name, score, strategy_name, regime="unknown"):
     """المرحلة 1: تنبيه مبكر (ثانية 270-280)"""
     da = "صعود (CALL)" if direction == "CALL" else "هبوط (PUT)"
-    time_quality = get_time_quality(strategy_name)
+    regime_badge = get_regime_badge(strategy_name, regime)
     msg = (
         f"⚠️ *تنبيه مبكر — {signal_name}*\n"
         f"الزوج: `{pair}` [5 دقائق]\n"
@@ -544,7 +543,8 @@ def send_early_alert(pair, direction, signal_name, score, strategy_name):
         f"📊 النقاط: *{score}/100*\n"
         f"⏱️ *صفقة قادمة خلال 20 ثانية...*\n"
         f"🔄 *جاري التحقق من الشروط النهائية...*\n"
-        f"🕐 *الوقت:* {time_quality}"
+        f"━━━━━━━━━━━━\n"
+        f"📍 {regime_badge}"
     )
     send_telegram_message(msg)
 
@@ -560,17 +560,10 @@ def send_cancelled_alert(pair, direction, reason, strategy_name):
     )
     send_telegram_message(msg)
 
-def send_final_signal(pair, direction, signal_name, score, duration_text, indicators, strategy_name):
+def send_final_signal(pair, direction, signal_name, score, duration_text, indicators, strategy_name, regime="unknown"):
     """المرحلة 3: الإشارة النهائية (قبل 7 ثواني)"""
     da = "صعود (CALL)" if direction == "CALL" else "هبوط (PUT)"
-    time_quality = get_time_quality(strategy_name)
-    
-    # ✅ منع تكرار الإشارة لنفس الزوج ونفس الاستراتيجية في نفس الشمعة
-    msg_hash = f"{pair}_{direction}_{strategy_name}_{int(get_iq_time()) // 300}"
-    with data_lock:
-        if msg_hash in state.sent_final_signals:
-            return None
-        state.sent_final_signals[msg_hash] = time.time()
+    regime_badge = get_regime_badge(strategy_name, regime)
     
     # اختيار الإيموجي حسب الاستراتيجية
     if strategy_name == 'original':
@@ -588,7 +581,7 @@ def send_final_signal(pair, direction, signal_name, score, duration_text, indica
         f"الاتجاه: *{da}*\n"
         f"⏱️ *المدة:* {duration_text}\n"
         f"📊 *المؤشرات:* {indicators}\n"
-        f"🕐 *الوقت:* {time_quality}\n"
+        f"📍 *حالة السوق:* {regime_badge}\n"
         f"⚡ *ادخل الآن في الشمعة القادمة!*"
     )
     send_telegram_message(msg)
@@ -2002,7 +1995,9 @@ def evaluate_signal_strength(direction, curr, prev, df, price, alma9, alma50,
         abs(roc) >= 0.020):
         return 2
     
-    return 0# ========== analyze_pair (Original Strategy - 3-Stage Arabic) ==========
+    return 0
+
+# ========== analyze_pair (Original Strategy - 3-Stage Arabic) ==========
 
 def analyze_pair(pair, timeframe="5m"):
     tf_seconds, duration_text = 300, "5 دقائق"
@@ -2010,6 +2005,8 @@ def analyze_pair(pair, timeframe="5m"):
     if df is None or len(df) < 55:
         logger.warning(f"⛔ {pair}: لا يوجد بيانات")
         return None
+
+    regime = detect_market_regime(pair)
 
     # ✅ FIX: استخدام آخر شمعة مقفولة (وليس المفتوحة)
     curr = df.iloc[-2]
@@ -2121,7 +2118,7 @@ def analyze_pair(pair, timeframe="5m"):
                     'alert_time': iq_now,
                     'strategy': 'original'
                 }
-                send_early_alert(pair, potential_direction, signal_name_ar, strength * 16, 'original')
+                send_early_alert(pair, potential_direction, signal_name_ar, strength * 16, 'original', regime=regime)
                 state.alerted_pairs[pair_key] = (potential_direction, iq_now)
         return None
 
@@ -2185,13 +2182,8 @@ def analyze_pair(pair, timeframe="5m"):
             indicators_str = f"ADX={adx:.1f} | BBW={bbw:.4f} | RSI={rsi:.1f}"
             final_signal = send_final_signal(
                 pair, potential_direction, signal_name_ar, strength * 16,
-                duration_text, indicators_str, 'original'
+                duration_text, indicators_str, 'original', regime=regime
             )
-
-            # ✅ منع تكرار الإشارة
-            if final_signal is None:
-                logger.info(f"⛔ {pair}: تم إرسالها مسبقاً (منع التكرار)")
-                return None
 
             with data_lock:
                 state.recent_signals[pair] = (get_iq_time(), potential_direction)
@@ -2250,6 +2242,8 @@ def analyze_pair_king(pair, timeframe="5m"):
     if df is None or len(df) < 60:
         logger.info(f"🛑 King {pair}: لا يوجد بيانات")
         return None
+
+    regime = detect_market_regime(pair)
 
     df = detect_swings(df, window=2)
     structure, last_sh_idx, last_sl_idx = get_market_structure(df, lookback=30)
@@ -2374,7 +2368,7 @@ def analyze_pair_king(pair, timeframe="5m"):
                     'alert_time': iq_now,
                     'strategy': 'king'
                 }
-                send_early_alert(pair, potential_direction, signal_name_ar, score, 'king')
+                send_early_alert(pair, potential_direction, signal_name_ar, score, 'king', regime=regime)
                 state.king_alerted_pairs[pair_key] = (potential_direction, iq_now)
         return None
 
@@ -2442,14 +2436,8 @@ def analyze_pair_king(pair, timeframe="5m"):
             indicators_str = f"Score={score}/100 | ADX={adx:.1f} | RSI={rsi:.1f}"
             final_signal = send_final_signal(
                 pair, potential_direction, signal_name_ar, score,
-                duration_text, indicators_str, 'king'
+                duration_text, indicators_str, 'king', regime=regime
             )
-            
-            # ✅ منع تكرار الإشارة
-            if final_signal is None:
-                logger.info(f"⛔ King {pair}: تم إرسالها مسبقاً (منع التكرار)")
-                return None
-                
             logger.info(f"👑 King {pair}: {signal_name_ar} تم الإرسال")
             return final_signal
         else:
@@ -2516,6 +2504,8 @@ def analyze_pair_smc(pair, timeframe="5m"):
     if df is None or len(df) < 80:
         logger.info(f"🛑 SMC {pair}: لا يوجد بيانات")
         return None
+
+    regime = detect_market_regime(pair)
 
     htf = get_higher_tf_trend(pair)
     mtf = get_king_htf_trend(pair)
@@ -2621,7 +2611,7 @@ def analyze_pair_smc(pair, timeframe="5m"):
                     'alert_time': iq_now,
                     'strategy': 'smart'
                 }
-                send_early_alert(pair, bias, name, score, 'smart')
+                send_early_alert(pair, bias, name, score, 'smart', regime=regime)
                 state.smart_alerted_pairs[pair_key] = iq_now
         return None
 
@@ -2701,14 +2691,8 @@ def analyze_pair_smc(pair, timeframe="5m"):
         indicators_str = f"Score={score}/100 | Factors: {conf_str}"
         final_signal = send_final_signal(
             pair, bias, name, score,
-            duration_text, indicators_str, 'smart'
+            duration_text, indicators_str, 'smart', regime=regime
         )
-        
-        # ✅ منع تكرار الإشارة
-        if final_signal is None:
-            logger.info(f"⛔ SMC {pair}: تم إرسالها مسبقاً (منع التكرار)")
-            return None
-            
         logger.info(f"🏆 SMC {pair}: {name} تم الإرسال")
         return final_signal
     else:
@@ -2731,6 +2715,8 @@ def analyze_pair_pro(pair, timeframe="5m"):
     if df is None or len(df) < 40:
         logger.info(f"🛑 Pro {pair}: لا يوجد بيانات")
         return None
+
+    regime = detect_market_regime(pair)
     
     df = detect_swings(df, window=2)
     structure, _, _ = get_market_structure(df, lookback=30)
@@ -2840,7 +2826,7 @@ def analyze_pair_pro(pair, timeframe="5m"):
                     'alert_time': iq_now,
                     'strategy': 'pro'
                 }
-                send_early_alert(pair, direction, name_ar, score, 'pro')
+                send_early_alert(pair, direction, name_ar, score, 'pro', regime=regime)
                 state.pa_alerted_pairs[pair] = iq_now
         return None
     
@@ -2914,17 +2900,8 @@ def analyze_pair_pro(pair, timeframe="5m"):
         indicators_str = f"Score={score}/100 | {factors_str}"
         final_signal = send_final_signal(
             pair, direction, name_ar, score,
-            duration_text, indicators_str, 'pro'
+            duration_text, indicators_str, 'pro', regime=regime
         )
-        
-        # ✅ منع تكرار الإشارة
-        if final_signal is None:
-            logger.info(f"⛔ Pro {pair}: تم إرسالها مسبقاً (منع التكرار)")
-            return None
-        
-        # ✅ التعديل الأهم: منع إرجاع الإشارة مرة تانية
-        return None
-        
         logger.info(f"🔥 Pro {pair}: {name_ar} تم الإرسال")
         return final_signal
     else:
@@ -2976,19 +2953,22 @@ def check_trade_results():
                     logger.warning("⏳ " + pair + ": شموع غير كافية للتقييم، هيتم المحاولة في الدورة الجاية")
                     continue
 
-                # ✅ نحدد الشمعة الصحيحة بالـ timestamp (تم التعديل)
+                # ✅ نحدد الشمعة الصحيحة بالـ timestamp
                 target_candle = None
                 for c in reversed(candles):
                     candle_to = c.get('to', 0)
-                    # نجيب الشمعة اللي انتهت عند expire_time أو بعدها بشوية
-                    if candle_to >= trade['expire_time'] - 10:  # -10 ثواني تحمل
+                    candle_from = c.get('from', 0)
+
+                    # الشمعة اللي انتهت عند expire_time أو قبله بشوية
+                    # expire_time = وقت الدخول + 300 (نهاية الشمعة المقصودة)
+                    if candle_to <= trade['expire_time'] + 5:  # +5 ثواني تحمل
                         target_candle = c
                         break
 
-                # لو ملقناش الشمعة، نستخدم آخر شمعة مقفولة
+                # لو ملقناش الشمعة بالـ timestamp، نستخدم الشمعة قبل الأخيرة كاحتياط
                 if target_candle is None:
-                    target_candle = candles[-1]
-                    logger.warning("⚠️ " + pair + ": استخدام آخر شمعة مقفولة")
+                    target_candle = candles[-2] if len(candles) >= 2 else candles[-1]
+                    logger.warning("⚠️ " + pair + ": استخدام fallback للشمعة (مش متطابقة بالـ timestamp)")
 
                 fp = target_candle['close']
                 candle_to = target_candle.get('to', 0)
@@ -3006,10 +2986,10 @@ def check_trade_results():
                 # ✅ حساب النتيجة
                 if direction == "CALL":
                     is_win = fp > ep
-                    is_tie = abs(fp - ep) < (ep * 0.0005)
+                    is_tie = abs(fp - ep) < (ep * 0.00005)
                 else:  # PUT
                     is_win = fp < ep
-                    is_tie = abs(fp - ep) < (ep * 0.0005)
+                    is_tie = abs(fp - ep) < (ep * 0.00005)
 
                 # ✅ Verification إضافي: لو الفرق صغير جداً نتأكد
                 diff_pct = abs(fp - ep) / ep * 100 if ep != 0 else 0
@@ -3305,8 +3285,6 @@ def cleanup_memory():
         state.king_recent_signals = {k:v for k,v in state.king_recent_signals.items() if now - v[0] < 1200}
         state.smart_sent_signals = {k:v for k,v in state.smart_sent_signals.items() if now - v < 600}
         state.pa_sent_signals = {k:v for k,v in state.pa_sent_signals.items() if now - v < 600}
-        # ✅ تنظيف الإشارات النهائية المؤقتة
-        state.sent_final_signals = {k:v for k,v in state.sent_final_signals.items() if now - v < 600}
         # pa_alerted_pairs: values are now timestamps (iq_now), not bool
         state.pa_alerted_pairs = {k:v for k,v in state.pa_alerted_pairs.items() if isinstance(v, (int, float)) and now - v < 600}
         # pending_alerts: values are dicts with 'alert_time' key
