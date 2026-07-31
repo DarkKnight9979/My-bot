@@ -171,6 +171,8 @@ class BotState:
         self.king_htf_cache = {}
         # ===== نظام التنبيهات الجديد (3 مراحل) =====
         self.pending_alerts = {}
+        # ===== منع تكرار الإشارات النهائية =====
+        self.sent_final_signals = {}
 
 state = BotState()
 
@@ -532,9 +534,51 @@ CURRENCY_PAIRS = {
 
 # ========== FUNCIONES DE ALERTAS EN ÁRABE ==========
 
+def get_time_quality(strategy_name):
+    """تحديد جودة الوقت الحالي لكل استراتيجية"""
+    now = get_cairo_time()
+    hour = now.hour
+    minute = now.minute
+    current_minutes = hour * 60 + minute
+    
+    # تعريف الأوقات المثالية لكل استراتيجية
+    time_ranges = {
+        'original': {
+            'best': [(15*60, 18*60)],  # 15:00 - 18:00
+            'good': [(10*60, 14*60)]   # 10:00 - 14:00
+        },
+        'king': {
+            'best': [(10*60, 12*60)],  # 10:00 - 12:00
+            'good': [(15*60, 17*60)]   # 15:00 - 17:00
+        },
+        'smart': {
+            'best': [(11*60, 15*60)],  # 11:00 - 15:00
+            'good': [(16*60, 19*60)]   # 16:00 - 19:00
+        },
+        'pro': {
+            'best': [(15*60, 18*60)],  # 15:00 - 18:00
+            'good': [(10*60, 14*60)]   # 10:00 - 14:00
+        }
+    }
+    
+    ranges = time_ranges.get(strategy_name, {})
+    
+    # التحقق من الوقت المثالي
+    for start, end in ranges.get('best', []):
+        if start <= current_minutes <= end:
+            return "⭐ الأفضل"
+    
+    # التحقق من الوقت الجيد
+    for start, end in ranges.get('good', []):
+        if start <= current_minutes <= end:
+            return "🥈 جيد جداً"
+    
+    return "⏳ وقت عادي"
+
 def send_early_alert(pair, direction, signal_name, score, strategy_name, regime="unknown"):
     """المرحلة 1: تنبيه مبكر (ثانية 270-280)"""
     da = "صعود (CALL)" if direction == "CALL" else "هبوط (PUT)"
+    time_quality = get_time_quality(strategy_name)
     regime_badge = get_regime_badge(strategy_name, regime)
     msg = (
         f"⚠️ *تنبيه مبكر — {signal_name}*\n"
@@ -544,6 +588,7 @@ def send_early_alert(pair, direction, signal_name, score, strategy_name, regime=
         f"⏱️ *صفقة قادمة خلال 20 ثانية...*\n"
         f"🔄 *جاري التحقق من الشروط النهائية...*\n"
         f"━━━━━━━━━━━━\n"
+        f"🕐 *الوقت:* {time_quality}\n"
         f"📍 {regime_badge}"
     )
     send_telegram_message(msg)
@@ -563,7 +608,15 @@ def send_cancelled_alert(pair, direction, reason, strategy_name):
 def send_final_signal(pair, direction, signal_name, score, duration_text, indicators, strategy_name, regime="unknown"):
     """المرحلة 3: الإشارة النهائية (قبل 7 ثواني)"""
     da = "صعود (CALL)" if direction == "CALL" else "هبوط (PUT)"
+    time_quality = get_time_quality(strategy_name)
     regime_badge = get_regime_badge(strategy_name, regime)
+    
+    # ✅ منع تكرار الإشارة لنفس الزوج ونفس الاستراتيجية في نفس الشمعة
+    msg_hash = f"{pair}_{direction}_{strategy_name}_{int(get_iq_time()) // 300}"
+    with data_lock:
+        if msg_hash in state.sent_final_signals:
+            return None
+        state.sent_final_signals[msg_hash] = time.time()
     
     # اختيار الإيموجي حسب الاستراتيجية
     if strategy_name == 'original':
@@ -581,6 +634,7 @@ def send_final_signal(pair, direction, signal_name, score, duration_text, indica
         f"الاتجاه: *{da}*\n"
         f"⏱️ *المدة:* {duration_text}\n"
         f"📊 *المؤشرات:* {indicators}\n"
+        f"🕐 *الوقت:* {time_quality}\n"
         f"📍 *حالة السوق:* {regime_badge}\n"
         f"⚡ *ادخل الآن في الشمعة القادمة!*"
     )
@@ -2185,6 +2239,11 @@ def analyze_pair(pair, timeframe="5m"):
                 duration_text, indicators_str, 'original', regime=regime
             )
 
+            # ✅ منع تكرار الإشارة
+            if final_signal is None:
+                logger.info(f"⛔ {pair}: تم إرسالها مسبقاً (منع التكرار)")
+                return None
+
             with data_lock:
                 state.recent_signals[pair] = (get_iq_time(), potential_direction)
 
@@ -2438,6 +2497,12 @@ def analyze_pair_king(pair, timeframe="5m"):
                 pair, potential_direction, signal_name_ar, score,
                 duration_text, indicators_str, 'king', regime=regime
             )
+            
+            # ✅ منع تكرار الإشارة
+            if final_signal is None:
+                logger.info(f"⛔ King {pair}: تم إرسالها مسبقاً (منع التكرار)")
+                return None
+                
             logger.info(f"👑 King {pair}: {signal_name_ar} تم الإرسال")
             return final_signal
         else:
@@ -2693,6 +2758,12 @@ def analyze_pair_smc(pair, timeframe="5m"):
             pair, bias, name, score,
             duration_text, indicators_str, 'smart', regime=regime
         )
+        
+        # ✅ منع تكرار الإشارة
+        if final_signal is None:
+            logger.info(f"⛔ SMC {pair}: تم إرسالها مسبقاً (منع التكرار)")
+            return None
+            
         logger.info(f"🏆 SMC {pair}: {name} تم الإرسال")
         return final_signal
     else:
@@ -2902,6 +2973,12 @@ def analyze_pair_pro(pair, timeframe="5m"):
             pair, direction, name_ar, score,
             duration_text, indicators_str, 'pro', regime=regime
         )
+        
+        # ✅ منع تكرار الإشارة
+        if final_signal is None:
+            logger.info(f"⛔ Pro {pair}: تم إرسالها مسبقاً (منع التكرار)")
+            return None
+        
         logger.info(f"🔥 Pro {pair}: {name_ar} تم الإرسال")
         return final_signal
     else:
@@ -3285,6 +3362,8 @@ def cleanup_memory():
         state.king_recent_signals = {k:v for k,v in state.king_recent_signals.items() if now - v[0] < 1200}
         state.smart_sent_signals = {k:v for k,v in state.smart_sent_signals.items() if now - v < 600}
         state.pa_sent_signals = {k:v for k,v in state.pa_sent_signals.items() if now - v < 600}
+        # ✅ تنظيف الإشارات النهائية المؤقتة
+        state.sent_final_signals = {k:v for k,v in state.sent_final_signals.items() if now - v < 600}
         # pa_alerted_pairs: values are now timestamps (iq_now), not bool
         state.pa_alerted_pairs = {k:v for k,v in state.pa_alerted_pairs.items() if isinstance(v, (int, float)) and now - v < 600}
         # pending_alerts: values are dicts with 'alert_time' key
@@ -3464,7 +3543,7 @@ def run_bot():
                         for pair, signal in results:
                             if signal and not martingale_found:
                                 logger.info(f"✅ تم العثور على مارتينجيل: {pair}")
-                                send_telegram_message(signal)
+                                # send_telegram_message(signal)  # تم إزالة الإرسال المكرر
                                 martingale_found = True
                                 with data_lock:
                                     state.martingale_queue.clear()
@@ -3474,7 +3553,7 @@ def run_bot():
                         for pair, signal in results:
                             if signal:
                                 logger.info(f"✅ إشارة: {pair}")
-                                send_telegram_message(signal)
+                                # send_telegram_message(signal)  # تم إزالة الإرسال المكرر
 
                 # ========== KING ==========
                 if "king" in strategies_to_run:
@@ -3482,7 +3561,7 @@ def run_bot():
                     for pair, signal in king_results:
                         if signal:
                             logger.info(f"👑 King Signal: {pair}")
-                            send_telegram_message(signal)
+                            # send_telegram_message(signal)  # تم إزالة الإرسال المكرر
 
                 # ========== SMC ==========
                 if "smart" in strategies_to_run:
@@ -3490,7 +3569,7 @@ def run_bot():
                     for pair, signal in smc_results:
                         if signal:
                             logger.info(f"🏆 SMC Signal: {pair}")
-                            send_telegram_message(signal)
+                            # send_telegram_message(signal)  # تم إزالة الإرسال المكرر
 
                 # ========== PRO ==========
                 if "pro" in strategies_to_run:
@@ -3498,7 +3577,7 @@ def run_bot():
                     for pair, signal in pro_results:
                         if signal:
                             logger.info(f"🔥 Pro Signal: {pair}")
-                            send_telegram_message(signal)
+                            # send_telegram_message(signal)  # تم إزالة الإرسال المكرر
 
                 check_trade_results()
 
