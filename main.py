@@ -20,7 +20,7 @@ from collections import defaultdict
 # VERSION FINAL - 3-STAGE ALERT SYSTEM (ARABIC)
 # ============================================================
 
-VERSION = "7.6-FINAL-FIXED-CANDLE"
+VERSION = "7.7-FINAL-FIXED-CANDLE-DEDUP"
 
 # ========== CONSTANTS ==========
 CAIRO_TZ = pytz.timezone('Africa/Cairo')
@@ -521,8 +521,8 @@ def send_final_signal(pair, direction, signal_name, score, duration_text, indica
     """المرحلة 3: الإشارة النهائية (قبل 7 ثواني)"""
     da = "صعود (CALL)" if direction == "CALL" else "هبوط (PUT)"
     
-    # منع التكرار في نفس الشمعة
-    msg_hash = f"{pair}_{direction}_{int(get_iq_time()) // 300}"
+    # ✅ منع تكرار الإشارة لنفس الزوج ونفس الاستراتيجية في نفس الشمعة
+    msg_hash = f"{pair}_{direction}_{strategy_name}_{int(get_iq_time()) // 300}"
     with data_lock:
         if msg_hash in state.sent_final_signals:
             return None
@@ -2145,6 +2145,7 @@ def analyze_pair(pair, timeframe="5m"):
                 duration_text, indicators_str, 'original'
             )
 
+            # ✅ منع تكرار الإشارة
             if final_signal is None:
                 logger.info(f"⛔ {pair}: تم إرسالها مسبقاً (منع التكرار)")
                 return None
@@ -2401,6 +2402,7 @@ def analyze_pair_king(pair, timeframe="5m"):
                 duration_text, indicators_str, 'king'
             )
             
+            # ✅ منع تكرار الإشارة
             if final_signal is None:
                 logger.info(f"⛔ King {pair}: تم إرسالها مسبقاً (منع التكرار)")
                 return None
@@ -2659,10 +2661,10 @@ def analyze_pair_smc(pair, timeframe="5m"):
             duration_text, indicators_str, 'smart'
         )
         
+        # ✅ منع تكرار الإشارة
         if final_signal is None:
             logger.info(f"⛔ SMC {pair}: تم إرسالها مسبقاً (منع التكرار)")
-            return None
-            
+            return None            
         logger.info(f"🏆 SMC {pair}: {name} تم الإرسال")
         return final_signal
     else:
@@ -2871,6 +2873,7 @@ def analyze_pair_pro(pair, timeframe="5m"):
             duration_text, indicators_str, 'pro'
         )
         
+        # ✅ منع تكرار الإشارة
         if final_signal is None:
             logger.info(f"⛔ Pro {pair}: تم إرسالها مسبقاً (منع التكرار)")
             return None
@@ -3255,7 +3258,7 @@ def cleanup_memory():
         state.king_recent_signals = {k:v for k,v in state.king_recent_signals.items() if now - v[0] < 1200}
         state.smart_sent_signals = {k:v for k,v in state.smart_sent_signals.items() if now - v < 600}
         state.pa_sent_signals = {k:v for k,v in state.pa_sent_signals.items() if now - v < 600}
-        # منع تكرار الإشارات النهائية
+        # ✅ تنظيف الإشارات النهائية المؤقتة
         state.sent_final_signals = {k:v for k,v in state.sent_final_signals.items() if now - v < 600}
         # pa_alerted_pairs: values are now timestamps (iq_now), not bool
         state.pa_alerted_pairs = {k:v for k,v in state.pa_alerted_pairs.items() if isinstance(v, (int, float)) and now - v < 600}
