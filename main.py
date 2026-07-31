@@ -3088,15 +3088,24 @@ def check_trade_results():
                 elif strategy == 'pro':
                     with data_lock:
                         state.pro_stats[pair]['total'] += 1
-                        state.pro_stats[pair]['win' if is_win else 'loss'] += 1
+                        if is_tie:
+                            state.pro_stats[pair]['win'] += 0.5
+                        else:
+                            state.pro_stats[pair]['win' if is_win else 'loss'] += 1
                 elif is_king:
                     with data_lock:
                         state.king_stats[pair]['total'] += 1
-                        state.king_stats[pair]['win' if is_win else 'loss'] += 1
+                        if is_tie:
+                            state.king_stats[pair]['win'] += 0.5
+                        else:
+                            state.king_stats[pair]['win' if is_win else 'loss'] += 1
                 else:
                     with data_lock:
                         state.stats[pair]['total'] += 1
-                        state.stats[pair]['win' if is_win else 'loss'] += 1
+                        if is_tie:
+                            state.stats[pair]['win'] += 0.5
+                        else:
+                            state.stats[pair]['win' if is_win else 'loss'] += 1
 
                 # ===== تسجيل في الملف =====
                 try:
