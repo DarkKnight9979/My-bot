@@ -20,7 +20,7 @@ from collections import defaultdict
 # VERSION FINAL - 3-STAGE ALERT SYSTEM (ARABIC)
 # ============================================================
 
-VERSION = "7.7-FINAL-FIXED-CANDLE-DEDUP"
+VERSION = "7.8-FINAL-FIXED-DEDUP-TIME"
 
 # ========== CONSTANTS ==========
 CAIRO_TZ = pytz.timezone('Africa/Cairo')
@@ -492,16 +492,59 @@ CURRENCY_PAIRS = {
 
 # ========== FUNCIONES DE ALERTAS EN ÁRABE ==========
 
+def get_time_quality(strategy_name):
+    """تحديد جودة الوقت الحالي لكل استراتيجية"""
+    now = get_cairo_time()
+    hour = now.hour
+    minute = now.minute
+    current_minutes = hour * 60 + minute
+    
+    # تعريف الأوقات المثالية لكل استراتيجية
+    time_ranges = {
+        'original': {
+            'best': [(15*60, 18*60)],  # 15:00 - 18:00
+            'good': [(10*60, 14*60)]   # 10:00 - 14:00
+        },
+        'king': {
+            'best': [(10*60, 12*60)],  # 10:00 - 12:00
+            'good': [(15*60, 17*60)]   # 15:00 - 17:00
+        },
+        'smart': {
+            'best': [(11*60, 15*60)],  # 11:00 - 15:00
+            'good': [(16*60, 19*60)]   # 16:00 - 19:00
+        },
+        'pro': {
+            'best': [(15*60, 18*60)],  # 15:00 - 18:00
+            'good': [(10*60, 14*60)]   # 10:00 - 14:00
+        }
+    }
+    
+    ranges = time_ranges.get(strategy_name, {})
+    
+    # التحقق من الوقت المثالي
+    for start, end in ranges.get('best', []):
+        if start <= current_minutes <= end:
+            return "⭐ الأفضل"
+    
+    # التحقق من الوقت الجيد
+    for start, end in ranges.get('good', []):
+        if start <= current_minutes <= end:
+            return "🥈 جيد جداً"
+    
+    return "⏳ وقت عادي"
+
 def send_early_alert(pair, direction, signal_name, score, strategy_name):
     """المرحلة 1: تنبيه مبكر (ثانية 270-280)"""
     da = "صعود (CALL)" if direction == "CALL" else "هبوط (PUT)"
+    time_quality = get_time_quality(strategy_name)
     msg = (
         f"⚠️ *تنبيه مبكر — {signal_name}*\n"
         f"الزوج: `{pair}` [5 دقائق]\n"
         f"الاتجاه: *{da}*\n"
         f"📊 النقاط: *{score}/100*\n"
         f"⏱️ *صفقة قادمة خلال 20 ثانية...*\n"
-        f"🔄 *جاري التحقق من الشروط النهائية...*"
+        f"🔄 *جاري التحقق من الشروط النهائية...*\n"
+        f"🕐 *الوقت:* {time_quality}"
     )
     send_telegram_message(msg)
 
@@ -520,6 +563,7 @@ def send_cancelled_alert(pair, direction, reason, strategy_name):
 def send_final_signal(pair, direction, signal_name, score, duration_text, indicators, strategy_name):
     """المرحلة 3: الإشارة النهائية (قبل 7 ثواني)"""
     da = "صعود (CALL)" if direction == "CALL" else "هبوط (PUT)"
+    time_quality = get_time_quality(strategy_name)
     
     # ✅ منع تكرار الإشارة لنفس الزوج ونفس الاستراتيجية في نفس الشمعة
     msg_hash = f"{pair}_{direction}_{strategy_name}_{int(get_iq_time()) // 300}"
@@ -544,6 +588,7 @@ def send_final_signal(pair, direction, signal_name, score, duration_text, indica
         f"الاتجاه: *{da}*\n"
         f"⏱️ *المدة:* {duration_text}\n"
         f"📊 *المؤشرات:* {indicators}\n"
+        f"🕐 *الوقت:* {time_quality}\n"
         f"⚡ *ادخل الآن في الشمعة القادمة!*"
     )
     send_telegram_message(msg)
@@ -1957,9 +2002,7 @@ def evaluate_signal_strength(direction, curr, prev, df, price, alma9, alma50,
         abs(roc) >= 0.020):
         return 2
     
-    return 0
-
-# ========== analyze_pair (Original Strategy - 3-Stage Arabic) ==========
+    return 0# ========== analyze_pair (Original Strategy - 3-Stage Arabic) ==========
 
 def analyze_pair(pair, timeframe="5m"):
     tf_seconds, duration_text = 300, "5 دقائق"
@@ -2959,10 +3002,10 @@ def check_trade_results():
                 # ✅ حساب النتيجة
                 if direction == "CALL":
                     is_win = fp > ep
-                    is_tie = abs(fp - ep) < (ep * 0.00005)
+                    is_tie = abs(fp - ep) < (ep * 0.0005)
                 else:  # PUT
                     is_win = fp < ep
-                    is_tie = abs(fp - ep) < (ep * 0.00005)
+                    is_tie = abs(fp - ep) < (ep * 0.0005)
 
                 # ✅ Verification إضافي: لو الفرق صغير جداً نتأكد
                 diff_pct = abs(fp - ep) / ep * 100 if ep != 0 else 0
