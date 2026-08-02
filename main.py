@@ -17,10 +17,10 @@ from iqoptionapi.stable_api import IQ_Option
 from collections import defaultdict, deque
 
 # ============================================================
-# VERSION FINAL - 3-STAGE ALERT SYSTEM (ARABIC)
+# VERSION FINAL - 3-STAGE ALERT SYSTEM (ARABIC) + HTF ENHANCED
 # ============================================================
 
-VERSION = "7.6-FINAL-FIXED-CANDLE"
+VERSION = "7.6-FINAL-FIXED-CANDLE-HTFP"
 
 # ========== CONSTANTS ==========
 CAIRO_TZ = pytz.timezone('Africa/Cairo')
@@ -51,6 +51,43 @@ ADAPTIVE_THRESHOLD_WINDOW = 250
 ADAPTIVE_THRESHOLD_MIN = 80
 ADAPTIVE_THRESHOLD_MAX = 100
 SETTINGS_CACHE_TTL = 300
+
+# ========== HTF & PAIR-SPECIFIC CONFIGURATION ==========
+TIMEFRAME_4H = 14400
+HTF_REGIME_CACHE_TTL = 900
+
+# Pair-specific volatility and ADX thresholds (based on average daily ranges)
+PAIR_THRESHOLDS = {
+    # Major pairs - lower volatility
+    "EURUSD": {"adx_trending": 22, "adx_ranging": 16, "atr_min_pct": 0.00025, "atr_max_pct": 0.003, "volatility_ideal_low": 0.0008, "volatility_ideal_high": 0.003},
+    "GBPUSD": {"adx_trending": 22, "adx_ranging": 16, "atr_min_pct": 0.00030, "atr_max_pct": 0.004, "volatility_ideal_low": 0.0010, "volatility_ideal_high": 0.004},
+    "USDJPY": {"adx_trending": 22, "adx_ranging": 16, "atr_min_pct": 0.00025, "atr_max_pct": 0.003, "volatility_ideal_low": 0.0008, "volatility_ideal_high": 0.003},
+    "USDCHF": {"adx_trending": 22, "adx_ranging": 16, "atr_min_pct": 0.00025, "atr_max_pct": 0.003, "volatility_ideal_low": 0.0008, "volatility_ideal_high": 0.003},
+    "AUDUSD": {"adx_trending": 22, "adx_ranging": 16, "atr_min_pct": 0.00030, "atr_max_pct": 0.004, "volatility_ideal_low": 0.0010, "volatility_ideal_high": 0.004},
+    "USDCAD": {"adx_trending": 22, "adx_ranging": 16, "atr_min_pct": 0.00025, "atr_max_pct": 0.003, "volatility_ideal_low": 0.0008, "volatility_ideal_high": 0.003},
+    # Cross pairs - medium volatility
+    "EURJPY": {"adx_trending": 24, "adx_ranging": 18, "atr_min_pct": 0.00040, "atr_max_pct": 0.005, "volatility_ideal_low": 0.0015, "volatility_ideal_high": 0.005},
+    "EURGBP": {"adx_trending": 22, "adx_ranging": 16, "atr_min_pct": 0.00025, "atr_max_pct": 0.003, "volatility_ideal_low": 0.0008, "volatility_ideal_high": 0.003},
+    "GBPJPY": {"adx_trending": 26, "adx_ranging": 20, "atr_min_pct": 0.00050, "atr_max_pct": 0.006, "volatility_ideal_low": 0.0020, "volatility_ideal_high": 0.006},
+    "AUDJPY": {"adx_trending": 24, "adx_ranging": 18, "atr_min_pct": 0.00040, "atr_max_pct": 0.005, "volatility_ideal_low": 0.0015, "volatility_ideal_high": 0.005},
+    "CADJPY": {"adx_trending": 24, "adx_ranging": 18, "atr_min_pct": 0.00040, "atr_max_pct": 0.005, "volatility_ideal_low": 0.0015, "volatility_ideal_high": 0.005},
+    "EURAUD": {"adx_trending": 24, "adx_ranging": 18, "atr_min_pct": 0.00035, "atr_max_pct": 0.004, "volatility_ideal_low": 0.0012, "volatility_ideal_high": 0.004},
+    "EURCAD": {"adx_trending": 24, "adx_ranging": 18, "atr_min_pct": 0.00035, "atr_max_pct": 0.004, "volatility_ideal_low": 0.0012, "volatility_ideal_high": 0.004},
+    "AUDCAD": {"adx_trending": 22, "adx_ranging": 16, "atr_min_pct": 0.00030, "atr_max_pct": 0.004, "volatility_ideal_low": 0.0010, "volatility_ideal_high": 0.004},
+    # OTC pairs - higher volatility
+    "EURUSD-OTC": {"adx_trending": 26, "adx_ranging": 20, "atr_min_pct": 0.00050, "atr_max_pct": 0.006, "volatility_ideal_low": 0.0015, "volatility_ideal_high": 0.005},
+    "GBPUSD-OTC": {"adx_trending": 26, "adx_ranging": 20, "atr_min_pct": 0.00060, "atr_max_pct": 0.007, "volatility_ideal_low": 0.0020, "volatility_ideal_high": 0.006},
+    "USDJPY-OTC": {"adx_trending": 26, "adx_ranging": 20, "atr_min_pct": 0.00050, "atr_max_pct": 0.006, "volatility_ideal_low": 0.0015, "volatility_ideal_high": 0.005},
+    "USDCHF-OTC": {"adx_trending": 26, "adx_ranging": 20, "atr_min_pct": 0.00050, "atr_max_pct": 0.006, "volatility_ideal_low": 0.0015, "volatility_ideal_high": 0.005},
+    "EURJPY-OTC": {"adx_trending": 28, "adx_ranging": 22, "atr_min_pct": 0.00070, "atr_max_pct": 0.008, "volatility_ideal_low": 0.0025, "volatility_ideal_high": 0.007},
+    "EURGBP-OTC": {"adx_trending": 26, "adx_ranging": 20, "atr_min_pct": 0.00050, "atr_max_pct": 0.006, "volatility_ideal_low": 0.0015, "volatility_ideal_high": 0.005},
+    "AUDCAD-OTC": {"adx_trending": 26, "adx_ranging": 20, "atr_min_pct": 0.00060, "atr_max_pct": 0.007, "volatility_ideal_low": 0.0020, "volatility_ideal_high": 0.006},
+    "GBPJPY-OTC": {"adx_trending": 30, "adx_ranging": 24, "atr_min_pct": 0.00080, "atr_max_pct": 0.010, "volatility_ideal_low": 0.0030, "volatility_ideal_high": 0.008},
+}
+
+def get_pair_thresholds(pair):
+    """Get pair-specific thresholds, fallback to EURUSD defaults"""
+    return PAIR_THRESHOLDS.get(pair, PAIR_THRESHOLDS.get("EURUSD"))
 
 # ========== QUANTUM CONFIGURATION ==========
 QUANTUM_CONFIG = {
@@ -1444,28 +1481,59 @@ def format_monte_carlo_summary(results_dict):
     msg += "━━━━━━━━━━━━━━━━━━━━"
     return msg
 
-# ========== MARKET REGIME ==========
+# ========== HTF MARKET ANALYSIS (Higher Timeframe) - NEW ==========
 
-def detect_market_regime(pair, tf=300):
-    key = f"regime_{pair}"
+def get_htf_market_regime(pair):
+    """
+    Analyze market regime on 1H timeframe for higher accuracy.
+    Returns: regime, trend_direction, structure_valid
+    """
+    key = f"htf_regime_{pair}"
     now = get_iq_time()
     with data_lock:
-        if key in state.regime_cache and now - state.regime_cache[key][1] < REGIME_CACHE_TTL:
+        if key in state.regime_cache and now - state.regime_cache[key][1] < HTF_REGIME_CACHE_TTL:
             return state.regime_cache[key][0]
+
     try:
-        df = get_cached_df_king(pair, tf, 80)
-        if df is None or len(df) < 30:
-            return "unknown"
-        df['ALMA_20'] = calculate_alma(df['Close'], 20, 0.85, 6)
-        df['ALMA_80'] = calculate_alma(df['Close'], 80, 0.85, 6)
-        atr_series = calculate_atr_series(df, 14)
+        candles = get_cached_candles(pair, TIMEFRAME_1H, 50, max_age=300)
+        if not candles or len(candles) < 30:
+            return {"regime": "unknown", "trend": None, "structure": "unknown", "confidence": 0}
+
+        df_h = pd.DataFrame(candles)
+        df_h.rename(columns={'open':'Open','max':'High','min':'Low','close':'Close','volume':'Volume'}, inplace=True)
+
+        # Calculate HTF indicators
+        df_h['ALMA_9'] = calculate_alma(df_h['Close'], 9, 0.85, 6)
+        df_h['ALMA_50'] = calculate_alma(df_h['Close'], 50, 0.85, 6)
+        atr_series = calculate_atr_series(df_h, 14)
         atr = atr_series.iloc[-1]
         atr_avg = atr_series.tail(20).mean()
-        adx, _, _ = calculate_adx(df, 14)
-        bbw = bollinger_bandwidth(df, 20)
-        if adx >= 25 and atr > atr_avg * 1.2:
+        adx, plus_di, minus_di = calculate_adx(df_h, 14)
+        bbw = bollinger_bandwidth(df_h, 20)
+
+        # Detect HTF market structure (Higher Highs / Lower Lows)
+        df_h = detect_swings(df_h, window=2)
+        structure, _, _ = get_market_structure(df_h, lookback=30)
+
+        # Determine trend direction from HTF
+        curr_h = df_h.iloc[-1]
+        prev_h = df_h.iloc[-2]
+        if curr_h['ALMA_9'] > curr_h['ALMA_50'] and prev_h['ALMA_9'] > prev_h['ALMA_50']:
+            trend_dir = "CALL"
+        elif curr_h['ALMA_9'] < curr_h['ALMA_50'] and prev_h['ALMA_9'] < prev_h['ALMA_50']:
+            trend_dir = "PUT"
+        else:
+            trend_dir = None
+
+        # Get pair-specific thresholds
+        thresholds = get_pair_thresholds(pair)
+        adx_trend = thresholds["adx_trending"]
+        adx_range = thresholds["adx_ranging"]
+
+        # Determine regime with pair-specific thresholds
+        if adx >= adx_trend and atr > atr_avg * 1.2:
             regime = "trending"
-        elif adx < 18 and bbw < 0.001:
+        elif adx < adx_range and bbw < 0.001:
             regime = "ranging"
         elif atr > atr_avg * 1.8:
             regime = "high_vol"
@@ -1473,623 +1541,181 @@ def detect_market_regime(pair, tf=300):
             regime = "low_vol"
         else:
             regime = "mixed"
+
+        # Calculate confidence based on how clear the signals are
+        confidence = 50
+        if structure in ["BULLISH", "BEARISH"]:
+            confidence += 20
+        if adx >= adx_trend or adx < adx_range:
+            confidence += 15
+        if trend_dir is not None:
+            confidence += 15
+
+        result = {
+            "regime": regime,
+            "trend": trend_dir,
+            "structure": structure,
+            "confidence": min(confidence, 100),
+            "adx": float(adx),
+            "atr": float(atr),
+            "bbw": float(bbw)
+        }
+
         with data_lock:
-            state.regime_cache[key] = (regime, now)
-        return regime
+            state.regime_cache[key] = (result, now)
+
+        return result
+
+    except Exception as e:
+        logger.error(f"خطأ في تحليل HTF لـ {pair}: {e}")
+        return {"regime": "unknown", "trend": None, "structure": "unknown", "confidence": 0}
+
+def get_htf_trend_direction(pair):
+    """Get confirmed trend direction from 1H timeframe with structure validation."""
+    htf = get_htf_market_regime(pair)
+    return htf.get("trend"), htf.get("structure"), htf.get("confidence")
+
+def detect_htf_market_structure(pair):
+    """
+    Detect Higher Highs / Lower Lows structure on 1H timeframe.
+    Returns: structure_type, strength_score
+    """
+    try:
+        candles = get_cached_candles(pair, TIMEFRAME_1H, 100, max_age=300)
+        if not candles or len(candles) < 50:
+            return "unknown", 0
+
+        df_h = pd.DataFrame(candles)
+        df_h.rename(columns={'open':'Open','max':'High','min':'Low','close':'Close'}, inplace=True)
+        df_h = detect_swings(df_h, window=3)
+
+        recent = df_h.tail(60)
+        sh_idx = recent[recent['is_swing_high']].index.tolist()
+        sl_idx = recent[recent['is_swing_low']].index.tolist()
+
+        if len(sh_idx) < 3 or len(sl_idx) < 3:
+            return "neutral", 0
+
+        # Check for Higher Highs + Higher Lows (Bullish)
+        hh_count = 0
+        hl_count = 0
+        for i in range(1, min(4, len(sh_idx))):
+            if df_h.loc[sh_idx[-i], 'High'] > df_h.loc[sh_idx[-(i+1)], 'High']:
+                hh_count += 1
+        for i in range(1, min(4, len(sl_idx))):
+            if df_h.loc[sl_idx[-i], 'Low'] > df_h.loc[sl_idx[-(i+1)], 'Low']:
+                hl_count += 1
+
+        # Check for Lower Highs + Lower Lows (Bearish)
+        lh_count = 0
+        ll_count = 0
+        for i in range(1, min(4, len(sh_idx))):
+            if df_h.loc[sh_idx[-i], 'High'] < df_h.loc[sh_idx[-(i+1)], 'High']:
+                lh_count += 1
+        for i in range(1, min(4, len(sl_idx))):
+            if df_h.loc[sl_idx[-i], 'Low'] < df_h.loc[sl_idx[-(i+1)], 'Low']:
+                ll_count += 1
+
+        if hh_count >= 2 and hl_count >= 2:
+            strength = (hh_count + hl_count) * 25
+            return "BULLISH", min(strength, 100)
+        elif lh_count >= 2 and ll_count >= 2:
+            strength = (lh_count + ll_count) * 25
+            return "BEARISH", min(strength, 100)
+        else:
+            return "mixed", 30
+
+    except Exception as e:
+        logger.error(f"خطأ في تحليل HTF Structure لـ {pair}: {e}")
+        return "unknown", 0
+
+def confirm_regime_with_htf(pair, ltf_regime):
+    """
+    Confirm LTF regime with HTF analysis.
+    Returns confirmed regime or 'uncertain' if HTF disagrees strongly.
+    """
+    htf = get_htf_market_regime(pair)
+    htf_regime = htf.get("regime", "unknown")
+    htf_confidence = htf.get("confidence", 0)
+
+    # If HTF confidence is low, trust LTF
+    if htf_confidence < 40:
+        return ltf_regime, htf_confidence, "ltf_dominant"
+
+    # If both agree, boost confidence
+    if htf_regime == ltf_regime:
+        return ltf_regime, min(htf_confidence + 20, 100), "confirmed"
+
+    # If HTF says trending but LTF says ranging, trust HTF (higher timeframe is king)
+    if htf_regime == "trending" and ltf_regime == "ranging":
+        return "trending", htf_confidence, "htf_override"
+
+    # If HTF says ranging but LTF says trending, be cautious
+    if htf_regime == "ranging" and ltf_regime == "trending":
+        return "mixed", htf_confidence - 20, "conflict"
+
+    # Default: use HTF if confidence is high enough
+    if htf_confidence >= 70:
+        return htf_regime, htf_confidence, "htf_dominant"
+
+    return ltf_regime, htf_confidence, "ltf_dominant"
+
+# ========== MARKET REGIME - UPDATED ==========
+
+def detect_market_regime(pair, tf=300):
+    key = f"regime_{pair}"
+    now = get_iq_time()
+    with data_lock:
+        if key in state.regime_cache and now - state.regime_cache[key][1] < REGIME_CACHE_TTL:
+            cached = state.regime_cache[key][0]
+            if isinstance(cached, dict):
+                return cached.get("regime", "unknown")
+            return cached
+    try:
+        df = get_cached_df_king(pair, tf, 80)
+        if df is None or len(df) < 30:
+            return "unknown"
+
+        # Get pair-specific thresholds
+        thresholds = get_pair_thresholds(pair)
+        adx_trend = thresholds["adx_trending"]
+        adx_range = thresholds["adx_ranging"]
+
+        df['ALMA_20'] = calculate_alma(df['Close'], 20, 0.85, 6)
+        df['ALMA_80'] = calculate_alma(df['Close'], 80, 0.85, 6)
+        atr_series = calculate_atr_series(df, 14)
+        atr = atr_series.iloc[-1]
+        atr_avg = atr_series.tail(20).mean()
+        adx, plus_di, minus_di = calculate_adx(df, 14)
+        bbw = bollinger_bandwidth(df, 20)
+
+        # LTF regime detection with pair-specific thresholds
+        if adx >= adx_trend and atr > atr_avg * 1.2:
+            ltf_regime = "trending"
+        elif adx < adx_range and bbw < 0.001:
+            ltf_regime = "ranging"
+        elif atr > atr_avg * 1.8:
+            ltf_regime = "high_vol"
+        elif atr < atr_avg * 0.5:
+            ltf_regime = "low_vol"
+        else:
+            ltf_regime = "mixed"
+
+        # Confirm with HTF analysis for higher accuracy
+        confirmed_regime, htf_confidence, confirmation_type = confirm_regime_with_htf(pair, ltf_regime)
+
+        # Log the multi-timeframe analysis
+        if htf_confidence >= 60:
+            logger.info(f"📊 Regime {pair}: LTF={ltf_regime} | HTF={confirmed_regime} | Conf={htf_confidence}% | Type={confirmation_type}")
+
+        with data_lock:
+            state.regime_cache[key] = (confirmed_regime, now)
+        return confirmed_regime
     except Exception as e:
         logger.error(f"خطأ في تحديد حالة السوق {pair}: {e}")
         return "unknown"
 
-def check_pair_disabled(pair):
-    now = get_iq_time()
-    with data_lock:
-        if pair in state.disabled_pairs:
-            if now < state.disabled_pairs[pair]:
-                return True, f"متوقف حتى {datetime.fromtimestamp(state.disabled_pairs[pair]).strftime('%d/%m %H:%M')}"
-            else:
-                del state.disabled_pairs[pair]
-                logger.info(f"✅ {pair} عاد للعمل")
-                return False, None
-    return False, None
-
-def update_disabled_pairs():
-    try:
-        all_trades = read_trade_log(max_entries=10000)
-        pair_stats = {}
-        for t in all_trades:
-            p = t.get("pair", "")
-            if p not in pair_stats:
-                pair_stats[p] = {"win": 0, "loss": 0, "total": 0}
-            if pair_stats[p]["total"] < DISABLE_WINDOW:
-                pair_stats[p]["total"] += 1
-                if t.get("outcome") == "win":
-                    pair_stats[p]["win"] += 1
-                else:
-                    pair_stats[p]["loss"] += 1
-        newly_disabled = []
-        with data_lock:
-            for pair, stat in pair_stats.items():
-                if stat["total"] >= 30:
-                    wr = (stat["win"] / stat["total"]) * 100
-                    if wr < DISABLE_THRESHOLD and pair not in state.disabled_pairs:
-                        disabled_until = get_iq_time() + DISABLE_DURATION
-                        state.disabled_pairs[pair] = disabled_until
-                        newly_disabled.append((pair, wr))
-                        logger.warning(f"🚫 {pair} متوقف — WR: {wr:.1f}% (آخر {stat['total']} صفقة)")
-        if newly_disabled:
-            msg = "🚫 *توقيف أزواج تلقائي*\n\n"
-            for p, wr in newly_disabled:
-                msg += f"• `{p}` — WR: {wr:.1f}% (7 أيام)\n"
-            send_telegram_message(msg)
-    except Exception as e:
-        logger.error(f"خطأ في تحديث الأزواج المتوقفة: {e}")
-
-def update_strategy_scores():
-    try:
-        all_trades = read_trade_log(max_entries=STRATEGY_SCORE_WINDOW * 2)
-        for strategy in ["original", "king", "smart", "pro", "quantum"]:
-            trades = [t for t in all_trades if t.get("strategy") == strategy]
-            if len(trades) >= 20:
-                wins = sum(1 for t in trades if t.get("outcome") == "win")
-                wr = (wins / len(trades)) * 100
-                chunks = [trades[i:i+10] for i in range(0, len(trades), 10)]
-                chunk_wrs = []
-                for chunk in chunks:
-                    if chunk:
-                        cw = sum(1 for t in chunk if t.get("outcome") == "win") / len(chunk) * 100
-                        chunk_wrs.append(cw)
-                stability = 100 - np.std(chunk_wrs) if len(chunk_wrs) > 1 else 50
-                score = (wr * 0.6) + (stability * 0.4)
-                with data_lock:
-                    state.strategy_scores[strategy] = {
-                        "win": wins, "loss": len(trades) - wins, "total": len(trades),
-                        "wr": round(wr, 1), "stability": round(stability, 1), "score": round(score, 1)
-                    }
-                logger.info(f"📊 Strategy Score — {strategy}: WR={wr:.1f}%, Score={score:.1f}")
-    except Exception as e:
-        logger.error(f"خطأ في تحديث Strategy Scores: {e}")
-
-def select_strategy_for_regime(regime):
-    return ["original", "king", "smart", "pro", "quantum"]
-
-def calculate_adaptive_threshold(trades, market_type="live"):
-    if not ADAPTIVE_THRESHOLD_ENABLED:
-        return ADAPTIVE_THRESHOLD_MIN
-    market_trades = [t for t in trades if ("-OTC" in t.get("pair", "").upper()) == (market_type == "otc")]
-    recent = market_trades[-ADAPTIVE_THRESHOLD_WINDOW:]
-    if len(recent) < 50:
-        return state.adaptive_thresholds.get(market_type, ADAPTIVE_THRESHOLD_MIN)
-    wins = sum(1 for t in recent if t.get("outcome") == "win")
-    wr = (wins / len(recent)) * 100
-    if wr >= 80:
-        threshold = 80
-    elif wr >= 70:
-        threshold = 85
-    elif wr >= 60:
-        threshold = 90
-    elif wr >= 50:
-        threshold = 95
-    else:
-        threshold = 100
-    threshold = max(ADAPTIVE_THRESHOLD_MIN, min(ADAPTIVE_THRESHOLD_MAX, threshold))
-    with data_lock:
-        state.adaptive_thresholds[market_type] = threshold
-    if len(recent) >= 100:
-        logger.info(f"📊 Adaptive Threshold [{market_type.upper()}]: WR={wr:.1f}% → Threshold={threshold}")
-    return threshold
-
-def get_adaptive_king_level(score, market_type="live"):
-    threshold = state.adaptive_thresholds.get(market_type, 80)
-    if score >= threshold + 15:
-        return 4
-    elif score >= threshold + 10:
-        return 3
-    elif score >= threshold + 5:
-        return 2
-    elif score >= threshold:
-        return 1
-    return 0
-
-# ========== NEWS FUNCTIONS ==========
-
-def update_news():
-    if get_iq_time() - state.last_news_update < 1800:
-        return
-    try:
-        r = requests.get("https://nfs.faireconomy.media/ff_calendar_thisweek.json", timeout=8)
-        if r.status_code == 200:
-            with data_lock:
-                state.news_data = r.json()
-                state.last_news_update = get_iq_time()
-                state.news_fetch_failed = False
-            logger.info(f"✅ تم تحديث الأخبار: {len(state.news_data)} حدث")
-            return
-    except Exception as e:
-        logger.warning(f"⚠️ فشل المصدر الرئيسي للأخبار: {e}")
-    try:
-        r2 = requests.get("https://forexfactory-api.herokuapp.com/get_this_week", timeout=8)
-        if r2.status_code == 200:
-            with data_lock:
-                state.news_data = r2.json()
-                state.last_news_update = get_iq_time()
-                state.news_fetch_failed = False
-            logger.info("✅ تم جلب الأخبار من المصدر الاحتياطي")
-            return
-    except Exception as e:
-        logger.warning(f"⚠️ فشل المصدر الاحتياطي: {e}")
-    with data_lock:
-        state.news_fetch_failed = True
-    logger.error("❌ فشل المصدران في جلب الأخبار")
-
-def is_news_for_pair(pair):
-    day_of_week = datetime.now(CAIRO_TZ).weekday()
-    if day_of_week in [5, 6]:
-        return False
-    update_news()
-    with data_lock:
-        if state.news_fetch_failed:
-            logger.warning("⚠️ الأخبار غير متاحة، الإشارات مستمرة")
-            return False
-        news_snapshot = state.news_data.copy()
-    now = datetime.now(UTC_TZ)
-    for ev in news_snapshot:
-        try:
-            impact = str(ev.get('impact','')).upper()
-            if impact not in ['HIGH','RED','3']:
-                continue
-            curr = str(ev.get('country', ev.get('currency', ''))).upper()
-            if curr not in CURRENCY_PAIRS or pair not in CURRENCY_PAIRS[curr]:
-                continue
-            ev_date = ev.get('date')
-            et = datetime.fromtimestamp(ev_date, tz=UTC_TZ) if isinstance(ev_date, (int, float)) else pd.to_datetime(ev_date).tz_localize(UTC_TZ)
-            diff = abs((now - et).total_seconds())
-            if diff <= 900:
-                return True
-        except Exception:
-            continue
-    return False
-
-def is_market_open_chaos():
-    day_of_week = datetime.now(CAIRO_TZ).weekday()
-    if day_of_week in [5, 6]:
-        return False
-    now = get_cairo_time()
-    hm = now.hour * 100 + now.minute
-    return (1000 <= hm <= 1030) or (1530 <= hm <= 1600)
-
-def passes_common_entry_filters(pair):
-    if is_news_for_pair(pair):
-        return False, "فلتر الأخبار"
-    if is_market_open_chaos():
-        return False, "افتتاح السوق"
-    return True, None
-
-# ========== TECHNICAL INDICATORS ==========
-
-def calculate_alma(series, window=9, offset=0.85, sigma=6):
-    m = offset * (window - 1)
-    s = window / sigma
-    w = np.exp(-((np.arange(window) - m) ** 2) / (2 * s * s))
-    w /= w.sum()
-    return series.rolling(window).apply(lambda x: np.dot(x, w), raw=True)
-
-def wilder_rsi(series, period=14):
-    delta = series.diff()
-    gain = delta.where(delta > 0, 0.0)
-    loss = (-delta.where(delta < 0, 0.0))
-    avg_gain = gain.ewm(alpha=1.0/period, min_periods=period).mean()
-    avg_loss = loss.ewm(alpha=1.0/period, min_periods=period).mean()
-    rs = avg_gain / avg_loss
-    return 100 - (100 / (1 + rs))
-
-def calculate_stoch(df, k_period=14, d_period=3):
-    low_min = df['Low'].rolling(window=k_period).min()
-    high_max = df['High'].rolling(window=k_period).max()
-    stoch_k = 100 * ((df['Close'] - low_min) / (high_max - low_min))
-    stoch_d = stoch_k.rolling(window=d_period).mean()
-    return stoch_k, stoch_d
-
-def calculate_bollinger(series, period=20, std_dev=2):
-    sma = series.rolling(window=period).mean()
-    std = series.rolling(window=period).std()
-    return sma + (std * std_dev), sma - (std * std_dev), sma
-
-def calculate_atr_wilder(df, period=14):
-    hl = df['High'] - df['Low']
-    hc = (df['High'] - df['Close'].shift()).abs()
-    lc = (df['Low'] - df['Close'].shift()).abs()
-    tr = pd.concat([hl, hc, lc], axis=1).max(axis=1)
-    return tr.ewm(alpha=1.0/period, min_periods=period).mean().iloc[-1]
-
-def calculate_atr_series(df, period=14):
-    hl = df['High'] - df['Low']
-    hc = (df['High'] - df['Close'].shift()).abs()
-    lc = (df['Low'] - df['Close'].shift()).abs()
-    tr = pd.concat([hl, hc, lc], axis=1).max(axis=1)
-    return tr.ewm(alpha=1.0/period, min_periods=period).mean()
-
-def calculate_adx(df, period=14):
-    plus_dm = df['High'].diff()
-    minus_dm = -df['Low'].diff()
-    plus_dm = plus_dm.where((plus_dm > minus_dm) & (plus_dm > 0), 0.0)
-    minus_dm = minus_dm.where((minus_dm > plus_dm) & (minus_dm > 0), 0.0)
-    tr = pd.concat([df['High']-df['Low'], (df['High']-df['Close'].shift()).abs(), (df['Low']-df['Close'].shift()).abs()], axis=1).max(axis=1)
-    atr = tr.ewm(alpha=1.0/period, min_periods=period).mean()
-    plus_di = 100 * plus_dm.ewm(alpha=1.0/period, min_periods=period).mean() / atr
-    minus_di = 100 * minus_dm.ewm(alpha=1.0/period, min_periods=period).mean() / atr
-    dx = (abs(plus_di - minus_di) / (plus_di + minus_di)) * 100
-    adx = dx.ewm(alpha=1.0/period, min_periods=period).mean()
-    return adx.iloc[-1], plus_di.iloc[-1], minus_di.iloc[-1]
-
-def calculate_roc(series, period=5):
-    return ((series - series.shift(period)) / series.shift(period)) * 100
-
-def bollinger_bandwidth(df, period=20):
-    sma = df['Close'].rolling(window=period).mean()
-    std = df['Close'].rolling(window=period).std()
-    upper = sma + (std * 2)
-    lower = sma - (std * 2)
-    return ((upper - lower) / sma).iloc[-1]
-
-def get_fractal_levels(df, lookback=20):
-    recent = df.tail(lookback)
-    highs = recent['High']
-    lows = recent['Low']
-    resistance = highs.rolling(window=5, center=True).apply(lambda x: x[2] if max(x) == x[2] else np.nan, raw=True)
-    support = lows.rolling(window=5, center=True).apply(lambda x: x[2] if min(x) == x[2] else np.nan, raw=True)
-    last_res = resistance.dropna().iloc[-1] if not resistance.dropna().empty else recent['High'].max()
-    last_sup = support.dropna().iloc[-1] if not support.dropna().empty else recent['Low'].min()
-    return last_res, last_sup
-
-def detect_swings(df, window=2):
-    df = df.copy()
-    n = len(df)
-    swing_high = [False] * n
-    swing_low = [False] * n
-    for i in range(window, n - window):
-        is_high = True
-        for j in range(1, window + 1):
-            if df['High'].iloc[i] < df['High'].iloc[i - j] or df['High'].iloc[i] < df['High'].iloc[i + j]:
-                is_high = False
-                break
-        if is_high:
-            swing_high[i] = True
-        is_low = True
-        for j in range(1, window + 1):
-            if df['Low'].iloc[i] > df['Low'].iloc[i - j] or df['Low'].iloc[i] > df['Low'].iloc[i + j]:
-                is_low = False
-                break
-        if is_low:
-            swing_low[i] = True
-    df['is_swing_high'] = swing_high
-    df['is_swing_low'] = swing_low
-    return df
-
-def get_market_structure(df, lookback=30):
-    recent = df.tail(lookback).copy()
-    sh_idx = recent[recent['is_swing_high']].index.tolist()
-    sl_idx = recent[recent['is_swing_low']].index.tolist()
-    if len(sh_idx) < 2 or len(sl_idx) < 2:
-        return "NEUTRAL", None, None
-    sh_vals = [df.loc[i, 'High'] for i in sh_idx[-2:]]
-    sl_vals = [df.loc[i, 'Low'] for i in sl_idx[-2:]]
-    is_hh = sh_vals[-1] > sh_vals[-2]
-    is_hl = sl_vals[-1] > sl_vals[-2]
-    is_lh = sh_vals[-1] < sh_vals[-2]
-    is_ll = sl_vals[-1] < sl_vals[-2]
-    if is_hh and is_hl:
-        return "BULLISH", sh_idx[-1], sl_idx[-1]
-    elif is_lh and is_ll:
-        return "BEARISH", sh_idx[-1], sl_idx[-1]
-    return "NEUTRAL", sh_idx[-1] if sh_idx else None, sl_idx[-1] if sl_idx else None
-
-def detect_liquidity_sweep(df, direction, sweep_threshold=0.0003):
-    if len(df) < 10:
-        return False, None
-    if direction == "CALL":
-        swing_lows = df[df['is_swing_low']].tail(3)
-        if swing_lows.empty:
-            return False, None
-        for idx, row in swing_lows.iterrows():
-            sl_price = row['Low']
-            for i in range(max(-3, -len(df)), 0):
-                candle = df.iloc[i]
-                if candle['Low'] < sl_price * (1 - sweep_threshold):
-                    if candle['Close'] > sl_price:
-                        return True, sl_price
-        return False, None
-    else:
-        swing_highs = df[df['is_swing_high']].tail(3)
-        if swing_highs.empty:
-            return False, None
-        for idx, row in swing_highs.iterrows():
-            sh_price = row['High']
-            for i in range(max(-3, -len(df)), 0):
-                candle = df.iloc[i]
-                if candle['High'] > sh_price * (1 + sweep_threshold):
-                    if candle['Close'] < sh_price:
-                        return True, sh_price
-        return False, None
-
-def get_smart_sr_levels(df, lookback=30, tolerance=0.0002):
-    recent = df.tail(lookback)
-    highs = recent[recent['is_swing_high']]['High'].values
-    lows = recent[recent['is_swing_low']]['Low'].values
-    def cluster(values):
-        if len(values) == 0:
-            return []
-        s = sorted(values)
-        clusters = [[s[0]]]
-        for v in s[1:]:
-            if abs(v - clusters[-1][0]) / clusters[-1][0] <= tolerance:
-                clusters[-1].append(v)
-            else:
-                clusters.append([v])
-        return [sum(c) / len(c) for c in clusters]
-    return cluster(lows), cluster(highs)
-
-def check_king_candle_quality(candle):
-    body = abs(candle['Close'] - candle['Open'])
-    rng = candle['High'] - candle['Low']
-    if rng == 0:
-        return False, 0
-    body_pct = body / rng
-    upper_shadow = candle['High'] - max(candle['Close'], candle['Open'])
-    lower_shadow = min(candle['Close'], candle['Open']) - candle['Low']
-    shadow_pct = (upper_shadow + lower_shadow) / rng
-    return body_pct >= 0.60 and shadow_pct <= 0.30, body_pct
-
-def calculate_king_score(structure_ok, sweep_ok, trend_ok, momentum_ok,
-                         volatility_ok, adx_ok, rsi_ok, stoch_ok, candle_ok):
-    with data_lock:
-        w = dict(KING_WEIGHTS)
-    score = 0
-    if structure_ok: score += w.get('structure', 25)
-    if sweep_ok: score += w.get('sweep', 25)
-    if trend_ok: score += w.get('trend', 15)
-    if momentum_ok: score += w.get('momentum', 10)
-    if volatility_ok: score += w.get('volatility', 10)
-    if adx_ok: score += w.get('adx', 10)
-    if rsi_ok: score += w.get('rsi', 0)
-    if stoch_ok: score += w.get('stochastic', 0)
-    if candle_ok: score += w.get('candle', 5)
-    return score
-
-# ========== CACHE FUNCTIONS ==========
-
-def get_cached_candles(pair, tf, count, max_age=30, force_refresh=False):
-    key = f"{pair}_{tf}_{count}"
-
-    if not force_refresh:
-        data = candles_cache.get(key)
-        if data is not None:
-            return data
-
-    try:
-        with api_lock:
-            if API is None:
-                return None
-            data = API.get_candles(pair, tf, count, int(get_iq_time()))
-        if data:
-            candles_cache.set(key, data)
-        return data
-    except Exception as e:
-        err_str = str(e).lower()
-        if "not found" in err_str or "asset" in err_str:
-            with data_lock:
-                state.invalid_assets.add(pair)
-            logger.warning(f"⚠️ {pair} غير متاح")
-        else:
-            logger.error(f"خطأ جلب شموع {pair}: {e}")
-        return None
-
-def get_cached_df(pair, tf, count):
-    key = f"{pair}_{tf}_{count}"
-    data = df_cache.get(key)
-    if data is not None:
-        return data
-    raw = get_cached_candles(pair, tf, count, max_age=15)
-    if not raw or len(raw) < 55:
-        return None
-    df = pd.DataFrame(raw)
-    df.rename(columns={'open':'Open','max':'High','min':'Low','close':'Close','volume':'Volume'}, inplace=True)
-    df['ALMA_9'] = calculate_alma(df['Close'], 9, 0.85, 6)
-    df['ALMA_50'] = calculate_alma(df['Close'], 50, 0.85, 6)
-    df['RSI'] = wilder_rsi(df['Close'], 14)
-    df['BBU'], df['BBL'], df['BB_MID'] = calculate_bollinger(df['Close'], 20, 2)
-    df['Stoch_K'], df['Stoch_D'] = calculate_stoch(df, 14, 3)
-    df['Vol_MA'] = df['Volume'].rolling(window=20).mean()
-    df['ROC'] = calculate_roc(df['Close'], 5)
-    df_cache.set(key, df)
-    return df
-
-def get_cached_df_king(pair, tf, count):
-    key = f"king_{pair}_{tf}_{count}"
-    data = king_df_cache.get(key)
-    if data is not None:
-        return data
-    raw = get_cached_candles(pair, tf, count, max_age=15)
-    if not raw or len(raw) < 60:
-        return None
-    df = pd.DataFrame(raw)
-    df.rename(columns={'open':'Open','max':'High','min':'Low','close':'Close','volume':'Volume'}, inplace=True)
-    king_df_cache.set(key, df)
-    return df
-
-def get_cached_df_smart(pair, tf, count):
-    key = f"smart_{pair}_{tf}_{count}"
-    data = smart_df_cache.get(key)
-    if data is not None:
-        return data
-    raw = get_cached_candles(pair, tf, count, max_age=15)
-    if not raw or len(raw) < 80:
-        return None
-    df = pd.DataFrame(raw)
-    df.rename(columns={'open':'Open','max':'High','min':'Low','close':'Close','volume':'Volume'}, inplace=True)
-    smart_df_cache.set(key, df)
-    return df
-
-# ========== HIGHER TIMEFRAME TRENDS ==========
-
-def get_higher_tf_trend(pair):
-    with data_lock:
-        if pair in state.ht_trend_cache and get_iq_time() - state.ht_trend_cache[pair][1] < 900:
-            return state.ht_trend_cache[pair][0]
-    try:
-        candles = get_cached_candles(pair, TIMEFRAME_1H, 10, max_age=300)
-        if not candles or len(candles) < 5:
-            return None
-        df_h = pd.DataFrame(candles)
-        df_h.rename(columns={'close':'Close'}, inplace=True)
-        df_h['ALMA_9'] = calculate_alma(df_h['Close'], 9, 0.85, 6)
-        df_h['ALMA_50'] = calculate_alma(df_h['Close'], 50, 0.85, 6)
-        curr_h = df_h.iloc[-1]
-        prev_h = df_h.iloc[-2]
-        if curr_h['ALMA_9'] > curr_h['ALMA_50'] and prev_h['ALMA_9'] > prev_h['ALMA_50']:
-            trend = "CALL"
-        elif curr_h['ALMA_9'] < curr_h['ALMA_50'] and prev_h['ALMA_9'] < prev_h['ALMA_50']:
-            trend = "PUT"
-        else:
-            trend = None
-        with data_lock:
-            state.ht_trend_cache[pair] = (trend, get_iq_time())
-        return trend
-    except Exception as e:
-        logger.error(f"خطأ HTF {pair}: {e}")
-        return None
-
-def get_king_htf_trend(pair):
-    key = f"king_htf_{pair}"
-    now = time.time()
-    with data_lock:
-        if key in state.king_htf_cache and now - state.king_htf_cache[key][1] < 900:
-            return state.king_htf_cache[key][0]
-    try:
-        candles = get_cached_candles(pair, TIMEFRAME_1H, 10, max_age=300)
-        if not candles or len(candles) < 5:
-            return None
-        df_h = pd.DataFrame(candles)
-        df_h.rename(columns={'close':'Close'}, inplace=True)
-        df_h['ALMA_9'] = calculate_alma(df_h['Close'], 9, 0.85, 6)
-        df_h['ALMA_50'] = calculate_alma(df_h['Close'], 50, 0.85, 6)
-        curr_h = df_h.iloc[-1]
-        prev_h = df_h.iloc[-2]
-        if curr_h['ALMA_9'] > curr_h['ALMA_50'] and prev_h['ALMA_9'] > prev_h['ALMA_50']:
-            trend = "CALL"
-        elif curr_h['ALMA_9'] < curr_h['ALMA_50'] and prev_h['ALMA_9'] < prev_h['ALMA_50']:
-            trend = "PUT"
-        else:
-            trend = None
-        with data_lock:
-            state.king_htf_cache[key] = (trend, now)
-        return trend
-    except Exception as e:
-        logger.error(f"خطأ King HTF {pair}: {e}")
-        return None
-
-# ========== TRADE HELPERS ==========
-
-def _build_trade_dict(pair, direction, entry_price, expire_offset, is_king, is_martingale,
-                      signal_level, signal_name, score, filters, indicators, strategy):
-    def convert_bool_to_int(obj):
-        if isinstance(obj, dict):
-            return {k: convert_bool_to_int(v) for k, v in obj.items()}
-        elif isinstance(obj, list):
-            return [convert_bool_to_int(item) for item in obj]
-        elif isinstance(obj, bool):
-            return int(obj)
-        else:
-            return obj
-
-    filters_clean = convert_bool_to_int(filters)
-    indicators_clean = convert_bool_to_int(indicators)
-
-    return {
-        'pair': pair,
-        'timeframe': '5m',
-        'direction': direction,
-        'entry_price': entry_price,
-        'expire_time': get_iq_time() + expire_offset,
-        'warned_loss': False,
-        'is_martingale': is_martingale,
-        'is_king': is_king,
-        'signal_level': signal_level,
-        'signal_name': signal_name,
-        'score': score,
-        'filters': filters_clean,
-        'indicators': indicators_clean,
-        'hour': datetime.now(CAIRO_TZ).hour,
-        'strategy': strategy
-    }
-
-def add_trade_atomic(trade_dict):
-    pair = trade_dict.get('pair')
-    with data_lock:
-        for t in state.active_trades:
-            if t.get('pair') == pair:
-                return False
-        state.active_trades.append(trade_dict)
-        return True
-
-def check_candle_quality(c, min_body_pct=0.08):
-    body = abs(c['Close'] - c['Open'])
-    rng = c['High'] - c['Low']
-    if rng == 0:
-        return False
-    bp = body / rng
-    if bp < min_body_pct:
-        return False
-    return True
-
-def can_take_signal(pair, direction):
-    with data_lock:
-        if pair in state.recent_signals:
-            lt, ld = state.recent_signals[pair]
-            if get_iq_time() - lt < 600 and ld != direction:
-                return False
-    return True
-
-def already_sent_this_candle(pair):
-    key = f"{pair}_{(int(get_iq_time()) // 300) * 300}"
-    with data_lock:
-        if key in state.sent_signals:
-            return True
-        state.sent_signals[key] = get_iq_time()
-    return False
-
-def already_sent_this_candle_king(pair):
-    key = f"king_{pair}_{(int(get_iq_time()) // 300) * 300}"
-    with data_lock:
-        if key in state.king_sent_signals:
-            return True
-        state.king_sent_signals[key] = get_iq_time()
-    return False
-
-def already_sent_this_candle_smart(pair):
-    key = f"smart_{pair}_{(int(get_iq_time()) // 300) * 300}"
-    with data_lock:
-        if key in state.smart_sent_signals:
-            return True
-        state.smart_sent_signals[key] = get_iq_time()
-    return False
-
-def already_sent_this_candle_pro(pair):
-    key = f"pro_{pair}_{(int(get_iq_time()) // 300) * 300}"
-    with data_lock:
-        if key in state.pa_sent_signals:
-            return True
-        state.pa_sent_signals[key] = get_iq_time()
-    return False
-
-def already_sent_this_candle_quantum(pair):
-    key = f"quantum_{pair}_{(int(get_iq_time()) // 300) * 300}"
-    with data_lock:
-        if key in state.quantum_sent_signals:
-            return True
-        state.quantum_sent_signals[key] = get_iq_time()
-    return False
-
-# ========== QUANTUM FUNCTIONS ==========
+# ========== QUANTUM FUNCTIONS - UPDATED ==========
 
 def analyze_volatility_filter(volatility):
     config = QUANTUM_CONFIG.get("volatility_filter", {})
@@ -2153,25 +1779,40 @@ def analyze_volatility_filter(volatility):
         'emoji': '📊'
     }
 
-def analyze_market_condition_quantum(df):
+def analyze_market_condition_quantum(df, pair=None):
     try:
         if len(df) < 30:
             return "unknown"
-        adx, _, _ = calculate_adx(df, 14)
+
+        # Get pair-specific thresholds
+        thresholds = get_pair_thresholds(pair) if pair else get_pair_thresholds("EURUSD")
+        adx_trend = thresholds["adx_trending"]
+        adx_range = thresholds["adx_ranging"]
+
+        adx, plus_di, minus_di = calculate_adx(df, 14)
         atr_series = calculate_atr_series(df, 14)
         atr = atr_series.iloc[-1]
         atr_avg = atr_series.tail(20).mean()
         bbw = bollinger_bandwidth(df, 20)
-        if adx >= 25 and atr > atr_avg * 1.2:
-            return "trending"
-        elif adx < 18 and bbw < 0.001:
-            return "ranging"
+
+        if adx >= adx_trend and atr > atr_avg * 1.2:
+            ltf_regime = "trending"
+        elif adx < adx_range and bbw < 0.001:
+            ltf_regime = "ranging"
         elif atr > atr_avg * 1.8:
-            return "high_vol"
+            ltf_regime = "high_vol"
         elif atr < atr_avg * 0.5:
-            return "low_vol"
+            ltf_regime = "low_vol"
         else:
-            return "mixed"
+            ltf_regime = "mixed"
+
+        if pair:
+            confirmed_regime, htf_confidence, confirmation_type = confirm_regime_with_htf(pair, ltf_regime)
+            if htf_confidence >= 50:
+                logger.info(f"🧠 Quantum {pair}: LTF={ltf_regime} | HTF={confirmed_regime} | Conf={htf_confidence}%")
+            return confirmed_regime
+
+        return ltf_regime
     except Exception as e:
         logger.error(f"خطأ في تحليل حالة السوق Quantum: {e}")
         return "unknown"
@@ -2253,8 +1894,7 @@ def fvg_retest_quantum(df, fvg):
         start_idx = max(fvg['idx'] + 1, len(df) - 15)
         for i in range(start_idx, len(df)):
             if df['Low'].iloc[i] <= fvg["top"] and df['High'].iloc[i] >= fvg["bottom"]:
-                return True
-        return False
+                return True        return False
     except Exception as e:
         logger.error(f"خطأ في التحقق من FVG Retest Quantum: {e}")
         return False
@@ -2606,7 +2246,8 @@ def analyze_pair_quantum(pair, timeframe="5m"):
         logger.info(f"🛑 Quantum {pair}: لا يوجد بيانات كافية")
         return None
 
-    regime = analyze_market_condition_quantum(df)
+    # استخدام تحليل HTF المحسن
+    regime = analyze_market_condition_quantum(df, pair=pair)
     if regime == "ranging":
         logger.info(f"🛑 Quantum {pair}: سوق عرضي (RANGE) - تم الإلغاء")
         return None
@@ -3793,6 +3434,617 @@ def analyze_pair_wrapper_pro(pair):
     except Exception as e:
         logger.error(f"خطأ Pro في {pair}: {e}")
         return pair, None
+
+# ========== TRADE HELPERS ==========
+
+def _build_trade_dict(pair, direction, entry_price, expire_offset, is_king, is_martingale,
+                      signal_level, signal_name, score, filters, indicators, strategy):
+    def convert_bool_to_int(obj):
+        if isinstance(obj, dict):
+            return {k: convert_bool_to_int(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [convert_bool_to_int(item) for item in obj]
+        elif isinstance(obj, bool):
+            return int(obj)
+        else:
+            return obj
+
+    filters_clean = convert_bool_to_int(filters)
+    indicators_clean = convert_bool_to_int(indicators)
+
+    return {
+        'pair': pair,
+        'timeframe': '5m',
+        'direction': direction,
+        'entry_price': entry_price,
+        'expire_time': get_iq_time() + expire_offset,
+        'warned_loss': False,
+        'is_martingale': is_martingale,
+        'is_king': is_king,
+        'signal_level': signal_level,
+        'signal_name': signal_name,
+        'score': score,
+        'filters': filters_clean,
+        'indicators': indicators_clean,
+        'hour': datetime.now(CAIRO_TZ).hour,
+        'strategy': strategy
+    }
+
+def add_trade_atomic(trade_dict):
+    pair = trade_dict.get('pair')
+    with data_lock:
+        for t in state.active_trades:
+            if t.get('pair') == pair:
+                return False
+        state.active_trades.append(trade_dict)
+        return True
+
+def check_candle_quality(c, min_body_pct=0.08):
+    body = abs(c['Close'] - c['Open'])
+    rng = c['High'] - c['Low']
+    if rng == 0:
+        return False
+    bp = body / rng
+    if bp < min_body_pct:
+        return False
+    return True
+
+def can_take_signal(pair, direction):
+    with data_lock:
+        if pair in state.recent_signals:
+            lt, ld = state.recent_signals[pair]
+            if get_iq_time() - lt < 600 and ld != direction:
+                return False
+    return True
+
+def already_sent_this_candle(pair):
+    key = f"{pair}_{(int(get_iq_time()) // 300) * 300}"
+    with data_lock:
+        if key in state.sent_signals:
+            return True
+        state.sent_signals[key] = get_iq_time()
+    return False
+
+def already_sent_this_candle_king(pair):
+    key = f"king_{pair}_{(int(get_iq_time()) // 300) * 300}"
+    with data_lock:
+        if key in state.king_sent_signals:
+            return True
+        state.king_sent_signals[key] = get_iq_time()
+    return False
+
+def already_sent_this_candle_smart(pair):
+    key = f"smart_{pair}_{(int(get_iq_time()) // 300) * 300}"
+    with data_lock:
+        if key in state.smart_sent_signals:
+            return True
+        state.smart_sent_signals[key] = get_iq_time()
+    return False
+
+def already_sent_this_candle_pro(pair):
+    key = f"pro_{pair}_{(int(get_iq_time()) // 300) * 300}"
+    with data_lock:
+        if key in state.pa_sent_signals:
+            return True
+        state.pa_sent_signals[key] = get_iq_time()
+    return False
+
+def already_sent_this_candle_quantum(pair):
+    key = f"quantum_{pair}_{(int(get_iq_time()) // 300) * 300}"
+    with data_lock:
+        if key in state.quantum_sent_signals:
+            return True
+        state.quantum_sent_signals[key] = get_iq_time()
+    return False
+
+# ========== CHECK PAIR DISABLED ==========
+
+def check_pair_disabled(pair):
+    now = get_iq_time()
+    with data_lock:
+        if pair in state.disabled_pairs:
+            if now < state.disabled_pairs[pair]:
+                return True, f"متوقف حتى {datetime.fromtimestamp(state.disabled_pairs[pair]).strftime('%d/%m %H:%M')}"
+            else:
+                del state.disabled_pairs[pair]
+                logger.info(f"✅ {pair} عاد للعمل")
+                return False, None
+    return False, None
+
+def update_disabled_pairs():
+    try:
+        all_trades = read_trade_log(max_entries=10000)
+        pair_stats = {}
+        for t in all_trades:
+            p = t.get("pair", "")
+            if p not in pair_stats:
+                pair_stats[p] = {"win": 0, "loss": 0, "total": 0}
+            if pair_stats[p]["total"] < DISABLE_WINDOW:
+                pair_stats[p]["total"] += 1
+                if t.get("outcome") == "win":
+                    pair_stats[p]["win"] += 1
+                else:
+                    pair_stats[p]["loss"] += 1
+        newly_disabled = []
+        with data_lock:
+            for pair, stat in pair_stats.items():
+                if stat["total"] >= 30:
+                    wr = (stat["win"] / stat["total"]) * 100
+                    if wr < DISABLE_THRESHOLD and pair not in state.disabled_pairs:
+                        disabled_until = get_iq_time() + DISABLE_DURATION
+                        state.disabled_pairs[pair] = disabled_until
+                        newly_disabled.append((pair, wr))
+                        logger.warning(f"🚫 {pair} متوقف — WR: {wr:.1f}% (آخر {stat['total']} صفقة)")
+        if newly_disabled:
+            msg = "🚫 *توقيف أزواج تلقائي*\n\n"
+            for p, wr in newly_disabled:
+                msg += f"• `{p}` — WR: {wr:.1f}% (7 أيام)\n"
+            send_telegram_message(msg)
+    except Exception as e:
+        logger.error(f"خطأ في تحديث الأزواج المتوقفة: {e}")
+
+def update_strategy_scores():
+    try:
+        all_trades = read_trade_log(max_entries=STRATEGY_SCORE_WINDOW * 2)
+        for strategy in ["original", "king", "smart", "pro", "quantum"]:
+            trades = [t for t in all_trades if t.get("strategy") == strategy]
+            if len(trades) >= 20:
+                wins = sum(1 for t in trades if t.get("outcome") == "win")
+                wr = (wins / len(trades)) * 100
+                chunks = [trades[i:i+10] for i in range(0, len(trades), 10)]
+                chunk_wrs = []
+                for chunk in chunks:
+                    if chunk:
+                        cw = sum(1 for t in chunk if t.get("outcome") == "win") / len(chunk) * 100
+                        chunk_wrs.append(cw)
+                stability = 100 - np.std(chunk_wrs) if len(chunk_wrs) > 1 else 50
+                score = (wr * 0.6) + (stability * 0.4)
+                with data_lock:
+                    state.strategy_scores[strategy] = {
+                        "win": wins, "loss": len(trades) - wins, "total": len(trades),
+                        "wr": round(wr, 1), "stability": round(stability, 1), "score": round(score, 1)
+                    }
+                logger.info(f"📊 Strategy Score — {strategy}: WR={wr:.1f}%, Score={score:.1f}")
+    except Exception as e:
+        logger.error(f"خطأ في تحديث Strategy Scores: {e}")
+
+def select_strategy_for_regime(regime):
+    return ["original", "king", "smart", "pro", "quantum"]
+
+def calculate_adaptive_threshold(trades, market_type="live"):
+    if not ADAPTIVE_THRESHOLD_ENABLED:
+        return ADAPTIVE_THRESHOLD_MIN
+    market_trades = [t for t in trades if ("-OTC" in t.get("pair", "").upper()) == (market_type == "otc")]
+    recent = market_trades[-ADAPTIVE_THRESHOLD_WINDOW:]
+    if len(recent) < 50:
+        return state.adaptive_thresholds.get(market_type, ADAPTIVE_THRESHOLD_MIN)
+    wins = sum(1 for t in recent if t.get("outcome") == "win")
+    wr = (wins / len(recent)) * 100
+    if wr >= 80:
+        threshold = 80
+    elif wr >= 70:
+        threshold = 85
+    elif wr >= 60:
+        threshold = 90
+    elif wr >= 50:
+        threshold = 95
+    else:
+        threshold = 100
+    threshold = max(ADAPTIVE_THRESHOLD_MIN, min(ADAPTIVE_THRESHOLD_MAX, threshold))
+    with data_lock:
+        state.adaptive_thresholds[market_type] = threshold
+    if len(recent) >= 100:
+        logger.info(f"📊 Adaptive Threshold [{market_type.upper()}]: WR={wr:.1f}% → Threshold={threshold}")
+    return threshold
+
+def get_adaptive_king_level(score, market_type="live"):
+    threshold = state.adaptive_thresholds.get(market_type, 80)
+    if score >= threshold + 15:
+        return 4
+    elif score >= threshold + 10:
+        return 3
+    elif score >= threshold + 5:
+        return 2
+    elif score >= threshold:
+        return 1
+    return 0
+
+# ========== NEWS FUNCTIONS ==========
+
+def update_news():
+    if get_iq_time() - state.last_news_update < 1800:
+        return
+    try:
+        r = requests.get("https://nfs.faireconomy.media/ff_calendar_thisweek.json", timeout=8)
+        if r.status_code == 200:
+            with data_lock:
+                state.news_data = r.json()
+                state.last_news_update = get_iq_time()
+                state.news_fetch_failed = False
+            logger.info(f"✅ تم تحديث الأخبار: {len(state.news_data)} حدث")
+            return
+    except Exception as e:
+        logger.warning(f"⚠️ فشل المصدر الرئيسي للأخبار: {e}")
+    try:
+        r2 = requests.get("https://forexfactory-api.herokuapp.com/get_this_week", timeout=8)
+        if r2.status_code == 200:
+            with data_lock:
+                state.news_data = r2.json()
+                state.last_news_update = get_iq_time()
+                state.news_fetch_failed = False
+            logger.info("✅ تم جلب الأخبار من المصدر الاحتياطي")
+            return
+    except Exception as e:
+        logger.warning(f"⚠️ فشل المصدر الاحتياطي: {e}")
+    with data_lock:
+        state.news_fetch_failed = True
+    logger.error("❌ فشل المصدران في جلب الأخبار")
+
+def is_news_for_pair(pair):
+    day_of_week = datetime.now(CAIRO_TZ).weekday()
+    if day_of_week in [5, 6]:
+        return False
+    update_news()
+    with data_lock:
+        if state.news_fetch_failed:
+            logger.warning("⚠️ الأخبار غير متاحة، الإشارات مستمرة")
+            return False
+        news_snapshot = state.news_data.copy()
+    now = datetime.now(UTC_TZ)
+    for ev in news_snapshot:
+        try:
+            impact = str(ev.get('impact','')).upper()
+            if impact not in ['HIGH','RED','3']:
+                continue
+            curr = str(ev.get('country', ev.get('currency', ''))).upper()
+            if curr not in CURRENCY_PAIRS or pair not in CURRENCY_PAIRS[curr]:
+                continue
+            ev_date = ev.get('date')
+            et = datetime.fromtimestamp(ev_date, tz=UTC_TZ) if isinstance(ev_date, (int, float)) else pd.to_datetime(ev_date).tz_localize(UTC_TZ)
+            diff = abs((now - et).total_seconds())
+            if diff <= 900:
+                return True
+        except Exception:
+            continue
+    return False
+
+def is_market_open_chaos():
+    day_of_week = datetime.now(CAIRO_TZ).weekday()
+    if day_of_week in [5, 6]:
+        return False
+    now = get_cairo_time()
+    hm = now.hour * 100 + now.minute
+    return (1000 <= hm <= 1030) or (1530 <= hm <= 1600)
+
+def passes_common_entry_filters(pair):
+    if is_news_for_pair(pair):
+        return False, "فلتر الأخبار"
+    if is_market_open_chaos():
+        return False, "افتتاح السوق"
+    return True, None
+
+# ========== TECHNICAL INDICATORS ==========
+
+def calculate_alma(series, window=9, offset=0.85, sigma=6):
+    m = offset * (window - 1)
+    s = window / sigma
+    w = np.exp(-((np.arange(window) - m) ** 2) / (2 * s * s))
+    w /= w.sum()
+    return series.rolling(window).apply(lambda x: np.dot(x, w), raw=True)
+
+def wilder_rsi(series, period=14):
+    delta = series.diff()
+    gain = delta.where(delta > 0, 0.0)
+    loss = (-delta.where(delta < 0, 0.0))
+    avg_gain = gain.ewm(alpha=1.0/period, min_periods=period).mean()
+    avg_loss = loss.ewm(alpha=1.0/period, min_periods=period).mean()
+    rs = avg_gain / avg_loss
+    return 100 - (100 / (1 + rs))
+
+def calculate_stoch(df, k_period=14, d_period=3):
+    low_min = df['Low'].rolling(window=k_period).min()
+    high_max = df['High'].rolling(window=k_period).max()
+    stoch_k = 100 * ((df['Close'] - low_min) / (high_max - low_min))
+    stoch_d = stoch_k.rolling(window=d_period).mean()
+    return stoch_k, stoch_d
+
+def calculate_bollinger(series, period=20, std_dev=2):
+    sma = series.rolling(window=period).mean()
+    std = series.rolling(window=period).std()
+    return sma + (std * std_dev), sma - (std * std_dev), sma
+
+def calculate_atr_wilder(df, period=14):
+    hl = df['High'] - df['Low']
+    hc = (df['High'] - df['Close'].shift()).abs()
+    lc = (df['Low'] - df['Close'].shift()).abs()
+    tr = pd.concat([hl, hc, lc], axis=1).max(axis=1)
+    return tr.ewm(alpha=1.0/period, min_periods=period).mean().iloc[-1]
+
+def calculate_atr_series(df, period=14):
+    hl = df['High'] - df['Low']
+    hc = (df['High'] - df['Close'].shift()).abs()
+    lc = (df['Low'] - df['Close'].shift()).abs()
+    tr = pd.concat([hl, hc, lc], axis=1).max(axis=1)
+    return tr.ewm(alpha=1.0/period, min_periods=period).mean()
+
+def calculate_adx(df, period=14):
+    plus_dm = df['High'].diff()
+    minus_dm = -df['Low'].diff()
+    plus_dm = plus_dm.where((plus_dm > minus_dm) & (plus_dm > 0), 0.0)
+    minus_dm = minus_dm.where((minus_dm > plus_dm) & (minus_dm > 0), 0.0)
+    tr = pd.concat([df['High']-df['Low'], (df['High']-df['Close'].shift()).abs(), (df['Low']-df['Close'].shift()).abs()], axis=1).max(axis=1)
+    atr = tr.ewm(alpha=1.0/period, min_periods=period).mean()
+    plus_di = 100 * plus_dm.ewm(alpha=1.0/period, min_periods=period).mean() / atr
+    minus_di = 100 * minus_dm.ewm(alpha=1.0/period, min_periods=period).mean() / atr
+    dx = (abs(plus_di - minus_di) / (plus_di + minus_di)) * 100
+    adx = dx.ewm(alpha=1.0/period, min_periods=period).mean()
+    return adx.iloc[-1], plus_di.iloc[-1], minus_di.iloc[-1]
+
+def calculate_roc(series, period=5):
+    return ((series - series.shift(period)) / series.shift(period)) * 100
+
+def bollinger_bandwidth(df, period=20):
+    sma = df['Close'].rolling(window=period).mean()
+    std = df['Close'].rolling(window=period).std()
+    upper = sma + (std * 2)
+    lower = sma - (std * 2)
+    return ((upper - lower) / sma).iloc[-1]
+
+def get_fractal_levels(df, lookback=20):
+    recent = df.tail(lookback)
+    highs = recent['High']
+    lows = recent['Low']
+    resistance = highs.rolling(window=5, center=True).apply(lambda x: x[2] if max(x) == x[2] else np.nan, raw=True)
+    support = lows.rolling(window=5, center=True).apply(lambda x: x[2] if min(x) == x[2] else np.nan, raw=True)
+    last_res = resistance.dropna().iloc[-1] if not resistance.dropna().empty else recent['High'].max()
+    last_sup = support.dropna().iloc[-1] if not support.dropna().empty else recent['Low'].min()
+    return last_res, last_sup
+
+def detect_swings(df, window=2):
+    df = df.copy()
+    n = len(df)
+    swing_high = [False] * n
+    swing_low = [False] * n
+    for i in range(window, n - window):
+        is_high = True
+        for j in range(1, window + 1):
+            if df['High'].iloc[i] < df['High'].iloc[i - j] or df['High'].iloc[i] < df['High'].iloc[i + j]:
+                is_high = False
+                break
+        if is_high:
+            swing_high[i] = True
+        is_low = True
+        for j in range(1, window + 1):
+            if df['Low'].iloc[i] > df['Low'].iloc[i - j] or df['Low'].iloc[i] > df['Low'].iloc[i + j]:
+                is_low = False
+                break
+        if is_low:
+            swing_low[i] = True
+    df['is_swing_high'] = swing_high
+    df['is_swing_low'] = swing_low
+    return df
+
+def get_market_structure(df, lookback=30):
+    recent = df.tail(lookback).copy()
+    sh_idx = recent[recent['is_swing_high']].index.tolist()
+    sl_idx = recent[recent['is_swing_low']].index.tolist()
+    if len(sh_idx) < 2 or len(sl_idx) < 2:
+        return "NEUTRAL", None, None
+    sh_vals = [df.loc[i, 'High'] for i in sh_idx[-2:]]
+    sl_vals = [df.loc[i, 'Low'] for i in sl_idx[-2:]]
+    is_hh = sh_vals[-1] > sh_vals[-2]
+    is_hl = sl_vals[-1] > sl_vals[-2]
+    is_lh = sh_vals[-1] < sh_vals[-2]
+    is_ll = sl_vals[-1] < sl_vals[-2]
+    if is_hh and is_hl:
+        return "BULLISH", sh_idx[-1], sl_idx[-1]
+    elif is_lh and is_ll:
+        return "BEARISH", sh_idx[-1], sl_idx[-1]
+    return "NEUTRAL", sh_idx[-1] if sh_idx else None, sl_idx[-1] if sl_idx else None
+
+def detect_liquidity_sweep(df, direction, sweep_threshold=0.0003):
+    if len(df) < 10:
+        return False, None
+    if direction == "CALL":
+        swing_lows = df[df['is_swing_low']].tail(3)
+        if swing_lows.empty:
+            return False, None
+        for idx, row in swing_lows.iterrows():
+            sl_price = row['Low']
+            for i in range(max(-3, -len(df)), 0):
+                candle = df.iloc[i]
+                if candle['Low'] < sl_price * (1 - sweep_threshold):
+                    if candle['Close'] > sl_price:
+                        return True, sl_price
+        return False, None
+    else:
+        swing_highs = df[df['is_swing_high']].tail(3)
+        if swing_highs.empty:
+            return False, None
+        for idx, row in swing_highs.iterrows():
+            sh_price = row['High']
+            for i in range(max(-3, -len(df)), 0):
+                candle = df.iloc[i]
+                if candle['High'] > sh_price * (1 + sweep_threshold):
+                    if candle['Close'] < sh_price:
+                        return True, sh_price
+        return False, None
+
+def get_smart_sr_levels(df, lookback=30, tolerance=0.0002):
+    recent = df.tail(lookback)
+    highs = recent[recent['is_swing_high']]['High'].values
+    lows = recent[recent['is_swing_low']]['Low'].values
+    def cluster(values):
+        if len(values) == 0:
+            return []
+        s = sorted(values)
+        clusters = [[s[0]]]
+        for v in s[1:]:
+            if abs(v - clusters[-1][0]) / clusters[-1][0] <= tolerance:
+                clusters[-1].append(v)
+            else:
+                clusters.append([v])
+        return [sum(c) / len(c) for c in clusters]
+    return cluster(lows), cluster(highs)
+
+def check_king_candle_quality(candle):
+    body = abs(candle['Close'] - candle['Open'])
+    rng = candle['High'] - candle['Low']
+    if rng == 0:
+        return False, 0
+    body_pct = body / rng
+    upper_shadow = candle['High'] - max(candle['Close'], candle['Open'])
+    lower_shadow = min(candle['Close'], candle['Open']) - candle['Low']
+    shadow_pct = (upper_shadow + lower_shadow) / rng
+    return body_pct >= 0.60 and shadow_pct <= 0.30, body_pct
+
+def calculate_king_score(structure_ok, sweep_ok, trend_ok, momentum_ok,
+                         volatility_ok, adx_ok, rsi_ok, stoch_ok, candle_ok):
+    with data_lock:
+        w = dict(KING_WEIGHTS)
+    score = 0
+    if structure_ok: score += w.get('structure', 25)
+    if sweep_ok: score += w.get('sweep', 25)
+    if trend_ok: score += w.get('trend', 15)
+    if momentum_ok: score += w.get('momentum', 10)
+    if volatility_ok: score += w.get('volatility', 10)
+    if adx_ok: score += w.get('adx', 10)
+    if rsi_ok: score += w.get('rsi', 0)
+    if stoch_ok: score += w.get('stochastic', 0)
+    if candle_ok: score += w.get('candle', 5)
+    return score
+
+# ========== CACHE FUNCTIONS ==========
+
+def get_cached_candles(pair, tf, count, max_age=30, force_refresh=False):
+    key = f"{pair}_{tf}_{count}"
+
+    if not force_refresh:
+        data = candles_cache.get(key)
+        if data is not None:
+            return data
+
+    try:
+        with api_lock:
+            if API is None:
+                return None
+            data = API.get_candles(pair, tf, count, int(get_iq_time()))
+        if data:
+            candles_cache.set(key, data)
+        return data
+    except Exception as e:
+        err_str = str(e).lower()
+        if "not found" in err_str or "asset" in err_str:
+            with data_lock:
+                state.invalid_assets.add(pair)
+            logger.warning(f"⚠️ {pair} غير متاح")
+        else:
+            logger.error(f"خطأ جلب شموع {pair}: {e}")
+        return None
+
+def get_cached_df(pair, tf, count):
+    key = f"{pair}_{tf}_{count}"
+    data = df_cache.get(key)
+    if data is not None:
+        return data
+    raw = get_cached_candles(pair, tf, count, max_age=15)
+    if not raw or len(raw) < 55:
+        return None
+    df = pd.DataFrame(raw)
+    df.rename(columns={'open':'Open','max':'High','min':'Low','close':'Close','volume':'Volume'}, inplace=True)
+    df['ALMA_9'] = calculate_alma(df['Close'], 9, 0.85, 6)
+    df['ALMA_50'] = calculate_alma(df['Close'], 50, 0.85, 6)
+    df['RSI'] = wilder_rsi(df['Close'], 14)
+    df['BBU'], df['BBL'], df['BB_MID'] = calculate_bollinger(df['Close'], 20, 2)
+    df['Stoch_K'], df['Stoch_D'] = calculate_stoch(df, 14, 3)
+    df['Vol_MA'] = df['Volume'].rolling(window=20).mean()
+    df['ROC'] = calculate_roc(df['Close'], 5)
+    df_cache.set(key, df)
+    return df
+
+def get_cached_df_king(pair, tf, count):
+    key = f"king_{pair}_{tf}_{count}"
+    data = king_df_cache.get(key)
+    if data is not None:
+        return data
+    raw = get_cached_candles(pair, tf, count, max_age=15)
+    if not raw or len(raw) < 60:
+        return None
+    df = pd.DataFrame(raw)
+    df.rename(columns={'open':'Open','max':'High','min':'Low','close':'Close','volume':'Volume'}, inplace=True)
+    king_df_cache.set(key, df)
+    return df
+
+def get_cached_df_smart(pair, tf, count):
+    key = f"smart_{pair}_{tf}_{count}"
+    data = smart_df_cache.get(key)
+    if data is not None:
+        return data
+    raw = get_cached_candles(pair, tf, count, max_age=15)
+    if not raw or len(raw) < 80:
+        return None
+    df = pd.DataFrame(raw)
+    df.rename(columns={'open':'Open','max':'High','min':'Low','close':'Close','volume':'Volume'}, inplace=True)
+    smart_df_cache.set(key, df)
+    return df
+
+# ========== HIGHER TIMEFRAME TRENDS ==========
+
+def get_higher_tf_trend(pair):
+    with data_lock:
+        if pair in state.ht_trend_cache and get_iq_time() - state.ht_trend_cache[pair][1] < 900:
+            return state.ht_trend_cache[pair][0]
+    try:
+        candles = get_cached_candles(pair, TIMEFRAME_1H, 10, max_age=300)
+        if not candles or len(candles) < 5:
+            return None
+        df_h = pd.DataFrame(candles)
+        df_h.rename(columns={'close':'Close'}, inplace=True)
+        df_h['ALMA_9'] = calculate_alma(df_h['Close'], 9, 0.85, 6)
+        df_h['ALMA_50'] = calculate_alma(df_h['Close'], 50, 0.85, 6)
+        curr_h = df_h.iloc[-1]
+        prev_h = df_h.iloc[-2]
+        if curr_h['ALMA_9'] > curr_h['ALMA_50'] and prev_h['ALMA_9'] > prev_h['ALMA_50']:
+            trend = "CALL"
+        elif curr_h['ALMA_9'] < curr_h['ALMA_50'] and prev_h['ALMA_9'] < prev_h['ALMA_50']:
+            trend = "PUT"
+        else:
+            trend = None
+        with data_lock:
+            state.ht_trend_cache[pair] = (trend, get_iq_time())
+        return trend
+    except Exception as e:
+        logger.error(f"خطأ HTF {pair}: {e}")
+        return None
+
+def get_king_htf_trend(pair):
+    key = f"king_htf_{pair}"
+    now = time.time()
+    with data_lock:
+        if key in state.king_htf_cache and now - state.king_htf_cache[key][1] < 900:
+            return state.king_htf_cache[key][0]
+    try:
+        candles = get_cached_candles(pair, TIMEFRAME_1H, 10, max_age=300)
+        if not candles or len(candles) < 5:
+            return None
+        df_h = pd.DataFrame(candles)
+        df_h.rename(columns={'close':'Close'}, inplace=True)
+        df_h['ALMA_9'] = calculate_alma(df_h['Close'], 9, 0.85, 6)
+        df_h['ALMA_50'] = calculate_alma(df_h['Close'], 50, 0.85, 6)
+        curr_h = df_h.iloc[-1]
+        prev_h = df_h.iloc[-2]
+        if curr_h['ALMA_9'] > curr_h['ALMA_50'] and prev_h['ALMA_9'] > prev_h['ALMA_50']:
+            trend = "CALL"
+        elif curr_h['ALMA_9'] < curr_h['ALMA_50'] and prev_h['ALMA_9'] < prev_h['ALMA_50']:
+            trend = "PUT"
+        else:
+            trend = None
+        with data_lock:
+            state.king_htf_cache[key] = (trend, now)
+        return trend
+    except Exception as e:
+        logger.error(f"خطأ King HTF {pair}: {e}")
+        return None
 
 # ========== TRADE RESULTS CHECK ==========
 
