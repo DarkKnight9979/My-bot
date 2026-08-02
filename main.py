@@ -1029,50 +1029,36 @@ def generate_quantum_performance_report(trades):
     weights = QUANTUM_CONFIG["weights"]
     
     msg = (
-        f""""🧠 *تقرير أداء Quantum Smart Flow*
-\n"""
-        f""""━━━━━━━━━━━━━━━━━━━━
-\n"""
-        f""""📈 *إجمالي الصفقات:* {total}
-\n"""
-        f""""✅ *رابحة:* {wins} | ❌ *خاسرة:* {losses}
-\n"""
-        f""""🎯 *نسبة الربح:* {wr:.1f}%
-\n"""
-        f""""━━━━━━━━━━━━━━━━━━━━
-\n"""
-        f""""📊 *توزيع المستويات:*
-\n"""
+        f"🧠 *تقرير أداء Quantum Smart Flow*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"📈 *إجمالي الصفقات:* {total}\n"
+        f"✅ *رابحة:* {wins} | ❌ *خاسرة:* {losses}\n"
+        f"🎯 *نسبة الربح:* {wr:.1f}%\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"📊 *توزيع المستويات:*\n"
     )
     
     for level, data in sorted(levels.items()):
         lwr = (data["win"] / data["total"] * 100) if data["total"] > 0 else 0
         name = QUANTUM_SIGNAL_NAMES.get(level, (f"Level {level}", ""))[0]
-        msg += f""""  {name}: {data['total']} صفقة — WR: {lwr:.1f}%
-\n"""
+        msg += f"  {name}: {data['total']} صفقة — WR: {lwr:.1f}%\n"
     
     msg += (
-        f""""━━━━━━━━━━━━━━━━━━━━
-\n"""
-        f""""⚖️ *الأوزان الحالية:*
-\n"""
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"⚖️ *الأوزان الحالية:*\n"
     )
     
     for key, value in weights.items():
-        msg += f""""  {key}: {value}
-\n"""
+        msg += f"  {key}: {value}\n"
     
     if isinstance(importance, dict) and "status" not in importance:
         msg += (
-            f""""━━━━━━━━━━━━━━━━━━━━
-\n"""
-            f""""🔬 *أهمية العوامل:*
-\n"""
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"🔬 *أهمية العوامل:*\n"
         )
         for feature, data in list(importance.items())[:4]:
             if isinstance(data, dict) and data.get('winrate', 0) > 0:
-                msg += f""""  {feature}: WR {data['winrate']}% (غطاء {data['coverage']}%)
-\n"""
+                msg += f"  {feature}: WR {data['winrate']}% (غطاء {data['coverage']}%)\n"
     
     return msg
 
@@ -1082,11 +1068,9 @@ def handle_quantum_command(command):
     cmd = command.lower().strip()
     
     if cmd == "/quantum_weights":
-        msg = """🧠 *الأوزان الحالية Quantum:*
-\n"""
+        msg = "🧠 *الأوزان الحالية Quantum:*\n"
         for key, value in QUANTUM_CONFIG["weights"].items():
-            msg += f""""  {key}: {value}
-\n"""
+            msg += f"  {key}: {value}\n"
         return msg
     
     elif cmd == "/quantum_stats":
@@ -1099,15 +1083,12 @@ def handle_quantum_command(command):
         importance = feature_importance_quantum(quantum_trades)
         
         if isinstance(importance, dict) and "status" in importance:
-            return f""""🔬 *Feature Importance - Quantum:*
-\n{importance['status']}"""
+            return f"🔬 *Feature Importance - Quantum:*\n{importance['status']}"
         
-        msg = """🔬 *Feature Importance - Quantum:*
-\n"""
+        msg = "🔬 *Feature Importance - Quantum:*\n"
         for feature, data in importance.items():
             if isinstance(data, dict):
-                msg += f""""  {feature}: WR {data.get('winrate', 0)}% (غطاء {data.get('coverage', 0)}%)
-\n"""
+                msg += f"  {feature}: WR {data.get('winrate', 0)}% (غطاء {data.get('coverage', 0)}%)\n"
         return msg
     
     elif cmd == "/quantum_weights reset":
@@ -1144,11 +1125,9 @@ def quantum_stats_worker():
                     update_quantum_weights(quantum_trades)
                     logger.info(f"🧠 تم تحديث أوزان Quantum: {QUANTUM_CONFIG['weights']}")
                     
-                    msg = """🧠 *تحديث أوزان Quantum*
-\n"""
+                    msg = "🧠 *تحديث أوزان Quantum*\n"
                     for key, value in QUANTUM_CONFIG["weights"].items():
-                        msg += f""""  {key}: {value}
-\n"""
+                        msg += f"  {key}: {value}\n"
                     send_telegram_message(msg)
                 
                 last_learning = now
@@ -1293,24 +1272,15 @@ def analyze_pair_quantum(pair, timeframe="5m"):
                 vol_status = vol_filter['reason']
 
                 msg = (
-                    f""""⚠️ *تنبيه مبكر — {signal_name_ar}*
-\n"""
-                    f""""الزوج: `{pair}` [5 دقائق]
-\n"""
-                    f""""الاتجاه: *{da}*
-\n"""
-                    f""""📊 النقاط: *{final_score}/100* (معدلة)
-\n"""
-                    f""""⏱️ *صفقة قادمة خلال 20 ثانية...*
-\n"""
-                    f""""🔄 *جاري التحقق من الشروط النهائية...*
-\n"""
-                    f""""━━━━━━━━━━━━
-\n"""
-                    f""""🕐 *الوقت:* {time_quality}
-\n"""
-                    f""""📍 {regime_badge}
-\n"""
+                    f"⚠️ *تنبيه مبكر — {signal_name_ar}*\n"
+                    f"الزوج: `{pair}` [5 دقائق]\n"
+                    f"الاتجاه: *{da}*\n"
+                    f"📊 النقاط: *{final_score}/100* (معدلة)\n"
+                    f"⏱️ *صفقة قادمة خلال 20 ثانية...*\n"
+                    f"🔄 *جاري التحقق من الشروط النهائية...*\n"
+                    f"━━━━━━━━━━━━\n"
+                    f"🕐 *الوقت:* {time_quality}\n"
+                    f"📍 {regime_badge}\n"
                     f"⚛️ Kalman: {smoothed_price:.5f} | {vol_emoji} {vol_status}"
                 )
                 send_telegram_message(msg)
@@ -1367,24 +1337,15 @@ def analyze_pair_quantum(pair, timeframe="5m"):
         indicators_str += f" | {kalman_info} | {volatility_info}"
 
         msg = (
-            f""""{emoji} *{signal_name_ar}* {emoji}
-\n"""
-            f""""الزوج: `{pair}` (IQ Option) [5 دقائق]
-\n"""
-            f""""الاتجاه: *{da}*
-\n"""
-            f""""⏱️ *المدة:* {duration_text}
-\n"""
-            f""""📊 *المؤشرات:* {indicators_str}
-\n"""
-            f""""🕐 *الوقت:* {time_quality}
-\n"""
-            f""""📍 *حالة السوق:* {regime_badge}
-\n"""
-            f""""⚛️ *Kalman Fair Value:* `{smoothed_price:.5f}`
-\n"""
-            f""""📊 *حالة التقلب:* {vol_emoji} {vol_status}
-\n"""
+            f"{emoji} *{signal_name_ar}* {emoji}\n"
+            f"الزوج: `{pair}` (IQ Option) [5 دقائق]\n"
+            f"الاتجاه: *{da}*\n"
+            f"⏱️ *المدة:* {duration_text}\n"
+            f"📊 *المؤشرات:* {indicators_str}\n"
+            f"🕐 *الوقت:* {time_quality}\n"
+            f"📍 *حالة السوق:* {regime_badge}\n"
+            f"⚛️ *Kalman Fair Value:* `{smoothed_price:.5f}`\n"
+            f"📊 *حالة التقلب:* {vol_emoji} {vol_status}\n"
             f"⚡ *ادخل الآن في الشمعة القادمة!*"
         )
         send_telegram_message(msg)
@@ -1727,22 +1688,14 @@ def send_early_alert(pair, direction, signal_name, score, strategy_name, regime=
     time_quality = get_time_quality(strategy_name)
     regime_badge = get_regime_badge(strategy_name, regime)
     msg = (
-        f""""⚠️ *تنبيه مبكر — {signal_name}*
-\n"""
-        f""""الزوج: `{pair}` [5 دقائق]
-\n"""
-        f""""الاتجاه: *{da}*
-\n"""
-        f""""📊 النقاط: *{score}/100*
-\n"""
-        f""""⏱️ *صفقة قادمة خلال 20 ثانية...*
-\n"""
-        f""""🔄 *جاري التحقق من الشروط النهائية...*
-\n"""
-        f""""━━━━━━━━━━━━
-\n"""
-        f""""🕐 *الوقت:* {time_quality}
-\n"""
+        f"⚠️ *تنبيه مبكر — {signal_name}*\n"
+        f"الزوج: `{pair}` [5 دقائق]\n"
+        f"الاتجاه: *{da}*\n"
+        f"📊 النقاط: *{score}/100*\n"
+        f"⏱️ *صفقة قادمة خلال 20 ثانية...*\n"
+        f"🔄 *جاري التحقق من الشروط النهائية...*\n"
+        f"━━━━━━━━━━━━\n"
+        f"🕐 *الوقت:* {time_quality}\n"
         f"📍 {regime_badge}"
     )
     send_telegram_message(msg)
@@ -1750,14 +1703,10 @@ def send_early_alert(pair, direction, signal_name, score, strategy_name, regime=
 def send_cancelled_alert(pair, direction, reason, strategy_name):
     da = "صعود (CALL)" if direction == "CALL" else "هبوط (PUT)"
     msg = (
-        f""""❌ *تم إلغاء الصفقة*
-\n"""
-        f""""الزوج: `{pair}` [5 دقائق]
-\n"""
-        f""""الاتجاه: *{da}*
-\n"""
-        f""""🚫 *السبب:* {reason}
-\n"""
+        f"❌ *تم إلغاء الصفقة*\n"
+        f"الزوج: `{pair}` [5 دقائق]\n"
+        f"الاتجاه: *{da}*\n"
+        f"🚫 *السبب:* {reason}\n"
         f"💡 *الشروط تغيرت قبل الإغلاق*"
     )
     send_telegram_message(msg)
@@ -1779,20 +1728,13 @@ def send_final_signal(pair, direction, signal_name, score, duration_text, indica
         emoji = "🧠"
     
     msg = (
-        f""""{emoji} *{signal_name}* {emoji}
-\n"""
-        f""""الزوج: `{pair}` (IQ Option) [5 دقائق]
-\n"""
-        f""""الاتجاه: *{da}*
-\n"""
-        f""""⏱️ *المدة:* {duration_text}
-\n"""
-        f""""📊 *المؤشرات:* {indicators}
-\n"""
-        f""""🕐 *الوقت:* {time_quality}
-\n"""
-        f""""📍 *حالة السوق:* {regime_badge}
-\n"""
+        f"{emoji} *{signal_name}* {emoji}\n"
+        f"الزوج: `{pair}` (IQ Option) [5 دقائق]\n"
+        f"الاتجاه: *{da}*\n"
+        f"⏱️ *المدة:* {duration_text}\n"
+        f"📊 *المؤشرات:* {indicators}\n"
+        f"🕐 *الوقت:* {time_quality}\n"
+        f"📍 *حالة السوق:* {regime_badge}\n"
         f"⚡ *ادخل الآن في الشمعة القادمة!*"
     )
     send_telegram_message(msg)
