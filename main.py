@@ -1512,7 +1512,7 @@ def get_htf_market_regime(pair):
         bbw = bollinger_bandwidth(df_h, 20)
 
         # Detect HTF market structure (Higher Highs / Lower Lows)
-        df_h = detect_swings(df_h, window=2)
+        df_h = detect_swings(df_h.copy(), window=2)
         structure, _, _ = get_market_structure(df_h, lookback=30)
 
         # Determine trend direction from HTF
