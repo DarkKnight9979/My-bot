@@ -57,7 +57,6 @@ SETTINGS_CACHE_TTL = 300
 TIMEFRAME_4H = 14400
 HTF_REGIME_CACHE_TTL = 900
 
-# Pair-specific volatility and ADX thresholds
 PAIR_THRESHOLDS = {
     "EURUSD": {"adx_trending": 22, "adx_ranging": 16, "atr_min_pct": 0.00025, "atr_max_pct": 0.003, "volatility_ideal_low": 0.0008, "volatility_ideal_high": 0.003},
     "GBPUSD": {"adx_trending": 22, "adx_ranging": 16, "atr_min_pct": 0.00030, "atr_max_pct": 0.004, "volatility_ideal_low": 0.0010, "volatility_ideal_high": 0.004},
@@ -525,8 +524,6 @@ PRO_EMOJIS = {1: "🥉", 2: "🥈", 3: "🥇", 4: "🔥"}
 # QUANTUM SMART FLOW ENGINE v3.1 — FULLY INTEGRATED
 # ============================================================
 
-# ========== QUANTUM CONFIGURATION ==========
-
 QUANTUM_CONFIG = {
     "min_score_live": 85,
     "min_score_otc": 80,
@@ -563,8 +560,6 @@ QUANTUM_CONFIG = {
 
 quantum_memory = {}
 quantum_weights_history = []
-
-# ========== QUANTUM SIGNAL NAMES ==========
 
 QUANTUM_SIGNAL_NAMES = {
     1: ("Quantum Bronze 🧠🥉", "QUANTUM BRONZE"),
@@ -614,9 +609,7 @@ def get_kalman(pair):
         kalman_instances[pair] = KalmanFilter(q=0.001, r=0.05)
     return kalman_instances[pair]
 
-# ============================================================
-# VOLATILITY FILTER
-# ============================================================
+# ========== VOLATILITY FILTER ==========
 
 def analyze_volatility_filter(volatility):
     config = QUANTUM_CONFIG.get("volatility_filter", {})
