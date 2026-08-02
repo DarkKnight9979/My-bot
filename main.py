@@ -57,16 +57,14 @@ SETTINGS_CACHE_TTL = 300
 TIMEFRAME_4H = 14400
 HTF_REGIME_CACHE_TTL = 900
 
-# Pair-specific volatility and ADX thresholds (based on average daily ranges)
+# Pair-specific volatility and ADX thresholds
 PAIR_THRESHOLDS = {
-    # Major pairs - lower volatility
     "EURUSD": {"adx_trending": 22, "adx_ranging": 16, "atr_min_pct": 0.00025, "atr_max_pct": 0.003, "volatility_ideal_low": 0.0008, "volatility_ideal_high": 0.003},
     "GBPUSD": {"adx_trending": 22, "adx_ranging": 16, "atr_min_pct": 0.00030, "atr_max_pct": 0.004, "volatility_ideal_low": 0.0010, "volatility_ideal_high": 0.004},
     "USDJPY": {"adx_trending": 22, "adx_ranging": 16, "atr_min_pct": 0.00025, "atr_max_pct": 0.003, "volatility_ideal_low": 0.0008, "volatility_ideal_high": 0.003},
     "USDCHF": {"adx_trending": 22, "adx_ranging": 16, "atr_min_pct": 0.00025, "atr_max_pct": 0.003, "volatility_ideal_low": 0.0008, "volatility_ideal_high": 0.003},
     "AUDUSD": {"adx_trending": 22, "adx_ranging": 16, "atr_min_pct": 0.00030, "atr_max_pct": 0.004, "volatility_ideal_low": 0.0010, "volatility_ideal_high": 0.004},
     "USDCAD": {"adx_trending": 22, "adx_ranging": 16, "atr_min_pct": 0.00025, "atr_max_pct": 0.003, "volatility_ideal_low": 0.0008, "volatility_ideal_high": 0.003},
-    # Cross pairs - medium volatility
     "EURJPY": {"adx_trending": 24, "adx_ranging": 18, "atr_min_pct": 0.00040, "atr_max_pct": 0.005, "volatility_ideal_low": 0.0015, "volatility_ideal_high": 0.005},
     "EURGBP": {"adx_trending": 22, "adx_ranging": 16, "atr_min_pct": 0.00025, "atr_max_pct": 0.003, "volatility_ideal_low": 0.0008, "volatility_ideal_high": 0.003},
     "GBPJPY": {"adx_trending": 26, "adx_ranging": 20, "atr_min_pct": 0.00050, "atr_max_pct": 0.006, "volatility_ideal_low": 0.0020, "volatility_ideal_high": 0.006},
@@ -75,7 +73,6 @@ PAIR_THRESHOLDS = {
     "EURAUD": {"adx_trending": 24, "adx_ranging": 18, "atr_min_pct": 0.00035, "atr_max_pct": 0.004, "volatility_ideal_low": 0.0012, "volatility_ideal_high": 0.004},
     "EURCAD": {"adx_trending": 24, "adx_ranging": 18, "atr_min_pct": 0.00035, "atr_max_pct": 0.004, "volatility_ideal_low": 0.0012, "volatility_ideal_high": 0.004},
     "AUDCAD": {"adx_trending": 22, "adx_ranging": 16, "atr_min_pct": 0.00030, "atr_max_pct": 0.004, "volatility_ideal_low": 0.0010, "volatility_ideal_high": 0.004},
-    # OTC pairs - higher volatility
     "EURUSD-OTC": {"adx_trending": 26, "adx_ranging": 20, "atr_min_pct": 0.00050, "atr_max_pct": 0.006, "volatility_ideal_low": 0.0015, "volatility_ideal_high": 0.005},
     "GBPUSD-OTC": {"adx_trending": 26, "adx_ranging": 20, "atr_min_pct": 0.00060, "atr_max_pct": 0.007, "volatility_ideal_low": 0.0020, "volatility_ideal_high": 0.006},
     "USDJPY-OTC": {"adx_trending": 26, "adx_ranging": 20, "atr_min_pct": 0.00050, "atr_max_pct": 0.006, "volatility_ideal_low": 0.0015, "volatility_ideal_high": 0.005},
@@ -87,9 +84,7 @@ PAIR_THRESHOLDS = {
 }
 
 def get_pair_thresholds(pair):
-    """Get pair-specific thresholds, fallback to EURUSD defaults"""
     return PAIR_THRESHOLDS.get(pair, PAIR_THRESHOLDS.get("EURUSD"))
-
 
 # ========== CREDENTIALS ==========
 IQ_EMAIL = os.environ.get("IQ_EMAIL", "zain1mohamed2425@gmail.com")
@@ -209,9 +204,7 @@ class BotState:
         self.cycle_count = 0
         self.is_reconnecting = False
         self.king_htf_cache = {}
-        # ===== نظام التنبيهات الجديد (3 مراحل) =====
         self.pending_alerts = {}
-        # ===== منع تكرار الإشارات النهائية =====
         self.sent_final_signals = {}
 
 state = BotState()
@@ -480,7 +473,6 @@ def telegram_reply_worker():
                         if not text:
                             continue
                         
-                        # معالجة أوامر Quantum
                         if text.startswith("/quantum"):
                             response = handle_quantum_command(text)
                             if response:
@@ -557,16 +549,15 @@ QUANTUM_CONFIG = {
         "min_history": 100,
         "test_size": 0.3
     },
-    # ===== إضافة فلتر التقلب =====
     "volatility_filter": {
-        "min_volatility": 0.0005,      # أقل تقبل مسموح
-        "max_volatility": 0.01,        # أعلى تقلب مسموح
-        "ideal_low": 0.001,            # بداية التقلب المثالي
-        "ideal_high": 0.005,           # نهاية التقلب المثالي
-        "score_bonus": 5,              # مكافأة التقلب المثالي
-        "score_penalty": 10,           # عقوبة التقلب المنخفض/العالي
-        "reject_low": 0.0003,          # أقل من كده ممنوع الدخول
-        "reject_high": 0.012           # أعلى من كده ممنوع الدخول
+        "min_volatility": 0.0005,
+        "max_volatility": 0.01,
+        "ideal_low": 0.001,
+        "ideal_high": 0.005,
+        "score_bonus": 5,
+        "score_penalty": 10,
+        "reject_low": 0.0003,
+        "reject_high": 0.012
     }
 }
 
@@ -624,16 +615,12 @@ def get_kalman(pair):
     return kalman_instances[pair]
 
 # ============================================================
-# VOLATILITY FILTER (المحسن الجديد)
+# VOLATILITY FILTER
 # ============================================================
 
 def analyze_volatility_filter(volatility):
-    """
-    تحليل التقلب وإرجاع التعديل المناسب للدخول
-    """
     config = QUANTUM_CONFIG.get("volatility_filter", {})
     
-    # القيم الافتراضية
     reject_low = config.get("reject_low", 0.0003)
     reject_high = config.get("reject_high", 0.012)
     ideal_low = config.get("ideal_low", 0.001)
@@ -641,7 +628,6 @@ def analyze_volatility_filter(volatility):
     score_bonus = config.get("score_bonus", 5)
     score_penalty = config.get("score_penalty", 10)
     
-    # حالة الرفض المطلق
     if volatility < reject_low:
         return {
             'status': 'REJECT',
@@ -658,7 +644,6 @@ def analyze_volatility_filter(volatility):
             'can_enter': False
         }
     
-    # تقلب منخفض (تحذير مع خصم)
     if volatility < ideal_low:
         return {
             'status': 'WARNING',
@@ -668,7 +653,6 @@ def analyze_volatility_filter(volatility):
             'emoji': '😴'
         }
     
-    # تقلب مثالي (مكافأة)
     if ideal_low <= volatility <= ideal_high:
         return {
             'status': 'IDEAL',
@@ -678,9 +662,8 @@ def analyze_volatility_filter(volatility):
             'emoji': '🎯'
         }
     
-    # تقلب عالي (تحذير مع خصم)
     if volatility < reject_high:
-        penalty = score_penalty // 2  # خصم نصف العقوبة
+        penalty = score_penalty // 2
         return {
             'status': 'WARNING',
             'reason': f'⚠️ تقلب عالي ({volatility:.4f}) - خصم {penalty} نقطة',
@@ -689,7 +672,6 @@ def analyze_volatility_filter(volatility):
             'emoji': '⚡'
         }
     
-    # افتراضي
     return {
         'status': 'OK',
         'reason': f'تقلب متوسط ({volatility:.4f})',
@@ -1029,50 +1011,36 @@ def generate_quantum_performance_report(trades):
     weights = QUANTUM_CONFIG["weights"]
     
     msg = (
-        f""""🧠 *تقرير أداء Quantum Smart Flow*
-\n"""
-        f""""━━━━━━━━━━━━━━━━━━━━
-\n"""
-        f""""📈 *إجمالي الصفقات:* {total}
-\n"""
-        f""""✅ *رابحة:* {wins} | ❌ *خاسرة:* {losses}
-\n"""
-        f""""🎯 *نسبة الربح:* {wr:.1f}%
-\n"""
-        f""""━━━━━━━━━━━━━━━━━━━━
-\n"""
-        f""""📊 *توزيع المستويات:*
-\n"""
+        f"🧠 *تقرير أداء Quantum Smart Flow*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"📈 *إجمالي الصفقات:* {total}\n"
+        f"✅ *رابحة:* {wins} | ❌ *خاسرة:* {losses}\n"
+        f"🎯 *نسبة الربح:* {wr:.1f}%\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"📊 *توزيع المستويات:*\n"
     )
     
     for level, data in sorted(levels.items()):
         lwr = (data["win"] / data["total"] * 100) if data["total"] > 0 else 0
         name = QUANTUM_SIGNAL_NAMES.get(level, (f"Level {level}", ""))[0]
-        msg += f""""  {name}: {data['total']} صفقة — WR: {lwr:.1f}%
-\n"""
+        msg += f"  {name}: {data['total']} صفقة — WR: {lwr:.1f}%\n"
     
     msg += (
-        f""""━━━━━━━━━━━━━━━━━━━━
-\n"""
-        f""""⚖️ *الأوزان الحالية:*
-\n"""
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"⚖️ *الأوزان الحالية:*\n"
     )
     
     for key, value in weights.items():
-        msg += f""""  {key}: {value}
-\n"""
+        msg += f"  {key}: {value}\n"
     
     if isinstance(importance, dict) and "status" not in importance:
         msg += (
-            f""""━━━━━━━━━━━━━━━━━━━━
-\n"""
-            f""""🔬 *أهمية العوامل:*
-\n"""
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"🔬 *أهمية العوامل:*\n"
         )
         for feature, data in list(importance.items())[:4]:
             if isinstance(data, dict) and data.get('winrate', 0) > 0:
-                msg += f""""  {feature}: WR {data['winrate']}% (غطاء {data['coverage']}%)
-\n"""
+                msg += f"  {feature}: WR {data['winrate']}% (غطاء {data['coverage']}%)\n"
     
     return msg
 
@@ -1082,11 +1050,9 @@ def handle_quantum_command(command):
     cmd = command.lower().strip()
     
     if cmd == "/quantum_weights":
-        msg = """🧠 *الأوزان الحالية Quantum:*
-\n"""
+        msg = "🧠 *الأوزان الحالية Quantum:*\n"
         for key, value in QUANTUM_CONFIG["weights"].items():
-            msg += f""""  {key}: {value}
-\n"""
+            msg += f"  {key}: {value}\n"
         return msg
     
     elif cmd == "/quantum_stats":
@@ -1099,15 +1065,12 @@ def handle_quantum_command(command):
         importance = feature_importance_quantum(quantum_trades)
         
         if isinstance(importance, dict) and "status" in importance:
-            return f""""🔬 *Feature Importance - Quantum:*
-\n{importance['status']}"""
+            return f"🔬 *Feature Importance - Quantum:*\n{importance['status']}"
         
-        msg = """🔬 *Feature Importance - Quantum:*
-\n"""
+        msg = "🔬 *Feature Importance - Quantum:*\n"
         for feature, data in importance.items():
             if isinstance(data, dict):
-                msg += f""""  {feature}: WR {data.get('winrate', 0)}% (غطاء {data.get('coverage', 0)}%)
-\n"""
+                msg += f"  {feature}: WR {data.get('winrate', 0)}% (غطاء {data.get('coverage', 0)}%)\n"
         return msg
     
     elif cmd == "/quantum_weights reset":
@@ -1135,7 +1098,6 @@ def quantum_stats_worker():
         try:
             now = get_iq_time()
             
-            # Self-Learning (كل يوم)
             if now - last_learning > QUANTUM_CONFIG["learning"]["update_interval"]:
                 trades = read_trade_log(max_entries=5000)
                 quantum_trades = [t for t in trades if t.get('strategy') == 'quantum']
@@ -1144,16 +1106,13 @@ def quantum_stats_worker():
                     update_quantum_weights(quantum_trades)
                     logger.info(f"🧠 تم تحديث أوزان Quantum: {QUANTUM_CONFIG['weights']}")
                     
-                    msg = """🧠 *تحديث أوزان Quantum*
-\n"""
+                    msg = "🧠 *تحديث أوزان Quantum*\n"
                     for key, value in QUANTUM_CONFIG["weights"].items():
-                        msg += f""""  {key}: {value}
-\n"""
+                        msg += f"  {key}: {value}\n"
                     send_telegram_message(msg)
                 
                 last_learning = now
             
-            # تقرير الأداء (كل أسبوع)
             if now - last_report > 604800:
                 trades = read_trade_log(max_entries=10000)
                 report = generate_quantum_performance_report(trades)
@@ -1167,7 +1126,7 @@ def quantum_stats_worker():
         
         stop_event.wait(3600)
 
-# ========== QUANTUM MAIN STRATEGY (مع فلتر التقلب المحسن) ==========
+# ========== QUANTUM MAIN STRATEGY ==========
 
 def analyze_pair_quantum(pair, timeframe="5m"):
     tf_seconds, duration_text = 300, "5 دقائق"
@@ -1185,22 +1144,18 @@ def analyze_pair_quantum(pair, timeframe="5m"):
     curr = df.iloc[curr_idx]
     price = curr['Close']
 
-    # Kalman Filter
     kalman = get_kalman(pair)
     smoothed_price = kalman.update(price)
     volatility = kalman.get_volatility()
 
-    # ===== فلتر التقلب المحسن =====
     vol_filter = analyze_volatility_filter(volatility)
     
-    # رفض الدخول في حالة التقلب غير المناسب
     if not vol_filter['can_enter']:
         logger.info(f"🛑 Quantum {pair}: {vol_filter['reason']}")
         return None
     
     logger.info(f"📊 Quantum {pair}: {vol_filter['reason']}")
 
-    # تحليل العوامل
     structure = detect_market_structure_quantum(df)
     liquidity = detect_liquidity_sweep_quantum(df, curr)
     order_block = detect_order_block_quantum(df, curr)
@@ -1219,15 +1174,13 @@ def analyze_pair_quantum(pair, timeframe="5m"):
 
     result = calculate_confidence_score_quantum(structure, liquidity, order_block, fvg, volume, momentum)
 
-    # ===== تطبيق تعديل التقلب على النتيجة =====
     adjusted_score = result['score'] + vol_filter['score_adjust']
-    adjusted_score = max(0, min(100, adjusted_score))  # تأكد أن النتيجة بين 0 و 100
+    adjusted_score = max(0, min(100, adjusted_score))
     
     logger.info(f"📊 Quantum {pair}: النتيجة الأصلية {result['score']} → معدلة {adjusted_score} ({vol_filter['reason']})")
 
     min_score = QUANTUM_CONFIG["min_score_otc"] if "OTC" in pair.upper() else QUANTUM_CONFIG["min_score_live"]
     
-    # استخدام النتيجة المعدلة
     final_score = adjusted_score
     
     if result['direction'] is None or final_score < min_score:
@@ -1238,7 +1191,6 @@ def analyze_pair_quantum(pair, timeframe="5m"):
         logger.info(f"🛑 Quantum {pair}: إشارة مكررة - تم الإلغاء")
         return None
 
-    # تحديد المستوى بناءً على النتيجة المعدلة
     if final_score >= 95:
         level = 4
         signal_name_ar, signal_name_en = QUANTUM_SIGNAL_NAMES[level]
@@ -1261,13 +1213,12 @@ def analyze_pair_quantum(pair, timeframe="5m"):
     pair_key = f"quantum_{pair}_{candle_start}"
     pending_key = f"quantum_{pair}_{candle_start}"
 
-    # فحص الأخبار والشروط المشتركة
     ok, reason = passes_common_entry_filters(pair)
     if not ok:
         logger.info(f"🛑 Quantum {pair}: إلغاء - {reason}")
         return None
 
-    # ===== المرحلة 1: تنبيه مبكر (270-280) =====
+    # ===== المرحلة 1: تنبيه مبكر =====
     if 270 <= csec <= 280:
         with data_lock:
             if not hasattr(state, 'quantum_alerted_pairs'):
@@ -1288,36 +1239,26 @@ def analyze_pair_quantum(pair, timeframe="5m"):
                 time_quality = get_time_quality('quantum')
                 regime_badge = get_regime_badge('quantum', regime)
 
-                # إضافة معلومات التقلب في التنبيه
                 vol_emoji = vol_filter.get('emoji', '📊')
                 vol_status = vol_filter['reason']
 
                 msg = (
-                    f""""⚠️ *تنبيه مبكر — {signal_name_ar}*
-\n"""
-                    f""""الزوج: `{pair}` [5 دقائق]
-\n"""
-                    f""""الاتجاه: *{da}*
-\n"""
-                    f""""📊 النقاط: *{final_score}/100* (معدلة)
-\n"""
-                    f""""⏱️ *صفقة قادمة خلال 20 ثانية...*
-\n"""
-                    f""""🔄 *جاري التحقق من الشروط النهائية...*
-\n"""
-                    f""""━━━━━━━━━━━━
-\n"""
-                    f""""🕐 *الوقت:* {time_quality}
-\n"""
-                    f""""📍 {regime_badge}
-\n"""
+                    f"⚠️ *تنبيه مبكر — {signal_name_ar}*\n"
+                    f"الزوج: `{pair}` [5 دقائق]\n"
+                    f"الاتجاه: *{da}*\n"
+                    f"📊 النقاط: *{final_score}/100* (معدلة)\n"
+                    f"⏱️ *صفقة قادمة خلال 20 ثانية...*\n"
+                    f"🔄 *جاري التحقق من الشروط النهائية...*\n"
+                    f"━━━━━━━━━━━━\n"
+                    f"🕐 *الوقت:* {time_quality}\n"
+                    f"📍 {regime_badge}\n"
                     f"⚛️ Kalman: {smoothed_price:.5f} | {vol_emoji} {vol_status}"
                 )
                 send_telegram_message(msg)
                 state.quantum_alerted_pairs[pair_key] = iq_now
         return None
 
-    # ===== المرحلة 2 & 3 (280-299) =====
+    # ===== المرحلة 2 & 3 =====
     if not (280 <= csec <= 299):
         return None
 
@@ -1340,7 +1281,7 @@ def analyze_pair_quantum(pair, timeframe="5m"):
                 del state.pending_alerts[pending_key]
         return None
 
-    # ===== المرحلة 3: الإشارة النهائية (293-299) =====
+    # ===== المرحلة 3: الإشارة النهائية =====
     if csec >= 293:
         sent_key = f"quantum_sent_{pair}_{candle_start}"
         with data_lock:
@@ -1367,24 +1308,15 @@ def analyze_pair_quantum(pair, timeframe="5m"):
         indicators_str += f" | {kalman_info} | {volatility_info}"
 
         msg = (
-            f""""{emoji} *{signal_name_ar}* {emoji}
-\n"""
-            f""""الزوج: `{pair}` (IQ Option) [5 دقائق]
-\n"""
-            f""""الاتجاه: *{da}*
-\n"""
-            f""""⏱️ *المدة:* {duration_text}
-\n"""
-            f""""📊 *المؤشرات:* {indicators_str}
-\n"""
-            f""""🕐 *الوقت:* {time_quality}
-\n"""
-            f""""📍 *حالة السوق:* {regime_badge}
-\n"""
-            f""""⚛️ *Kalman Fair Value:* `{smoothed_price:.5f}`
-\n"""
-            f""""📊 *حالة التقلب:* {vol_emoji} {vol_status}
-\n"""
+            f"{emoji} *{signal_name_ar}* {emoji}\n"
+            f"الزوج: `{pair}` (IQ Option) [5 دقائق]\n"
+            f"الاتجاه: *{da}*\n"
+            f"⏱️ *المدة:* {duration_text}\n"
+            f"📊 *المؤشرات:* {indicators_str}\n"
+            f"🕐 *الوقت:* {time_quality}\n"
+            f"📍 *حالة السوق:* {regime_badge}\n"
+            f"⚛️ *Kalman Fair Value:* `{smoothed_price:.5f}`\n"
+            f"📊 *حالة التقلب:* {vol_emoji} {vol_status}\n"
             f"⚡ *ادخل الآن في الشمعة القادمة!*"
         )
         send_telegram_message(msg)
@@ -1443,14 +1375,9 @@ def analyze_pair_wrapper_quantum(pair):
         logger.error(f"خطأ Quantum في {pair}: {e}")
         return pair, None
 
-
-# ========== HTF MARKET ANALYSIS (Higher Timeframe) ==========
+# ========== HTF MARKET ANALYSIS ==========
 
 def get_htf_market_regime(pair):
-    """
-    Analyze market regime on 1H timeframe for higher accuracy.
-    Returns: regime, trend_direction, structure_valid
-    """
     key = f"htf_regime_{pair}"
     now = get_iq_time()
     with data_lock:
@@ -1465,7 +1392,6 @@ def get_htf_market_regime(pair):
         df_h = pd.DataFrame(candles)
         df_h.rename(columns={'open':'Open','max':'High','min':'Low','close':'Close','volume':'Volume'}, inplace=True)
 
-        # Calculate HTF indicators
         df_h['ALMA_9'] = calculate_alma(df_h['Close'], 9, 0.85, 6)
         df_h['ALMA_50'] = calculate_alma(df_h['Close'], 50, 0.85, 6)
         atr_series = calculate_atr_series(df_h, 14)
@@ -1474,11 +1400,9 @@ def get_htf_market_regime(pair):
         adx, plus_di, minus_di = calculate_adx(df_h, 14)
         bbw = bollinger_bandwidth(df_h, 20)
 
-        # Detect HTF market structure (Higher Highs / Lower Lows)
         df_h = detect_swings(df_h, window=2)
         structure, _, _ = get_market_structure(df_h, lookback=30)
 
-        # Determine trend direction from HTF
         curr_h = df_h.iloc[-1]
         prev_h = df_h.iloc[-2]
         if curr_h['ALMA_9'] > curr_h['ALMA_50'] and prev_h['ALMA_9'] > prev_h['ALMA_50']:
@@ -1488,12 +1412,10 @@ def get_htf_market_regime(pair):
         else:
             trend_dir = None
 
-        # Get pair-specific thresholds
         thresholds = get_pair_thresholds(pair)
         adx_trend = thresholds["adx_trending"]
         adx_range = thresholds["adx_ranging"]
 
-        # Determine regime with pair-specific thresholds
         if adx >= adx_trend and atr > atr_avg * 1.2:
             regime = "trending"
         elif adx < adx_range and bbw < 0.001:
@@ -1505,7 +1427,6 @@ def get_htf_market_regime(pair):
         else:
             regime = "mixed"
 
-        # Calculate confidence based on how clear the signals are
         confidence = 50
         if structure in ["BULLISH", "BEARISH"]:
             confidence += 20
@@ -1533,18 +1454,11 @@ def get_htf_market_regime(pair):
         logger.error(f"خطأ في تحليل HTF لـ {pair}: {e}")
         return {"regime": "unknown", "trend": None, "structure": "unknown", "confidence": 0}
 
-
 def get_htf_trend_direction(pair):
-    """Get confirmed trend direction from 1H timeframe with structure validation."""
     htf = get_htf_market_regime(pair)
     return htf.get("trend"), htf.get("structure"), htf.get("confidence")
 
-
 def detect_htf_market_structure(pair):
-    """
-    Detect Higher Highs / Lower Lows structure on 1H timeframe.
-    Returns: structure_type, strength_score
-    """
     try:
         candles = get_cached_candles(pair, TIMEFRAME_1H, 100, max_age=300)
         if not candles or len(candles) < 50:
@@ -1552,7 +1466,7 @@ def detect_htf_market_structure(pair):
 
         df_h = pd.DataFrame(candles)
         df_h.rename(columns={'open':'Open','max':'High','min':'Low','close':'Close'}, inplace=True)
-        df_h = detect_swings(df_h, window=3)  # Larger window for HTF
+        df_h = detect_swings(df_h, window=3)
 
         recent = df_h.tail(60)
         sh_idx = recent[recent['is_swing_high']].index.tolist()
@@ -1561,7 +1475,6 @@ def detect_htf_market_structure(pair):
         if len(sh_idx) < 3 or len(sl_idx) < 3:
             return "neutral", 0
 
-        # Check for Higher Highs + Higher Lows (Bullish)
         hh_count = 0
         hl_count = 0
         for i in range(1, min(4, len(sh_idx))):
@@ -1571,7 +1484,6 @@ def detect_htf_market_structure(pair):
             if df_h.loc[sl_idx[-i], 'Low'] > df_h.loc[sl_idx[-(i+1)], 'Low']:
                 hl_count += 1
 
-        # Check for Lower Highs + Lower Lows (Bearish)
         lh_count = 0
         ll_count = 0
         for i in range(1, min(4, len(sh_idx))):
@@ -1594,38 +1506,27 @@ def detect_htf_market_structure(pair):
         logger.error(f"خطأ في تحليل HTF Structure لـ {pair}: {e}")
         return "unknown", 0
 
-
 def confirm_regime_with_htf(pair, ltf_regime):
-    """
-    Confirm LTF regime with HTF analysis.
-    Returns confirmed regime or 'uncertain' if HTF disagrees strongly.
-    """
     htf = get_htf_market_regime(pair)
     htf_regime = htf.get("regime", "unknown")
     htf_confidence = htf.get("confidence", 0)
 
-    # If HTF confidence is low, trust LTF
     if htf_confidence < 40:
         return ltf_regime, htf_confidence, "ltf_dominant"
 
-    # If both agree, boost confidence
     if htf_regime == ltf_regime:
         return ltf_regime, min(htf_confidence + 20, 100), "confirmed"
 
-    # If HTF says trending but LTF says ranging, trust HTF (higher timeframe is king)
     if htf_regime == "trending" and ltf_regime == "ranging":
         return "trending", htf_confidence, "htf_override"
 
-    # If HTF says ranging but LTF says trending, be cautious
     if htf_regime == "ranging" and ltf_regime == "trending":
         return "mixed", htf_confidence - 20, "conflict"
 
-    # Default: use HTF if confidence is high enough
     if htf_confidence >= 70:
         return htf_regime, htf_confidence, "htf_dominant"
 
     return ltf_regime, htf_confidence, "ltf_dominant"
-
 
 # ========== INIT QUANTUM SYSTEM ==========
 
@@ -1650,49 +1551,49 @@ def init_quantum_system():
     logger.info(f"🎯 الحد الأدنى OTC: {QUANTUM_CONFIG['min_score_otc']}")
     logger.info(f"📊 فلتر التقلب: {QUANTUM_CONFIG['volatility_filter']}")
 
-# ========== EXISTING FUNCTIONS ==========
+# ========== EXISTING FUNCTIONS FROM v7.6 ==========
 
 def get_regime_badge(strategy_name, regime):
     badges = {
         'quantum': {
             'trending':  "🌊 السوق *ترندي* — Quantum Strategy *ممتازة* 🧠 (جميع الشروط متوافقة)",
-            'ranging':   "↔️ السوق *متراوح* — Quantum Strategy *❌ مرفوضة* (الكود يلغي الصفقة تلقائياً)",
-            'high_vol':  "⚡ تقلب عالي — Quantum Strategy *جيدة* (مع فلتر التقلب + حذر)",
-            'low_vol':   "😴 تقلب منخفض — Quantum Strategy *❌ مرفوضة* (فلتر التقلب يمنع الدخول)",
-            'mixed':     "🌫️ سوق مختلط — Quantum Strategy *جيدة* (متوسطة الثقة - تحقق إضافي مطلوب)",
-            'unknown':   "❓ نوع السوق غير واضح — Quantum Strategy *⏸️ متوقفة* (انتظر توضيح الحالة)"
+            'ranging':   "↔️ السوق *متراوح* — Quantum Strategy *❌ مرفوضة*",
+            'high_vol':  "⚡ تقلب عالي — Quantum Strategy *جيدة*",
+            'low_vol':   "😴 تقلب منخفض — Quantum Strategy *❌ مرفوضة*",
+            'mixed':     "🌫️ سوق مختلط — Quantum Strategy *جيدة*",
+            'unknown':   "❓ نوع السوق غير واضح"
         },
         'original': {
-            'trending':  "🌊 السوق *ترندي* — Original Strategy *ممتازة* (ALMA cross + زخم قوي)",
-            'ranging':   "↔️ السوق *متراوح* — Original Strategy *متوسطة* (تعمل عند حدود Bollinger + RSI)",
-            'high_vol':  "⚡ تقلب عالي — Original Strategy *جيدة* (ممكن whipsaw - تحقق قوي مطلوب)",
-            'low_vol':   "😴 تقلب منخفض — Original Strategy *ضعيفة* (حجم تداول منخفض = إشارات ضعيفة)",
-            'mixed':     "🌫️ سوق مختلط — Original Strategy *جيدة* (يعتمد على توافق المؤشرات)",
-            'unknown':   "❓ نوع السوق غير واضح — Original Strategy *⏸️ متوقفة*"
+            'trending':  "🌊 السوق *ترندي* — Original Strategy *ممتازة*",
+            'ranging':   "↔️ السوق *متراوح* — Original Strategy *متوسطة*",
+            'high_vol':  "⚡ تقلب عالي — Original Strategy *جيدة*",
+            'low_vol':   "😴 تقلب منخفض — Original Strategy *ضعيفة*",
+            'mixed':     "🌫️ سوق مختلط — Original Strategy *عادية*",
+            'unknown':   "❓ نوع السوق غير واضح"
         },
         'king': {
-            'trending':  "🌊 السوق *ترندي* — King Strategy *ممتازة* 👑 (Structure + Sweep + ADX متوافقة)",
-            'ranging':   "↔️ السوق *متراوح* — King Strategy *ضعيفة* (ADX < 20 يرفض تلقائياً)",
-            'high_vol':  "⚡ تقلب عالي — King Strategy *جيدة* (Sweeps كثيرة لكن انتبه للـ false breaks)",
-            'low_vol':   "😴 تقلب منخفض — King Strategy *ضعيفة* (لا يوجد Structure واضح)",
-            'mixed':     "🌫️ سوق مختلط — King Strategy *جيدة* (يحتاج Structure واضح جداً)",
-            'unknown':   "❓ نوع السوق غير واضح — King Strategy *⏸️ متوقفة*"
+            'trending':  "🌊 السوق *ترندي* — King Strategy *ممتازة* 👑",
+            'ranging':   "↔️ السوق *متراوح* — King Strategy *متوسطة*",
+            'high_vol':  "⚡ تقلب عالي — King Strategy *جيدة*",
+            'low_vol':   "😴 تقلب منخفض — King Strategy *ضعيفة*",
+            'mixed':     "🌫️ سوق مختلط — King Strategy *عادية*",
+            'unknown':   "❓ نوع السوق غير واضح"
         },
         'smart': {
-            'trending':  "🌊 السوق *ترندي* — SMC Strategy *ممتازة* 🏆 (Trend + Structure + OB + FVG)",
-            'ranging':   "↔️ السوق *متراوح* — SMC Strategy *جيدة* (تعمل إذا كانت Swings واضحة + OB صالح)",
-            'high_vol':  "⚡ تقلب عالي — SMC Strategy *جيدة* (حذر: False sweeps ممكنة)",
-            'low_vol':   "😴 تقلب منخفض — SMC Strategy *ضعيفة* (لا يوجد Sweeps أو OBs واضحة)",
-            'mixed':     "🌫️ سوق مختلط — SMC Strategy *جيدة* (يحتاج HTF Bias واضح)",
-            'unknown':   "❓ نوع السوق غير واضح — SMC Strategy *⏸️ متوقفة*"
+            'trending':  "🌊 السوق *ترندي* — SMC Strategy *جيدة*",
+            'ranging':   "↔️ السوق *متراوح* — SMC Strategy *ضعيفة*",
+            'high_vol':  "⚡ تقلب عالي — SMC Strategy *ممتازة* 🏆",
+            'low_vol':   "😴 تقلب منخفض — SMC Strategy *ضعيفة*",
+            'mixed':     "🌫️ سوق مختلط — SMC Strategy *عادية*",
+            'unknown':   "❓ نوع السوق غير واضح"
         },
         'pro': {
-            'trending':  "🌊 السوق *ترندي* — Pro Strategy *جيدة* 🔥 (تعمل لكن تفوت Continuation)",
-            'ranging':   "↔️ السوق *متراوح* — Pro Strategy *ممتازة* ✅ (استراتيجية الـ Rejection مثالية للنطاق!)",
-            'high_vol':  "⚡ تقلب عالي — Pro Strategy *جيدة* (الظلال الطويلة ممكن تكون مضللة)",
-            'low_vol':   "😴 تقلب منخفض — Pro Strategy *ضعيفة* (لا يوجد رفض واضح عند S/R)",
-            'mixed':     "🌫️ سوق مختلط — Pro Strategy *جيدة* (يحتاج مستويات S/R واضحة)",
-            'unknown':   "❓ نوع السوق غير واضح — Pro Strategy *⏸️ متوقفة*"
+            'trending':  "🌊 السوق *ترندي* — Pro Strategy *متوسطة*",
+            'ranging':   "↔️ السوق *متراوح* — Pro Strategy *ممتازة* 🔥",
+            'high_vol':  "⚡ تقلب عالي — Pro Strategy *متوسطة*",
+            'low_vol':   "😴 تقلب منخفض — Pro Strategy *ضعيفة*",
+            'mixed':     "🌫️ سوق مختلط — Pro Strategy *جيدة*",
+            'unknown':   "❓ نوع السوق غير واضح"
         }
     }
     return badges.get(strategy_name, badges.get('quantum', {})).get(regime, "🌫️ سوق مختلط")
@@ -1727,22 +1628,14 @@ def send_early_alert(pair, direction, signal_name, score, strategy_name, regime=
     time_quality = get_time_quality(strategy_name)
     regime_badge = get_regime_badge(strategy_name, regime)
     msg = (
-        f""""⚠️ *تنبيه مبكر — {signal_name}*
-\n"""
-        f""""الزوج: `{pair}` [5 دقائق]
-\n"""
-        f""""الاتجاه: *{da}*
-\n"""
-        f""""📊 النقاط: *{score}/100*
-\n"""
-        f""""⏱️ *صفقة قادمة خلال 20 ثانية...*
-\n"""
-        f""""🔄 *جاري التحقق من الشروط النهائية...*
-\n"""
-        f""""━━━━━━━━━━━━
-\n"""
-        f""""🕐 *الوقت:* {time_quality}
-\n"""
+        f"⚠️ *تنبيه مبكر — {signal_name}*\n"
+        f"الزوج: `{pair}` [5 دقائق]\n"
+        f"الاتجاه: *{da}*\n"
+        f"📊 النقاط: *{score}/100*\n"
+        f"⏱️ *صفقة قادمة خلال 20 ثانية...*\n"
+        f"🔄 *جاري التحقق من الشروط النهائية...*\n"
+        f"━━━━━━━━━━━━\n"
+        f"🕐 *الوقت:* {time_quality}\n"
         f"📍 {regime_badge}"
     )
     send_telegram_message(msg)
@@ -1750,14 +1643,10 @@ def send_early_alert(pair, direction, signal_name, score, strategy_name, regime=
 def send_cancelled_alert(pair, direction, reason, strategy_name):
     da = "صعود (CALL)" if direction == "CALL" else "هبوط (PUT)"
     msg = (
-        f""""❌ *تم إلغاء الصفقة*
-\n"""
-        f""""الزوج: `{pair}` [5 دقائق]
-\n"""
-        f""""الاتجاه: *{da}*
-\n"""
-        f""""🚫 *السبب:* {reason}
-\n"""
+        f"❌ *تم إلغاء الصفقة*\n"
+        f"الزوج: `{pair}` [5 دقائق]\n"
+        f"الاتجاه: *{da}*\n"
+        f"🚫 *السبب:* {reason}\n"
         f"💡 *الشروط تغيرت قبل الإغلاق*"
     )
     send_telegram_message(msg)
@@ -1779,20 +1668,13 @@ def send_final_signal(pair, direction, signal_name, score, duration_text, indica
         emoji = "🧠"
     
     msg = (
-        f""""{emoji} *{signal_name}* {emoji}
-\n"""
-        f""""الزوج: `{pair}` (IQ Option) [5 دقائق]
-\n"""
-        f""""الاتجاه: *{da}*
-\n"""
-        f""""⏱️ *المدة:* {duration_text}
-\n"""
-        f""""📊 *المؤشرات:* {indicators}
-\n"""
-        f""""🕐 *الوقت:* {time_quality}
-\n"""
-        f""""📍 *حالة السوق:* {regime_badge}
-\n"""
+        f"{emoji} *{signal_name}* {emoji}\n"
+        f"الزوج: `{pair}` (IQ Option) [5 دقائق]\n"
+        f"الاتجاه: *{da}*\n"
+        f"⏱️ *المدة:* {duration_text}\n"
+        f"📊 *المؤشرات:* {indicators}\n"
+        f"🕐 *الوقت:* {time_quality}\n"
+        f"📍 *حالة السوق:* {regime_badge}\n"
         f"⚡ *ادخل الآن في الشمعة القادمة!*"
     )
     send_telegram_message(msg)
@@ -2130,8 +2012,7 @@ def get_king_htf_trend(pair):
 # ========== TRADE HELPERS ==========
 
 def _build_trade_dict(pair, direction, entry_price, expire_offset, is_king,
-                      signal_level, signal_name, score, filters, indicators, strategy,
-                      is_martingale=False):
+                      signal_level, signal_name, score, filters, indicators, strategy):
     def convert_bool_to_int(obj):
         if isinstance(obj, dict):
             return {k: convert_bool_to_int(v) for k, v in obj.items()}
@@ -2194,6 +2075,7 @@ def already_sent_this_candle(pair):
     with data_lock:
         if key in state.sent_signals:
             return True
+        state.sent_signals[key] = get_iq_time()
     return False
 
 def already_sent_this_candle_king(pair):
@@ -2201,6 +2083,7 @@ def already_sent_this_candle_king(pair):
     with data_lock:
         if key in state.king_sent_signals:
             return True
+        state.king_sent_signals[key] = get_iq_time()
     return False
 
 def already_sent_this_candle_smart(pair):
@@ -2208,6 +2091,7 @@ def already_sent_this_candle_smart(pair):
     with data_lock:
         if key in state.smart_sent_signals:
             return True
+        state.smart_sent_signals[key] = get_iq_time()
     return False
 
 def already_sent_this_candle_pro(pair):
@@ -2215,6 +2099,7 @@ def already_sent_this_candle_pro(pair):
     with data_lock:
         if key in state.pa_sent_signals:
             return True
+        state.pa_sent_signals[key] = get_iq_time()
     return False
 
 # ========== NEWS FUNCTIONS ==========
@@ -3678,164 +3563,6 @@ def check_connection_health():
         if (time.time() - start) > 0.5:
             logger.warning("⚠️ زمن استجابة عالي")
 
-
-# ========== MISSING STATS FUNCTIONS (STUBS TO PREVENT NameError) ==========
-
-def generate_report(trades, period="daily", market_type="live"):
-    """Generate performance report for a given period."""
-    if not trades:
-        return None
-    total = len(trades)
-    wins = sum(1 for t in trades if t.get("outcome") == "win")
-    losses = total - wins
-    ties = sum(1 for t in trades if t.get("outcome") == "tie")
-    wr = (wins / total * 100) if total > 0 else 0
-    return {
-        "period": period,
-        "market_type": market_type,
-        "total": total,
-        "wins": wins,
-        "losses": losses,
-        "ties": ties,
-        "winrate": round(wr, 1),
-        "timestamp": time.time()
-    }
-
-def format_report_message(report):
-    """Format report dict into Telegram message."""
-    if not report:
-        return None
-    period_names = {"daily": "يومي", "weekly": "أسبوعي", "monthly": "شهري"}
-    period_ar = period_names.get(report.get("period", ""), report.get("period", ""))
-    return (
-        f"📊 *تقرير {period_ar} — {report.get('market_type', '').upper()}*\n"
-        f"📈 إجمالي: {report.get('total', 0)}\n"
-        f"✅ رابحة: {report.get('wins', 0)}\n"
-        f"❌ خاسرة: {report.get('losses', 0)}\n"
-        f"➖ تعادل: {report.get('ties', 0)}\n"
-        f"🎯 WR: {report.get('winrate', 0)}%"
-    )
-
-def run_monte_carlo(trades, strategy="original", market_type="live"):
-    """Run Monte Carlo simulation on trade history."""
-    strategy_trades = [t for t in trades if t.get("strategy") == strategy]
-    if len(strategy_trades) < MONTE_CARLO_MIN_TRADES:
-        return None, f"بيانات غير كافية ({len(strategy_trades)}/{MONTE_CARLO_MIN_TRADES})"
-
-    outcomes = [1 if t.get("outcome") == "win" else 0 for t in strategy_trades]
-    wins = sum(outcomes)
-    wr = wins / len(outcomes) * 100
-
-    # Simple bootstrap simulation
-    np.random.seed(42)
-    simulations = []
-    for _ in range(MONTE_CARLO_SIMULATIONS):
-        sample = np.random.choice(outcomes, size=len(outcomes), replace=True)
-        simulations.append(np.mean(sample) * 100)
-
-    simulations = sorted(simulations)
-    p5 = simulations[int(MONTE_CARLO_SIMULATIONS * 0.05)]
-    p95 = simulations[int(MONTE_CARLO_SIMULATIONS * 0.95)]
-
-    return {
-        "strategy": strategy,
-        "market_type": market_type,
-        "total_trades": len(strategy_trades),
-        "actual_wr": round(wr, 1),
-        "p5_wr": round(p5, 1),
-        "p95_wr": round(p95, 1),
-        "confidence": "✅ قوي" if p5 > 50 else "⚠️ ضعيف"
-    }, "ok"
-
-def format_monte_carlo_message(mc_result):
-    """Format Monte Carlo result into Telegram message."""
-    if not mc_result:
-        return "📊 Monte Carlo: لا توجد بيانات كافية"
-    return (
-        f"🔬 *Monte Carlo — {mc_result.get('strategy', '').upper()} [{mc_result.get('market_type', '').upper()}]*\n"
-        f"📈 صفقات: {mc_result.get('total_trades', 0)}\n"
-        f"🎯 WR فعلي: {mc_result.get('actual_wr', 0)}%\n"
-        f"📉 P5 WR: {mc_result.get('p5_wr', 0)}%\n"
-        f"📈 P95 WR: {mc_result.get('p95_wr', 0)}%\n"
-        f"💡 الثقة: {mc_result.get('confidence', '')}"
-    )
-
-def format_monte_carlo_summary(mc_results):
-    """Format summary of all Monte Carlo results."""
-    msg = "📊 *ملخص Monte Carlo*\n\n"
-    for market, strategies in mc_results.items():
-        msg += f"*🌐 {market.upper()}*\n"
-        for strategy, result in strategies.items():
-            if result:
-                msg += f"  {strategy}: WR {result.get('actual_wr', 0)}% (P5: {result.get('p5_wr', 0)}%)\n"
-        msg += "\n"
-    return msg
-
-def save_monte_carlo_results(mc_results):
-    """Save Monte Carlo results to file."""
-    try:
-        with open(MONTE_CARLO_FILE, 'w', encoding='utf-8') as f:
-            json.dump(mc_results, f, indent=2)
-    except Exception as e:
-        logger.error(f"خطأ في حفظ Monte Carlo: {e}")
-
-def run_walk_forward_validation(trades, strategy="original", market_type="live"):
-    """Run walk-forward validation on trade history."""
-    strategy_trades = [t for t in trades if t.get("strategy") == strategy]
-    if len(strategy_trades) < WALK_FORWARD_MIN_TRADES:
-        return False, None, f"بيانات غير كافية ({len(strategy_trades)}/{WALK_FORWARD_MIN_TRADES})"
-
-    # Simple split validation
-    split = int(len(strategy_trades) * WALK_FORWARD_TRAIN_RATIO)
-    train = strategy_trades[:split]
-    test = strategy_trades[split:]
-
-    train_wins = sum(1 for t in train if t.get("outcome") == "win")
-    test_wins = sum(1 for t in test if t.get("outcome") == "win")
-    train_wr = (train_wins / len(train) * 100) if train else 0
-    test_wr = (test_wins / len(test) * 100) if test else 0
-
-    approved = test_wr >= 55 and test_wr >= train_wr * 0.8
-
-    result = {
-        "strategy": strategy,
-        "market_type": market_type,
-        "train_wr": round(train_wr, 1),
-        "test_wr": round(test_wr, 1),
-        "approved": approved,
-        "best_config": {
-            "adx": 22,
-            "rsi_low": 30,
-            "rsi_high": 50
-        }
-    }
-
-    status = f"Train WR: {train_wr:.1f}% | Test WR: {test_wr:.1f}% | {'✅ مقبول' if approved else '❌ مرفوض'}"
-    return approved, result, status
-
-def generate_and_send_optimization_proposal():
-    """Generate and send optimization proposal based on trade history."""
-    try:
-        all_trades = read_trade_log(max_entries=5000)
-        if len(all_trades) < 200:
-            return
-
-        msg = "📋 *اقتراح تحسين الإعدادات*\n\n"
-        for strategy in ["original", "king", "smart", "pro", "quantum"]:
-            st_trades = [t for t in all_trades if t.get("strategy") == strategy]
-            if len(st_trades) >= 50:
-                wins = sum(1 for t in st_trades if t.get("outcome") == "win")
-                wr = (wins / len(st_trades)) * 100
-                msg += f"📊 {strategy.upper()}: {len(st_trades)} صفقة — WR: {wr:.1f}%\n"
-
-        send_telegram_message(msg)
-    except Exception as e:
-        logger.error(f"خطأ في اقتراح التحسين: {e}")
-
-def handle_optimization_reply(text):
-    """Handle optimization reply from Telegram."""
-    return False, None
-
 # ========== STATS ENGINE WORKER ==========
 
 def stats_engine_worker():
@@ -4036,7 +3763,6 @@ def run_bot():
     init_log_files()
     API = connect_iqoption()
     
-    # تهيئة Quantum System
     init_quantum_system()
 
     pairs, mode_text = get_pairs_for_today()
