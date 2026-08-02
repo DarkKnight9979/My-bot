@@ -5,8 +5,6 @@ import time
 import requests
 import pandas as pd
 import numpy as np
-from scipy import stats
-from collections import deque
 import atexit
 import pytz
 import traceback
@@ -16,13 +14,13 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from flask import Flask
 from iqoptionapi.stable_api import IQ_Option
-from collections import defaultdict
+from collections import defaultdict, deque
 
 # ============================================================
 # VERSION FINAL - 3-STAGE ALERT SYSTEM (ARABIC)
 # ============================================================
 
-VERSION = "8.1-QUANTUM-SMART-FLOW"
+VERSION = "7.6-FINAL-FIXED-CANDLE"
 
 # ========== CONSTANTS ==========
 CAIRO_TZ = pytz.timezone('Africa/Cairo')
@@ -34,6 +32,7 @@ CACHE_TTL = 300
 CLEANUP_INTERVAL = 3600
 MAX_WORKERS = 5
 MAX_PAIRS_PER_CYCLE = 14
+MARTINGALE_HUNT_INTERVAL = 1800
 DISABLE_WINDOW = 50
 DISABLE_THRESHOLD = 45
 DISABLE_DURATION = 604800
@@ -53,37 +52,52 @@ ADAPTIVE_THRESHOLD_MIN = 80
 ADAPTIVE_THRESHOLD_MAX = 100
 SETTINGS_CACHE_TTL = 300
 
-# ========== HTF & PAIR-SPECIFIC CONFIGURATION ==========
-TIMEFRAME_4H = 14400
-HTF_REGIME_CACHE_TTL = 900
-
-PAIR_THRESHOLDS = {
-    "EURUSD": {"adx_trending": 22, "adx_ranging": 16, "atr_min_pct": 0.00025, "atr_max_pct": 0.003, "volatility_ideal_low": 0.0008, "volatility_ideal_high": 0.003},
-    "GBPUSD": {"adx_trending": 22, "adx_ranging": 16, "atr_min_pct": 0.00030, "atr_max_pct": 0.004, "volatility_ideal_low": 0.0010, "volatility_ideal_high": 0.004},
-    "USDJPY": {"adx_trending": 22, "adx_ranging": 16, "atr_min_pct": 0.00025, "atr_max_pct": 0.003, "volatility_ideal_low": 0.0008, "volatility_ideal_high": 0.003},
-    "USDCHF": {"adx_trending": 22, "adx_ranging": 16, "atr_min_pct": 0.00025, "atr_max_pct": 0.003, "volatility_ideal_low": 0.0008, "volatility_ideal_high": 0.003},
-    "AUDUSD": {"adx_trending": 22, "adx_ranging": 16, "atr_min_pct": 0.00030, "atr_max_pct": 0.004, "volatility_ideal_low": 0.0010, "volatility_ideal_high": 0.004},
-    "USDCAD": {"adx_trending": 22, "adx_ranging": 16, "atr_min_pct": 0.00025, "atr_max_pct": 0.003, "volatility_ideal_low": 0.0008, "volatility_ideal_high": 0.003},
-    "EURJPY": {"adx_trending": 24, "adx_ranging": 18, "atr_min_pct": 0.00040, "atr_max_pct": 0.005, "volatility_ideal_low": 0.0015, "volatility_ideal_high": 0.005},
-    "EURGBP": {"adx_trending": 22, "adx_ranging": 16, "atr_min_pct": 0.00025, "atr_max_pct": 0.003, "volatility_ideal_low": 0.0008, "volatility_ideal_high": 0.003},
-    "GBPJPY": {"adx_trending": 26, "adx_ranging": 20, "atr_min_pct": 0.00050, "atr_max_pct": 0.006, "volatility_ideal_low": 0.0020, "volatility_ideal_high": 0.006},
-    "AUDJPY": {"adx_trending": 24, "adx_ranging": 18, "atr_min_pct": 0.00040, "atr_max_pct": 0.005, "volatility_ideal_low": 0.0015, "volatility_ideal_high": 0.005},
-    "CADJPY": {"adx_trending": 24, "adx_ranging": 18, "atr_min_pct": 0.00040, "atr_max_pct": 0.005, "volatility_ideal_low": 0.0015, "volatility_ideal_high": 0.005},
-    "EURAUD": {"adx_trending": 24, "adx_ranging": 18, "atr_min_pct": 0.00035, "atr_max_pct": 0.004, "volatility_ideal_low": 0.0012, "volatility_ideal_high": 0.004},
-    "EURCAD": {"adx_trending": 24, "adx_ranging": 18, "atr_min_pct": 0.00035, "atr_max_pct": 0.004, "volatility_ideal_low": 0.0012, "volatility_ideal_high": 0.004},
-    "AUDCAD": {"adx_trending": 22, "adx_ranging": 16, "atr_min_pct": 0.00030, "atr_max_pct": 0.004, "volatility_ideal_low": 0.0010, "volatility_ideal_high": 0.004},
-    "EURUSD-OTC": {"adx_trending": 26, "adx_ranging": 20, "atr_min_pct": 0.00050, "atr_max_pct": 0.006, "volatility_ideal_low": 0.0015, "volatility_ideal_high": 0.005},
-    "GBPUSD-OTC": {"adx_trending": 26, "adx_ranging": 20, "atr_min_pct": 0.00060, "atr_max_pct": 0.007, "volatility_ideal_low": 0.0020, "volatility_ideal_high": 0.006},
-    "USDJPY-OTC": {"adx_trending": 26, "adx_ranging": 20, "atr_min_pct": 0.00050, "atr_max_pct": 0.006, "volatility_ideal_low": 0.0015, "volatility_ideal_high": 0.005},
-    "USDCHF-OTC": {"adx_trending": 26, "adx_ranging": 20, "atr_min_pct": 0.00050, "atr_max_pct": 0.006, "volatility_ideal_low": 0.0015, "volatility_ideal_high": 0.005},
-    "EURJPY-OTC": {"adx_trending": 28, "adx_ranging": 22, "atr_min_pct": 0.00070, "atr_max_pct": 0.008, "volatility_ideal_low": 0.0025, "volatility_ideal_high": 0.007},
-    "EURGBP-OTC": {"adx_trending": 26, "adx_ranging": 20, "atr_min_pct": 0.00050, "atr_max_pct": 0.006, "volatility_ideal_low": 0.0015, "volatility_ideal_high": 0.005},
-    "AUDCAD-OTC": {"adx_trending": 26, "adx_ranging": 20, "atr_min_pct": 0.00060, "atr_max_pct": 0.007, "volatility_ideal_low": 0.0020, "volatility_ideal_high": 0.006},
-    "GBPJPY-OTC": {"adx_trending": 30, "adx_ranging": 24, "atr_min_pct": 0.00080, "atr_max_pct": 0.010, "volatility_ideal_low": 0.0030, "volatility_ideal_high": 0.008},
+# ========== QUANTUM CONFIGURATION ==========
+QUANTUM_CONFIG = {
+    "min_score_live": 85,
+    "min_score_otc": 80,
+    "cooldown": 300,
+    "weights": {
+        "structure": 20,
+        "liquidity": 20,
+        "order_block": 15,
+        "fvg": 15,
+        "volume": 5,
+        "momentum": 20
+    },
+    "learning": {
+        "min_trades": 50,
+        "update_interval": 86400,
+        "max_weight": 30,
+        "min_weight": 5
+    },
+    "backtest": {
+        "min_history": 100,
+        "test_size": 0.3
+    },
+    "volatility_filter": {
+        "min_volatility": 0.0005,
+        "max_volatility": 0.01,
+        "ideal_low": 0.001,
+        "ideal_high": 0.005,
+        "score_bonus": 5,
+        "score_penalty": 10,
+        "reject_low": 0.0003,
+        "reject_high": 0.012
+    }
 }
 
-def get_pair_thresholds(pair):
-    return PAIR_THRESHOLDS.get(pair, PAIR_THRESHOLDS.get("EURUSD"))
+QUANTUM_SIGNAL_NAMES = {
+    1: ("Quantum Bronze 🧠🥉", "QUANTUM BRONZE"),
+    2: ("Quantum Silver 🧠🥈", "QUANTUM SILVER"),
+    3: ("Quantum Gold 🧠🥇", "QUANTUM GOLD"),
+    4: ("Quantum Elite 🧠👑", "QUANTUM ELITE")
+}
+QUANTUM_EMOJIS = {1: "🧠🥉", 2: "🧠🥈", 3: "🧠🥇", 4: "🧠👑"}
+
+quantum_memory = {}
+quantum_weights_history = []
+kalman_instances = {}
 
 # ========== CREDENTIALS ==========
 IQ_EMAIL = os.environ.get("IQ_EMAIL", "zain1mohamed2425@gmail.com")
@@ -141,12 +155,11 @@ class LimitedCache:
         self.maxsize = maxsize
         self._lock = threading.Lock()
 
-    def get(self, key, max_age=None):
+    def get(self, key):
         with self._lock:
             if key in self.cache:
                 data, ts = self.cache[key]
-                ttl = max_age if max_age is not None else CACHE_TTL
-                if time.time() - ts < ttl:
+                if time.time() - ts < CACHE_TTL:
                     return data
                 del self.cache[key]
         return None
@@ -170,6 +183,7 @@ class LimitedCache:
 class BotState:
     def __init__(self):
         self.active_trades = []
+        self.martingale_queue = {}
         self.recent_signals = {}
         self.sent_signals = {}
         self.ht_trend_cache = {}
@@ -180,9 +194,6 @@ class BotState:
         self.smart_alerted_pairs = {}
         self.smart_sent_signals = {}
         self.pa_sent_signals = {}
-        self.quantum_alerted_pairs = {}
-        self.quantum_sent_signals = {}
-        self.quantum_stats = defaultdict(lambda: {"win": 0, "loss": 0, "total": 0})
         self.pa_alerted_pairs = {}
         self.disabled_pairs = {}
         self.regime_cache = {}
@@ -192,19 +203,27 @@ class BotState:
         self.king_stats = defaultdict(lambda: {"win": 0, "loss": 0, "total": 0})
         self.smart_stats = defaultdict(lambda: {"win": 0, "loss": 0, "total": 0})
         self.pro_stats = defaultdict(lambda: {"win": 0, "loss": 0, "total": 0})
+        self.quantum_stats = defaultdict(lambda: {"win": 0, "loss": 0, "total": 0})
         self.settings_cache = {}
-        self.invalid_assets = {}
+        self.invalid_assets = set()
         self.news_data = []
         self.last_news_update = 0
         self.news_fetch_failed = False
+        self.last_hunt_message_time = 0
+        self.hunt_mode_announced = {}
         self.last_reconnect_attempt = 0
         self.reconnect_delay = 5
         self.server_time_offset = 0
         self.cycle_count = 0
         self.is_reconnecting = False
         self.king_htf_cache = {}
+        # ===== نظام التنبيهات الجديد (3 مراحل) =====
         self.pending_alerts = {}
+        # ===== منع تكرار الإشارات النهائية =====
         self.sent_final_signals = {}
+        # ===== Quantum =====
+        self.quantum_alerted_pairs = {}
+        self.quantum_sent_signals = {}
 
 state = BotState()
 
@@ -471,13 +490,12 @@ def telegram_reply_worker():
                         text = message.get("text", "").strip()
                         if not text:
                             continue
-                        
+                        # ===== QUANTUM COMMANDS =====
                         if text.startswith("/quantum"):
                             response = handle_quantum_command(text)
                             if response:
                                 _send_telegram_raw(response)
                                 continue
-                        
                         success, response_msg = handle_optimization_reply(text)
                         if success and response_msg:
                             _send_telegram_raw(response_msg)
@@ -520,57 +538,7 @@ PRO_SIGNAL_NAMES = {
 }
 PRO_EMOJIS = {1: "🥉", 2: "🥈", 3: "🥇", 4: "🔥"}
 
-# ============================================================
-# QUANTUM SMART FLOW ENGINE v3.1 — FULLY INTEGRATED
-# ============================================================
-
-QUANTUM_CONFIG = {
-    "min_score_live": 85,
-    "min_score_otc": 80,
-    "cooldown": 300,
-    "weights": {
-        "structure": 20,
-        "liquidity": 20,
-        "order_block": 15,
-        "fvg": 15,
-        "volume": 5,
-        "momentum": 20
-    },
-    "learning": {
-        "min_trades": 50,
-        "update_interval": 86400,
-        "max_weight": 30,
-        "min_weight": 5
-    },
-    "backtest": {
-        "min_history": 100,
-        "test_size": 0.3
-    },
-    "volatility_filter": {
-        "min_volatility": 0.0005,
-        "max_volatility": 0.01,
-        "ideal_low": 0.001,
-        "ideal_high": 0.005,
-        "score_bonus": 5,
-        "score_penalty": 10,
-        "reject_low": 0.0003,
-        "reject_high": 0.012
-    }
-}
-
-quantum_memory = {}
-quantum_weights_history = []
-
-QUANTUM_SIGNAL_NAMES = {
-    1: ("Quantum Bronze 🧠🥉", "QUANTUM BRONZE"),
-    2: ("Quantum Silver 🧠🥈", "QUANTUM SILVER"),
-    3: ("Quantum Gold 🧠🥇", "QUANTUM GOLD"),
-    4: ("Quantum Elite 🧠👑", "QUANTUM ELITE")
-}
-QUANTUM_EMOJIS = {1: "🧠🥉", 2: "🧠🥈", 3: "🧠🥇", 4: "🧠👑"}
-
 # ========== KALMAN FILTER ==========
-
 class KalmanFilter:
     def __init__(self, q=0.001, r=0.05):
         self.x = None
@@ -602,966 +570,19 @@ class KalmanFilter:
         arr = np.array(list(self.history)[-20:])
         return np.std(arr) / np.mean(arr) if np.mean(arr) > 0 else 0
 
-kalman_instances = {}
-
 def get_kalman(pair):
     if pair not in kalman_instances:
         kalman_instances[pair] = KalmanFilter(q=0.001, r=0.05)
     return kalman_instances[pair]
 
-# ========== VOLATILITY FILTER ==========
-
-def analyze_volatility_filter(volatility):
-    config = QUANTUM_CONFIG.get("volatility_filter", {})
-    
-    reject_low = config.get("reject_low", 0.0003)
-    reject_high = config.get("reject_high", 0.012)
-    ideal_low = config.get("ideal_low", 0.001)
-    ideal_high = config.get("ideal_high", 0.005)
-    score_bonus = config.get("score_bonus", 5)
-    score_penalty = config.get("score_penalty", 10)
-    
-    if volatility < reject_low:
-        return {
-            'status': 'REJECT',
-            'reason': f'⚠️ تقلب منخفض جداً ({volatility:.4f}) - السوق راكد',
-            'score_adjust': 0,
-            'can_enter': False
-        }
-    
-    if volatility > reject_high:
-        return {
-            'status': 'REJECT',
-            'reason': f'⚠️ تقلب عالي جداً ({volatility:.4f}) - السوق عنيف',
-            'score_adjust': 0,
-            'can_enter': False
-        }
-    
-    if volatility < ideal_low:
-        return {
-            'status': 'WARNING',
-            'reason': f'⚠️ تقلب منخفض ({volatility:.4f}) - خصم {score_penalty} نقطة',
-            'score_adjust': -score_penalty,
-            'can_enter': True,
-            'emoji': '😴'
-        }
-    
-    if ideal_low <= volatility <= ideal_high:
-        return {
-            'status': 'IDEAL',
-            'reason': f'✅ تقلب مثالي ({volatility:.4f}) - مكافأة +{score_bonus} نقطة',
-            'score_adjust': score_bonus,
-            'can_enter': True,
-            'emoji': '🎯'
-        }
-    
-    if volatility < reject_high:
-        penalty = score_penalty // 2
-        return {
-            'status': 'WARNING',
-            'reason': f'⚠️ تقلب عالي ({volatility:.4f}) - خصم {penalty} نقطة',
-            'score_adjust': -penalty,
-            'can_enter': True,
-            'emoji': '⚡'
-        }
-    
-    return {
-        'status': 'OK',
-        'reason': f'تقلب متوسط ({volatility:.4f})',
-        'score_adjust': 0,
-        'can_enter': True,
-        'emoji': '📊'
-    }
-
-# ========== QUANTUM ANALYSIS FUNCTIONS ==========
-
-def analyze_market_condition_quantum(df, pair=None):
-    try:
-        if len(df) < 30:
-            return "unknown"
-        thresholds = get_pair_thresholds(pair) if pair else get_pair_thresholds("EURUSD")
-        adx_trend = thresholds["adx_trending"]
-        adx_range = thresholds["adx_ranging"]
-        adx, plus_di, minus_di = calculate_adx(df, 14)
-        atr_series = calculate_atr_series(df, 14)
-        atr = atr_series.iloc[-1]
-        atr_avg = atr_series.tail(20).mean()
-        bbw = bollinger_bandwidth(df, 20)
-        if adx >= adx_trend and atr > atr_avg * 1.2:
-            ltf_regime = "trending"
-        elif adx < adx_range and bbw < 0.001:
-            ltf_regime = "ranging"
-        elif atr > atr_avg * 1.8:
-            ltf_regime = "high_vol"
-        elif atr < atr_avg * 0.5:
-            ltf_regime = "low_vol"
-        else:
-            ltf_regime = "mixed"
-        if pair:
-            confirmed_regime, htf_confidence, confirmation_type = confirm_regime_with_htf(pair, ltf_regime)
-            if htf_confidence >= 50:
-                logger.info(f"🧠 Quantum {pair}: LTF={ltf_regime} | HTF={confirmed_regime} | Conf={htf_confidence}%")
-            return confirmed_regime
-        return ltf_regime
-    except Exception as e:
-        logger.error(f"خطأ في تحليل حالة السوق Quantum: {e}")
-        return "unknown"
-
-def detect_market_structure_quantum(df):
-    try:
-        df_swings = detect_swings(df, window=2)
-        structure, _, _ = get_market_structure(df_swings, lookback=30)
-        if structure in ["BULLISH", "BEARISH"]:
-            return structure
-        return None
-    except Exception as e:
-        logger.error(f"خطأ في اكتشاف هيكل السوق Quantum: {e}")
-        return None
-
-def detect_liquidity_sweep_quantum(df, curr):
-    try:
-        df_swings = detect_swings(df, window=2)
-        sweep_call = detect_liquidity_sweep(df_swings, "CALL", 0.0003)
-        if sweep_call[0]:
-            return "BULLISH"
-        sweep_put = detect_liquidity_sweep(df_swings, "PUT", 0.0003)
-        if sweep_put[0]:
-            return "BEARISH"
-        return None
-    except Exception as e:
-        logger.error(f"خطأ في اكتشاف Liquidity Sweep Quantum: {e}")
-        return None
-
-def detect_order_block_quantum(df, curr):
-    try:
-        price = curr['Close']
-        start = max(5, len(df) - 20)
-
-        for i in range(start, len(df)):
-            candle = df.iloc[i]
-            prev = df.iloc[i-1]
-            if (candle['Close'] > candle['Open'] and 
-                candle['Close'] > prev['High'] and 
-                prev['Close'] < prev['Open'] and
-                (candle['Close'] - candle['Open']) > abs(prev['Close'] - prev['Open']) * 1.5):
-                if prev['Low'] <= price <= prev['High'] * 1.002:
-                    return "BULLISH"
-
-        for i in range(start, len(df)):
-            candle = df.iloc[i]
-            prev = df.iloc[i-1]
-            if (candle['Close'] < candle['Open'] and 
-                candle['Close'] < prev['Low'] and 
-                prev['Close'] > prev['Open'] and
-                (candle['Open'] - candle['Close']) > abs(prev['Close'] - prev['Open']) * 1.5):
-                if prev['Low'] * 0.998 <= price <= prev['High']:
-                    return "BEARISH"
-        return None
-    except Exception as e:
-        logger.error(f"خطأ في اكتشاف Order Block Quantum: {e}")
-        return None
-
-def detect_fvg_quantum(df, curr):
-    try:
-        start = max(2, len(df) - 20)
-
-        for i in range(start, len(df) - 1):
-            if df['Low'].iloc[i] > df['High'].iloc[i-2]:
-                return {"type": "BULLISH", "top": df['Low'].iloc[i], "bottom": df['High'].iloc[i-2], "idx": i}
-
-        for i in range(start, len(df) - 1):
-            if df['High'].iloc[i] < df['Low'].iloc[i-2]:
-                return {"type": "BEARISH", "top": df['Low'].iloc[i-2], "bottom": df['High'].iloc[i], "idx": i}
-        return None
-    except Exception as e:
-        logger.error(f"خطأ في اكتشاف FVG Quantum: {e}")
-        return None
-
-def fvg_retest_quantum(df, fvg):
-    try:
-        if fvg is None:
-            return False
-        start_idx = max(fvg['idx'] + 1, len(df) - 15)
-        for i in range(start_idx, len(df)):
-            if df['Low'].iloc[i] <= fvg["top"] and df['High'].iloc[i] >= fvg["bottom"]:
-                return True
-        return False
-    except Exception as e:
-        logger.error(f"خطأ في التحقق من FVG Retest Quantum: {e}")
-        return False
-
-def volume_confirmation_quantum(df, curr):
-    try:
-        if "Volume" not in df.columns or curr['Volume'] <= 0:
-            return False
-        vol_ma = df['Volume'].tail(20).mean()
-        return curr['Volume'] >= vol_ma * 1.1
-    except Exception as e:
-        logger.error(f"خطأ في تأكيد الحجم Quantum: {e}")
-        return False
-
-def momentum_confirmation_quantum(df, curr):
-    try:
-        if 'RSI' not in df.columns or 'ROC' not in df.columns:
-            return None
-        if 'ALMA_9' not in df.columns or 'ALMA_50' not in df.columns:
-            return None
-
-        rsi = curr['RSI']
-        roc = curr['ROC']
-        alma9 = curr['ALMA_9']
-        alma50 = curr['ALMA_50']
-
-        if rsi > 55 and alma9 > alma50 and roc > 0:
-            return "BULLISH"
-        if rsi < 45 and alma9 < alma50 and roc < 0:
-            return "BEARISH"
-        return None
-    except Exception as e:
-        logger.error(f"خطأ في تأكيد الزخم Quantum: {e}")
-        return None
-
-def calculate_confidence_score_quantum(structure, liquidity, order_block, fvg, volume, momentum):
-    call = 0
-    put = 0
-    reasons = []
-    weights = QUANTUM_CONFIG.get("weights", {
-        "structure": 20, "liquidity": 20, "order_block": 15,
-        "fvg": 15, "volume": 5, "momentum": 20
-    })
-
-    if structure == "BULLISH":
-        call += weights["structure"]; reasons.append("📈 هيكل صاعد")
-    elif structure == "BEARISH":
-        put += weights["structure"]; reasons.append("📉 هيكل هابط")
-
-    if liquidity == "BULLISH":
-        call += weights["liquidity"]; reasons.append("💧 Liquidity Sweep صاعد")
-    elif liquidity == "BEARISH":
-        put += weights["liquidity"]; reasons.append("💧 Liquidity Sweep هابط")
-
-    if order_block == "BULLISH":
-        call += weights["order_block"]; reasons.append("📦 Order Block صاعد")
-    elif order_block == "BEARISH":
-        put += weights["order_block"]; reasons.append("📦 Order Block هابط")
-
-    if fvg and fvg["type"] == "BULLISH":
-        call += weights["fvg"]; reasons.append("🔲 FVG صاعد")
-    elif fvg and fvg["type"] == "BEARISH":
-        put += weights["fvg"]; reasons.append("🔲 FVG هابط")
-
-    if volume:
-        if structure == "BULLISH" or liquidity == "BULLISH":
-            call += weights["volume"]; reasons.append("📊 حجم مرتفع")
-        elif structure == "BEARISH" or liquidity == "BEARISH":
-            put += weights["volume"]; reasons.append("📊 حجم مرتفع")
-
-    if momentum == "BULLISH":
-        call += weights["momentum"]; reasons.append("⚡ زخم صاعد")
-    elif momentum == "BEARISH":
-        put += weights["momentum"]; reasons.append("⚡ زخم هابط")
-
-    if call > put:
-        return {"direction": "CALL", "score": min(call, 100), "reasons": reasons}
-    elif put > call:
-        return {"direction": "PUT", "score": min(put, 100), "reasons": reasons}
-    else:
-        return {"direction": None, "score": 0, "reasons": []}
-
-def duplicate_signal_quantum(pair, direction):
-    key = f"quantum_{pair}_{direction}_{(int(get_iq_time()) // 300) * 300}"
-    with data_lock:
-        if key in quantum_memory:
-            return True
-        quantum_memory[key] = get_iq_time()
-        now = get_iq_time()
-        for k in list(quantum_memory.keys()):
-            if now - quantum_memory[k] > 600:
-                del quantum_memory[k]
-    return False
-
-# ========== SELF-LEARNING SYSTEM ==========
-
-def update_quantum_weights(trade_history):
-    if len(trade_history) < QUANTUM_CONFIG["learning"]["min_trades"]:
-        return
-    
-    features = list(QUANTUM_CONFIG["weights"].keys())
-    updates = []
-    
-    for feature in features:
-        feature_trades = [t for t in trade_history if t.get('filters', {}).get(feature, False)]
-        
-        if len(feature_trades) >= 20:
-            wins = sum(1 for t in feature_trades if t.get('outcome') == 'win')
-            winrate = (wins / len(feature_trades)) * 100
-            
-            old_weight = QUANTUM_CONFIG["weights"][feature]
-            
-            if winrate > 75:
-                new_weight = min(old_weight + 2, QUANTUM_CONFIG["learning"]["max_weight"])
-                updates.append(f"{feature}: {old_weight} → {new_weight} (WR: {winrate:.1f}%) ✅")
-            elif winrate < 50:
-                new_weight = max(old_weight - 2, QUANTUM_CONFIG["learning"]["min_weight"])
-                updates.append(f"{feature}: {old_weight} → {new_weight} (WR: {winrate:.1f}%) 🔄")
-            else:
-                new_weight = old_weight
-            
-            QUANTUM_CONFIG["weights"][feature] = new_weight
-    
-    if updates:
-        quantum_weights_history.append({
-            "timestamp": get_iq_time(),
-            "updates": updates,
-            "weights": QUANTUM_CONFIG["weights"].copy()
-        })
-        try:
-            with open("quantum_weights_history.json", 'w', encoding='utf-8') as f:
-                json.dump(quantum_weights_history, f, indent=2)
-        except Exception as e:
-            logger.error(f"خطأ في حفظ تاريخ أوزان Quantum: {e}")
-        logger.info(f"🧠 Quantum تم تحديث الأوزان: {updates}")
-
-# ========== FEATURE IMPORTANCE ==========
-
-def feature_importance_quantum(trade_history):
-    if len(trade_history) < 50:
-        return {"status": "بيانات غير كافية (تحتاج 50+ صفقة)"}
-    
-    importance = {}
-    features = ['structure', 'liquidity', 'order_block', 'fvg', 'volume', 'momentum']
-    feature_names = {
-        'structure': 'Structure',
-        'liquidity': 'Liquidity Sweep',
-        'order_block': 'Order Block',
-        'fvg': 'FVG',
-        'volume': 'Volume',
-        'momentum': 'Momentum'
-    }
-    
-    total_trades = len(trade_history)
-    
-    for feature in features:
-        feature_trades = [t for t in trade_history if t.get('filters', {}).get(feature, False)]
-        
-        if len(feature_trades) >= 20:
-            wins = sum(1 for t in feature_trades if t.get('outcome') == 'win')
-            winrate = (wins / len(feature_trades)) * 100
-            coverage = len(feature_trades) / total_trades * 100
-            importance_score = winrate * 0.7 + coverage * 0.3
-            
-            importance[feature_names[feature]] = {
-                "winrate": round(winrate, 1),
-                "coverage": round(coverage, 1),
-                "importance": round(importance_score, 1),
-                "trades": len(feature_trades)
-            }
-        else:
-            importance[feature_names[feature]] = {
-                "winrate": 0,
-                "coverage": 0,
-                "importance": 0,
-                "trades": 0,
-                "status": "بيانات غير كافية"
-            }
-    
-    sorted_importance = dict(sorted(
-        importance.items(),
-        key=lambda x: x[1]['importance'] if isinstance(x[1], dict) else 0,
-        reverse=True
-    ))
-    
-    return sorted_importance
-
-# ========== QUANTUM PERFORMANCE REPORT ==========
-
-def generate_quantum_performance_report(trades):
-    if not trades:
-        return "📊 *لا توجد بيانات كافية لتقرير Quantum*"
-    
-    quantum_trades = [t for t in trades if t.get('strategy') == 'quantum']
-    
-    if len(quantum_trades) < 10:
-        return f"📊 *بيانات Quantum غير كافية* (تحتاج 10+ صفقة، حالياً: {len(quantum_trades)})"
-    
-    total = len(quantum_trades)
-    wins = sum(1 for t in quantum_trades if t.get('outcome') == 'win')
-    losses = total - wins
-    wr = (wins / total * 100) if total > 0 else 0
-    
-    levels = {}
-    for t in quantum_trades:
-        level = t.get('level', 0)
-        if level not in levels:
-            levels[level] = {"win": 0, "loss": 0, "total": 0}
-        levels[level]["total"] += 1
-        if t.get('outcome') == 'win':
-            levels[level]["win"] += 1
-        else:
-            levels[level]["loss"] += 1
-    
-    importance = feature_importance_quantum(quantum_trades)
-    weights = QUANTUM_CONFIG["weights"]
-    
-    msg = (
-        f"🧠 *تقرير أداء Quantum Smart Flow*\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"📈 *إجمالي الصفقات:* {total}\n"
-        f"✅ *رابحة:* {wins} | ❌ *خاسرة:* {losses}\n"
-        f"🎯 *نسبة الربح:* {wr:.1f}%\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"📊 *توزيع المستويات:*\n"
-    )
-    
-    for level, data in sorted(levels.items()):
-        lwr = (data["win"] / data["total"] * 100) if data["total"] > 0 else 0
-        name = QUANTUM_SIGNAL_NAMES.get(level, (f"Level {level}", ""))[0]
-        msg += f"  {name}: {data['total']} صفقة — WR: {lwr:.1f}%\n"
-    
-    msg += (
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"⚖️ *الأوزان الحالية:*\n"
-    )
-    
-    for key, value in weights.items():
-        msg += f"  {key}: {value}\n"
-    
-    if isinstance(importance, dict) and "status" not in importance:
-        msg += (
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"🔬 *أهمية العوامل:*\n"
-        )
-        for feature, data in list(importance.items())[:4]:
-            if isinstance(data, dict) and data.get('winrate', 0) > 0:
-                msg += f"  {feature}: WR {data['winrate']}% (غطاء {data['coverage']}%)\n"
-    
-    return msg
-
-# ========== QUANTUM TELEGRAM COMMANDS ==========
-
-def handle_quantum_command(command):
-    cmd = command.lower().strip()
-    
-    if cmd == "/quantum_weights":
-        msg = "🧠 *الأوزان الحالية Quantum:*\n"
-        for key, value in QUANTUM_CONFIG["weights"].items():
-            msg += f"  {key}: {value}\n"
-        return msg
-    
-    elif cmd == "/quantum_stats":
-        trades = read_trade_log(max_entries=5000)
-        return generate_quantum_performance_report(trades)
-    
-    elif cmd == "/quantum_feature":
-        trades = read_trade_log(max_entries=5000)
-        quantum_trades = [t for t in trades if t.get('strategy') == 'quantum']
-        importance = feature_importance_quantum(quantum_trades)
-        
-        if isinstance(importance, dict) and "status" in importance:
-            return f"🔬 *Feature Importance - Quantum:*\n{importance['status']}"
-        
-        msg = "🔬 *Feature Importance - Quantum:*\n"
-        for feature, data in importance.items():
-            if isinstance(data, dict):
-                msg += f"  {feature}: WR {data.get('winrate', 0)}% (غطاء {data.get('coverage', 0)}%)\n"
-        return msg
-    
-    elif cmd == "/quantum_weights reset":
-        QUANTUM_CONFIG["weights"] = {
-            "structure": 20,
-            "liquidity": 20,
-            "order_block": 15,
-            "fvg": 15,
-            "volume": 5,
-            "momentum": 20
-        }
-        return "✅ *تم إعادة ضبط الأوزان إلى القيم الافتراضية*"
-    
-    else:
-        return None
-
-# ========== QUANTUM STATS WORKER ==========
-
-def quantum_stats_worker():
-    logger.info("🧠 محرك إحصائيات Quantum بدأ")
-    last_learning = 0
-    last_report = 0
-    
-    while not stop_event.is_set():
-        try:
-            now = get_iq_time()
-            
-            if now - last_learning > QUANTUM_CONFIG["learning"]["update_interval"]:
-                trades = read_trade_log(max_entries=5000)
-                quantum_trades = [t for t in trades if t.get('strategy') == 'quantum']
-                
-                if len(quantum_trades) >= QUANTUM_CONFIG["learning"]["min_trades"]:
-                    update_quantum_weights(quantum_trades)
-                    logger.info(f"🧠 تم تحديث أوزان Quantum: {QUANTUM_CONFIG['weights']}")
-                    
-                    msg = "🧠 *تحديث أوزان Quantum*\n"
-                    for key, value in QUANTUM_CONFIG["weights"].items():
-                        msg += f"  {key}: {value}\n"
-                    send_telegram_message(msg)
-                
-                last_learning = now
-            
-            if now - last_report > 604800:
-                trades = read_trade_log(max_entries=10000)
-                report = generate_quantum_performance_report(trades)
-                if report:
-                    send_telegram_message(report)
-                last_report = now
-                
-        except Exception as e:
-            logger.error(f"خطأ في محرك Quantum: {e}")
-            logger.error(traceback.format_exc())
-        
-        stop_event.wait(3600)
-
-# ========== QUANTUM MAIN STRATEGY ==========
-
-def analyze_pair_quantum(pair, timeframe="5m"):
-    tf_seconds, duration_text = 300, "5 دقائق"
-
-    df, curr_idx = get_cached_df_smart(pair, tf_seconds, 100)
-    if df is None or curr_idx is None or len(df) < 100:
-        logger.info(f"🛑 Quantum {pair}: لا يوجد بيانات كافية")
-        return None
-
-    regime = analyze_market_condition_quantum(df, pair=pair)
-    if regime == "ranging":
-        logger.info(f"🛑 Quantum {pair}: سوق عرضي (RANGE) - تم الإلغاء")
-        return None
-
-    curr = df.iloc[curr_idx]
-    price = curr['Close']
-
-    kalman = get_kalman(pair)
-    smoothed_price = kalman.update(price)
-    volatility = kalman.get_volatility()
-
-    vol_filter = analyze_volatility_filter(volatility)
-    
-    if not vol_filter['can_enter']:
-        logger.info(f"🛑 Quantum {pair}: {vol_filter['reason']}")
-        return None
-    
-    logger.info(f"📊 Quantum {pair}: {vol_filter['reason']}")
-
-    structure = detect_market_structure_quantum(df)
-    liquidity = detect_liquidity_sweep_quantum(df, curr)
-    order_block = detect_order_block_quantum(df, curr)
-    fvg = detect_fvg_quantum(df, curr)
-
-    if fvg:
-        if not fvg_retest_quantum(df, fvg):
-            logger.info(f"🛑 Quantum {pair}: FVG لم يُعاد اختباره - تم الإلغاء")
-            return None
-    else:
-        logger.info(f"🛑 Quantum {pair}: لا يوجد FVG - تم الإلغاء")
-        return None
-
-    volume = volume_confirmation_quantum(df, curr)
-    momentum = momentum_confirmation_quantum(df, curr)
-
-    result = calculate_confidence_score_quantum(structure, liquidity, order_block, fvg, volume, momentum)
-
-    adjusted_score = result['score'] + vol_filter['score_adjust']
-    adjusted_score = max(0, min(100, adjusted_score))
-    
-    logger.info(f"📊 Quantum {pair}: النتيجة الأصلية {result['score']} → معدلة {adjusted_score} ({vol_filter['reason']})")
-
-    min_score = QUANTUM_CONFIG["min_score_otc"] if "OTC" in pair.upper() else QUANTUM_CONFIG["min_score_live"]
-    
-    final_score = adjusted_score
-    
-    if result['direction'] is None or final_score < min_score:
-        logger.info(f"🛑 Quantum {pair}: النتيجة {final_score} < {min_score}")
-        return None
-
-    if duplicate_signal_quantum(pair, result['direction']):
-        logger.info(f"🛑 Quantum {pair}: إشارة مكررة - تم الإلغاء")
-        return None
-
-    if final_score >= 95:
-        level = 4
-        signal_name_ar, signal_name_en = QUANTUM_SIGNAL_NAMES[level]
-    elif final_score >= 90:
-        level = 3
-        signal_name_ar, signal_name_en = QUANTUM_SIGNAL_NAMES[level]
-    elif final_score >= 85:
-        level = 2
-        signal_name_ar, signal_name_en = QUANTUM_SIGNAL_NAMES[level]
-    else:
-        level = 1
-        signal_name_ar, signal_name_en = QUANTUM_SIGNAL_NAMES[level]
-
-    emoji = QUANTUM_EMOJIS[level]
-    da = "صعود (CALL)" if result['direction'] == "CALL" else "هبوط (PUT)"
-
-    iq_now = get_iq_time()
-    csec = int(iq_now) % 300
-    candle_start = (int(iq_now) // 300) * 300
-    pair_key = f"quantum_{pair}_{candle_start}"
-    pending_key = f"quantum_{pair}_{candle_start}"
-
-    ok, reason = passes_common_entry_filters(pair)
-    if not ok:
-        logger.info(f"🛑 Quantum {pair}: إلغاء - {reason}")
-        return None
-
-    # ===== المرحلة 1: تنبيه مبكر =====
-    if 270 <= csec <= 280:
-        with data_lock:
-            if not hasattr(state, 'quantum_alerted_pairs'):
-                state.quantum_alerted_pairs = {}
-            if pair_key not in state.quantum_alerted_pairs:
-                if not hasattr(state, 'pending_alerts'):
-                    state.pending_alerts = {}
-
-                state.pending_alerts[pending_key] = {
-                    'direction': result['direction'],
-                    'level': level,
-                    'signal_name': signal_name_ar,
-                    'score': final_score,
-                    'alert_time': iq_now,
-                    'strategy': 'quantum'
-                }
-
-                time_quality = get_time_quality('quantum')
-                regime_badge = get_regime_badge('quantum', regime)
-
-                vol_emoji = vol_filter.get('emoji', '📊')
-                vol_status = vol_filter['reason']
-
-                msg = (
-                    f"⚠️ *تنبيه مبكر — {signal_name_ar}*\n"
-                    f"الزوج: `{pair}` [5 دقائق]\n"
-                    f"الاتجاه: *{da}*\n"
-                    f"📊 النقاط: *{final_score}/100* (معدلة)\n"
-                    f"⏱️ *صفقة قادمة خلال 20 ثانية...*\n"
-                    f"🔄 *جاري التحقق من الشروط النهائية...*\n"
-                    f"━━━━━━━━━━━━\n"
-                    f"🕐 *الوقت:* {time_quality}\n"
-                    f"📍 {regime_badge}\n"
-                    f"⚛️ Kalman: {smoothed_price:.5f} | {vol_emoji} {vol_status}"
-                )
-                send_telegram_message(msg)
-                state.quantum_alerted_pairs[pair_key] = iq_now
-        return None
-
-    # ===== المرحلة 2 & 3 =====
-    if not (280 <= csec <= 299):
-        return None
-
-    with data_lock:
-        pending = state.pending_alerts.get(pending_key)
-
-    if pending and pending['direction'] != result['direction']:
-        send_cancelled_alert(pair, pending['direction'], "الاتجاه تغير في Quantum", 'quantum')
-        with data_lock:
-            if pending_key in state.pending_alerts:
-                del state.pending_alerts[pending_key]
-        return None
-
-    ok, reason = passes_common_entry_filters(pair)
-    if not ok:
-        if pending:
-            send_cancelled_alert(pair, result['direction'], reason, 'quantum')
-        with data_lock:
-            if pending_key in state.pending_alerts:
-                del state.pending_alerts[pending_key]
-        return None
-
-    # ===== المرحلة 3: الإشارة النهائية =====
-    if csec >= 293:
-        sent_key = f"quantum_sent_{pair}_{candle_start}"
-        with data_lock:
-            if not hasattr(state, 'quantum_sent_signals'):
-                state.quantum_sent_signals = {}
-            if sent_key in state.quantum_sent_signals:
-                return None
-
-        with data_lock:
-            if hasattr(state, 'quantum_alerted_pairs') and pair_key in state.quantum_alerted_pairs:
-                del state.quantum_alerted_pairs[pair_key]
-            if pending_key in state.pending_alerts:
-                del state.pending_alerts[pending_key]
-
-        time_quality = get_time_quality('quantum')
-        regime_badge = get_regime_badge('quantum', regime)
-        
-        kalman_info = f"Kalman: {smoothed_price:.5f}"
-        vol_emoji = vol_filter.get('emoji', '📊')
-        vol_status = vol_filter['reason']
-        volatility_info = f"{vol_emoji} {vol_status}"
-        
-        indicators_str = f"Score={final_score}/100 | " + " | ".join(result['reasons'][:3])
-        indicators_str += f" | {kalman_info} | {volatility_info}"
-
-        msg = (
-            f"{emoji} *{signal_name_ar}* {emoji}\n"
-            f"الزوج: `{pair}` (IQ Option) [5 دقائق]\n"
-            f"الاتجاه: *{da}*\n"
-            f"⏱️ *المدة:* {duration_text}\n"
-            f"📊 *المؤشرات:* {indicators_str}\n"
-            f"🕐 *الوقت:* {time_quality}\n"
-            f"📍 *حالة السوق:* {regime_badge}\n"
-            f"⚛️ *Kalman Fair Value:* `{smoothed_price:.5f}`\n"
-            f"📊 *حالة التقلب:* {vol_emoji} {vol_status}\n"
-            f"⚡ *ادخل الآن في الشمعة القادمة!*"
-        )
-        send_telegram_message(msg)
-
-        new_trade = _build_trade_dict(
-            pair=pair,
-            direction=result['direction'],
-            entry_price=price,
-            expire_offset=300,
-            is_king=False,
-            signal_level=level,
-            signal_name=signal_name_ar,
-            score=final_score,
-            filters={
-                'structure': structure is not None,
-                'liquidity': liquidity is not None,
-                'order_block': order_block is not None,
-                'fvg': fvg is not None,
-                'volume': volume,
-                'momentum': momentum is not None,
-                'volatility_ok': vol_filter['can_enter']
-            },
-            indicators={
-                'score': final_score,
-                'original_score': result['score'],
-                'score_adjust': vol_filter['score_adjust'],
-                'reasons': result['reasons'],
-                'market': regime,
-                'structure': str(structure) if structure else 'None',
-                'liquidity': str(liquidity) if liquidity else 'None',
-                'order_block': str(order_block) if order_block else 'None',
-                'fvg': str(fvg) if fvg else 'None',
-                'kalman_price': round(smoothed_price, 5),
-                'volatility': round(volatility, 4),
-                'volatility_status': vol_filter['status']
-            },
-            strategy='quantum'
-        )
-
-        if not add_trade_atomic(new_trade):
-            return None
-
-        with data_lock:
-            state.quantum_sent_signals[sent_key] = iq_now
-            state.recent_signals[pair] = (iq_now, result['direction'])
-
-        logger.info(f"🧠 Quantum {pair}: {signal_name_ar} تم الإرسال (Score={final_score} | Vol={volatility:.4f})")
-        return msg
-
-    return None
-
-def analyze_pair_wrapper_quantum(pair):
-    try:
-        return pair, analyze_pair_quantum(pair, "5m")
-    except Exception as e:
-        logger.error(f"خطأ Quantum في {pair}: {e}")
-        return pair, None
-
-# ========== HTF MARKET ANALYSIS ==========
-
-def get_htf_market_regime(pair):
-    key = f"htf_regime_{pair}"
-    now = get_iq_time()
-    with data_lock:
-        if key in state.regime_cache and now - state.regime_cache[key][1] < HTF_REGIME_CACHE_TTL:
-            return state.regime_cache[key][0]
-
-    try:
-        candles = get_cached_candles(pair, TIMEFRAME_1H, 50, max_age=300)
-        if not candles or len(candles) < 30:
-            return {"regime": "unknown", "trend": None, "structure": "unknown", "confidence": 0}
-
-        df_h = pd.DataFrame(candles)
-        df_h.rename(columns={'open':'Open','max':'High','min':'Low','close':'Close','volume':'Volume'}, inplace=True)
-
-        df_h['ALMA_9'] = calculate_alma(df_h['Close'], 9, 0.85, 6)
-        df_h['ALMA_50'] = calculate_alma(df_h['Close'], 50, 0.85, 6)
-        atr_series = calculate_atr_series(df_h, 14)
-        atr = atr_series.iloc[-1]
-        atr_avg = atr_series.tail(20).mean()
-        adx, plus_di, minus_di = calculate_adx(df_h, 14)
-        bbw = bollinger_bandwidth(df_h, 20)
-
-        df_h = detect_swings(df_h, window=2)
-        structure, _, _ = get_market_structure(df_h, lookback=30)
-
-        curr_h = df_h.iloc[-1]
-        prev_h = df_h.iloc[-2]
-        if curr_h['ALMA_9'] > curr_h['ALMA_50'] and prev_h['ALMA_9'] > prev_h['ALMA_50']:
-            trend_dir = "CALL"
-        elif curr_h['ALMA_9'] < curr_h['ALMA_50'] and prev_h['ALMA_9'] < prev_h['ALMA_50']:
-            trend_dir = "PUT"
-        else:
-            trend_dir = None
-
-        thresholds = get_pair_thresholds(pair)
-        adx_trend = thresholds["adx_trending"]
-        adx_range = thresholds["adx_ranging"]
-
-        if adx >= adx_trend and atr > atr_avg * 1.2:
-            regime = "trending"
-        elif adx < adx_range and bbw < 0.001:
-            regime = "ranging"
-        elif atr > atr_avg * 1.8:
-            regime = "high_vol"
-        elif atr < atr_avg * 0.5:
-            regime = "low_vol"
-        else:
-            regime = "mixed"
-
-        confidence = 50
-        if structure in ["BULLISH", "BEARISH"]:
-            confidence += 20
-        if adx >= adx_trend or adx < adx_range:
-            confidence += 15
-        if trend_dir is not None:
-            confidence += 15
-
-        result = {
-            "regime": regime,
-            "trend": trend_dir,
-            "structure": structure,
-            "confidence": min(confidence, 100),
-            "adx": float(adx),
-            "atr": float(atr),
-            "bbw": float(bbw)
-        }
-
-        with data_lock:
-            state.regime_cache[key] = (result, now)
-
-        return result
-
-    except Exception as e:
-        logger.error(f"خطأ في تحليل HTF لـ {pair}: {e}")
-        return {"regime": "unknown", "trend": None, "structure": "unknown", "confidence": 0}
-
-def get_htf_trend_direction(pair):
-    htf = get_htf_market_regime(pair)
-    return htf.get("trend"), htf.get("structure"), htf.get("confidence")
-
-def detect_htf_market_structure(pair):
-    try:
-        candles = get_cached_candles(pair, TIMEFRAME_1H, 100, max_age=300)
-        if not candles or len(candles) < 50:
-            return "unknown", 0
-
-        df_h = pd.DataFrame(candles)
-        df_h.rename(columns={'open':'Open','max':'High','min':'Low','close':'Close'}, inplace=True)
-        df_h = detect_swings(df_h, window=3)
-
-        recent = df_h.tail(60)
-        sh_idx = recent[recent['is_swing_high']].index.tolist()
-        sl_idx = recent[recent['is_swing_low']].index.tolist()
-
-        if len(sh_idx) < 3 or len(sl_idx) < 3:
-            return "neutral", 0
-
-        hh_count = 0
-        hl_count = 0
-        for i in range(1, min(4, len(sh_idx))):
-            if df_h.loc[sh_idx[-i], 'High'] > df_h.loc[sh_idx[-(i+1)], 'High']:
-                hh_count += 1
-        for i in range(1, min(4, len(sl_idx))):
-            if df_h.loc[sl_idx[-i], 'Low'] > df_h.loc[sl_idx[-(i+1)], 'Low']:
-                hl_count += 1
-
-        lh_count = 0
-        ll_count = 0
-        for i in range(1, min(4, len(sh_idx))):
-            if df_h.loc[sh_idx[-i], 'High'] < df_h.loc[sh_idx[-(i+1)], 'High']:
-                lh_count += 1
-        for i in range(1, min(4, len(sl_idx))):
-            if df_h.loc[sl_idx[-i], 'Low'] < df_h.loc[sl_idx[-(i+1)], 'Low']:
-                ll_count += 1
-
-        if hh_count >= 2 and hl_count >= 2:
-            strength = (hh_count + hl_count) * 25
-            return "BULLISH", min(strength, 100)
-        elif lh_count >= 2 and ll_count >= 2:
-            strength = (lh_count + ll_count) * 25
-            return "BEARISH", min(strength, 100)
-        else:
-            return "mixed", 30
-
-    except Exception as e:
-        logger.error(f"خطأ في تحليل HTF Structure لـ {pair}: {e}")
-        return "unknown", 0
-
-def confirm_regime_with_htf(pair, ltf_regime):
-    htf = get_htf_market_regime(pair)
-    htf_regime = htf.get("regime", "unknown")
-    htf_confidence = htf.get("confidence", 0)
-
-    if htf_confidence < 40:
-        return ltf_regime, htf_confidence, "ltf_dominant"
-
-    if htf_regime == ltf_regime:
-        return ltf_regime, min(htf_confidence + 20, 100), "confirmed"
-
-    if htf_regime == "trending" and ltf_regime == "ranging":
-        return "trending", htf_confidence, "htf_override"
-
-    if htf_regime == "ranging" and ltf_regime == "trending":
-        return "mixed", htf_confidence - 20, "conflict"
-
-    if htf_confidence >= 70:
-        return htf_regime, htf_confidence, "htf_dominant"
-
-    return ltf_regime, htf_confidence, "ltf_dominant"
-
-# ========== INIT QUANTUM SYSTEM ==========
-
-def init_quantum_system():
-    logger.info("🧠 تهيئة Quantum Smart Flow Engine v3.1...")
-    
-    try:
-        if os.path.exists("quantum_weights_history.json"):
-            with open("quantum_weights_history.json", 'r', encoding='utf-8') as f:
-                history = json.load(f)
-                if history:
-                    last_weights = history[-1].get('weights', {})
-                    if last_weights:
-                        QUANTUM_CONFIG["weights"] = last_weights
-                        logger.info(f"🧠 تم تحميل الأوزان السابقة: {last_weights}")
-    except Exception as e:
-        logger.warning(f"⚠️ فشل تحميل تاريخ الأوزان: {e}")
-    
-    logger.info("🧠 Quantum Smart Flow Engine v3.1 جاهز!")
-    logger.info(f"📊 الأوزان الحالية: {QUANTUM_CONFIG['weights']}")
-    logger.info(f"🎯 الحد الأدنى Live: {QUANTUM_CONFIG['min_score_live']}")
-    logger.info(f"🎯 الحد الأدنى OTC: {QUANTUM_CONFIG['min_score_otc']}")
-    logger.info(f"📊 فلتر التقلب: {QUANTUM_CONFIG['volatility_filter']}")
-
-# ========== EXISTING FUNCTIONS FROM v7.6 ==========
-
 def get_regime_badge(strategy_name, regime):
     badges = {
-        'quantum': {
-            'trending':  "🌊 السوق *ترندي* — Quantum Strategy *ممتازة* 🧠 (جميع الشروط متوافقة)",
-            'ranging':   "↔️ السوق *متراوح* — Quantum Strategy *❌ مرفوضة*",
-            'high_vol':  "⚡ تقلب عالي — Quantum Strategy *جيدة*",
-            'low_vol':   "😴 تقلب منخفض — Quantum Strategy *❌ مرفوضة*",
-            'mixed':     "🌫️ سوق مختلط — Quantum Strategy *جيدة*",
-            'unknown':   "❓ نوع السوق غير واضح"
-        },
         'original': {
-            'trending':  "🌊 السوق *ترندي* — Original Strategy *ممتازة*",
-            'ranging':   "↔️ السوق *متراوح* — Original Strategy *متوسطة*",
-            'high_vol':  "⚡ تقلب عالي — Original Strategy *جيدة*",
-            'low_vol':   "😴 تقلب منخفض — Original Strategy *ضعيفة*",
-            'mixed':     "🌫️ سوق مختلط — Original Strategy *عادية*",
+            'trending':  "🌊 السوق *ترندي* — الاستراتيجية الأصلية *ممتازة* هنا",
+            'ranging':   "↔️ السوق *متراوح* — الاستراتيجية الأصلية *متوسطة* هنا",
+            'high_vol':  "⚡ تقلب عالي — الاستراتيجية الأصلية *جيدة*",
+            'low_vol':   "😴 تقلب منخفض — الاستراتيجية الأصلية *ضعيفة* هنا",
+            'mixed':     "🌫️ سوق مختلط — الاستراتيجية الأصلية *عادية*",
             'unknown':   "❓ نوع السوق غير واضح"
         },
         'king': {
@@ -1574,7 +595,7 @@ def get_regime_badge(strategy_name, regime):
         },
         'smart': {
             'trending':  "🌊 السوق *ترندي* — SMC Strategy *جيدة*",
-            'ranging':   "↔️ السوق *متراوح* — SMC Strategy *ضعيفة*",
+            'ranging':   "↔️ السوق *متراوح* — SMC Strategy *ضعيفة* هنا",
             'high_vol':  "⚡ تقلب عالي — SMC Strategy *ممتازة* 🏆",
             'low_vol':   "😴 تقلب منخفض — SMC Strategy *ضعيفة*",
             'mixed':     "🌫️ سوق مختلط — SMC Strategy *عادية*",
@@ -1587,9 +608,30 @@ def get_regime_badge(strategy_name, regime):
             'low_vol':   "😴 تقلب منخفض — Pro Strategy *ضعيفة*",
             'mixed':     "🌫️ سوق مختلط — Pro Strategy *جيدة*",
             'unknown':   "❓ نوع السوق غير واضح"
+        },
+        'quantum': {
+            'trending':  "🌊 السوق *ترندي* — Quantum Strategy *ممتازة* 🧠 (جميع الشروط متوافقة)",
+            'ranging':   "↔️ السوق *متراوح* — Quantum Strategy *❌ مرفوضة* (الكود يلغي الصفقة تلقائياً)",
+            'high_vol':  "⚡ تقلب عالي — Quantum Strategy *جيدة* (مع فلتر التقلب + حذر)",
+            'low_vol':   "😴 تقلب منخفض — Quantum Strategy *❌ مرفوضة* (فلتر التقلب يمنع الدخول)",
+            'mixed':     "🌫️ سوق مختلط — Quantum Strategy *جيدة* (متوسطة الثقة - تحقق إضافي مطلوب)",
+            'unknown':   "❓ نوع السوق غير واضح — Quantum Strategy *⏸️ متوقفة* (انتظر توضيح الحالة)"
         }
     }
-    return badges.get(strategy_name, badges.get('quantum', {})).get(regime, "🌫️ سوق مختلط")
+    return badges.get(strategy_name, badges['original']).get(regime, "🌫️ سوق مختلط")
+
+
+CURRENCY_PAIRS = {
+    'USD': ['EURUSD','GBPUSD','USDJPY','AUDUSD','USDCAD','USDCHF'],
+    'EUR': ['EURUSD','EURJPY','EURGBP','EURAUD','EURCAD'],
+    'GBP': ['GBPUSD','EURGBP','GBPJPY'],
+    'JPY': ['USDJPY','EURJPY','AUDJPY','CADJPY','GBPJPY'],
+    'AUD': ['AUDUSD','AUDCAD','AUDJPY','EURAUD'],
+    'CAD': ['USDCAD','AUDCAD','CADJPY','EURCAD'],
+    'CHF': ['USDCHF']
+}
+
+# ========== FUNCIONES DE ALERTAS EN ÁRABE ==========
 
 def get_time_quality(strategy_name):
     now = get_cairo_time()
@@ -1598,6 +640,22 @@ def get_time_quality(strategy_name):
     current_minutes = hour * 60 + minute
     
     time_ranges = {
+        'original': {
+            'best': [(15*60, 18*60)],
+            'good': [(10*60, 14*60)]
+        },
+        'king': {
+            'best': [(10*60, 12*60)],
+            'good': [(15*60, 17*60)]
+        },
+        'smart': {
+            'best': [(11*60, 15*60)],
+            'good': [(16*60, 19*60)]
+        },
+        'pro': {
+            'best': [(15*60, 18*60)],
+            'good': [(10*60, 14*60)]
+        },
         'quantum': {
             'best': [(10*60, 14*60), (15*60, 18*60)],
             'good': [(9*60, 10*60), (18*60, 20*60)]
@@ -1657,8 +715,14 @@ def send_final_signal(pair, direction, signal_name, score, duration_text, indica
     
     if strategy_name == 'quantum':
         emoji = QUANTUM_EMOJIS.get(signal_level, "🧠")
+    elif strategy_name == 'original':
+        emoji = SIGNAL_EMOJIS.get(score // 16 + 2, "🔥")
+    elif strategy_name == 'king':
+        emoji = KING_EMOJIS.get(signal_level, "👑")
+    elif strategy_name == 'smart':
+        emoji = SMC_EMOJIS.get(signal_level, "🏆")
     else:
-        emoji = "🧠"
+        emoji = PRO_EMOJIS.get(signal_level, "🔥")
     
     msg = (
         f"{emoji} *{signal_name}* {emoji}\n"
@@ -1672,6 +736,933 @@ def send_final_signal(pair, direction, signal_name, score, duration_text, indica
     )
     send_telegram_message(msg)
     return msg
+
+# ========== STATISTICAL ENGINE ==========
+
+def evaluate_filters(trades, market_type=None):
+    if market_type:
+        trades = [t for t in trades if ("-OTC" in t.get("pair", "").upper()) == (market_type == "otc")]
+    if not trades:
+        return {}
+    filter_stats = {}
+    sample_filters = trades[0].get("filters", {})
+    for fname in sample_filters.keys():
+        filter_stats[fname] = {"win": 0, "loss": 0, "total": 0}
+    for trade in trades:
+        outcome = trade.get("outcome", "")
+        filters = trade.get("filters", {})
+        for fname, fval in filters.items():
+            if fname not in filter_stats:
+                continue
+            if fval:
+                filter_stats[fname]["total"] += 1
+                if outcome == "win":
+                    filter_stats[fname]["win"] += 1
+                else:
+                    filter_stats[fname]["loss"] += 1
+    results = {}
+    for fname, stat in filter_stats.items():
+        total = stat["total"]
+        if total >= 10:
+            wr = (stat["win"] / total) * 100
+            worth = "High" if wr >= 80 else ("Med" if wr >= 65 else "Low")
+            results[fname] = {
+                "win": stat["win"], "loss": stat["loss"], "total": total,
+                "wr": round(wr, 1), "worth": worth
+            }
+    return dict(sorted(results.items(), key=lambda x: x[1]["wr"], reverse=True))
+
+def rank_pairs(trades, market_type=None):
+    if market_type:
+        trades = [t for t in trades if ("-OTC" in t.get("pair", "").upper()) == (market_type == "otc")]
+    if not trades:
+        return []
+    pair_data = {}
+    for t in trades:
+        pair = t.get("pair", "UNKNOWN")
+        if pair not in pair_data:
+            pair_data[pair] = {"win": 0, "loss": 0, "total": 0, "wins": [], "losses": []}
+        pair_data[pair]["total"] += 1
+        if t.get("outcome") == "win":
+            pair_data[pair]["win"] += 1
+            pair_data[pair]["wins"].append(1)
+            pair_data[pair]["losses"].append(0)
+        else:
+            pair_data[pair]["loss"] += 1
+            pair_data[pair]["wins"].append(0)
+            pair_data[pair]["losses"].append(1)
+    rankings = []
+    max_total = max(d["total"] for d in pair_data.values()) if pair_data else 1
+    for pair, data in pair_data.items():
+        total = data["total"]
+        if total < 5:
+            continue
+        wr = (data["win"] / total) * 100
+        avg_win = PAYOUT_RATIO
+        avg_loss = 1
+        profit_factor = (data["win"] * PAYOUT_RATIO) / data["loss"] if data["loss"] > 0 else float('inf')
+        chunks = [data["wins"][i:i+10] for i in range(0, len(data["wins"]), 10)]
+        chunk_wrs = [sum(chunk)/len(chunk)*100 for chunk in chunks if chunk]
+        stability = 100 - np.std(chunk_wrs) if chunk_wrs and len(chunk_wrs) > 1 else 50
+        count_ratio = (total / max_total) * 100
+        score = (wr * 0.4) + (min(profit_factor, 5) * 20 * 0.3) + (stability * 0.2) + (count_ratio * 0.1)
+        rankings.append({
+            "pair": pair, "wr": round(wr, 1), "total": total,
+            "profit_factor": round(profit_factor, 2), "stability": round(stability, 1),
+            "score": round(score, 1)
+        })
+    rankings.sort(key=lambda x: x["score"], reverse=True)
+    return rankings
+
+def analyze_hours(trades, market_type=None):
+    if market_type:
+        trades = [t for t in trades if ("-OTC" in t.get("pair", "").upper()) == (market_type == "otc")]
+    if not trades:
+        return {}
+    hour_stats = {}
+    for t in trades:
+        hour = t.get("hour", 0)
+        if hour not in hour_stats:
+            hour_stats[hour] = {"win": 0, "loss": 0, "total": 0}
+        hour_stats[hour]["total"] += 1
+        if t.get("outcome") == "win":
+            hour_stats[hour]["win"] += 1
+        else:
+            hour_stats[hour]["loss"] += 1
+    results = {}
+    for h, stat in hour_stats.items():
+        if stat["total"] >= 5:
+            results[h] = {
+                "win": stat["win"], "loss": stat["loss"], "total": stat["total"],
+                "wr": round((stat["win"] / stat["total"]) * 100, 1)
+            }
+    return dict(sorted(results.items(), key=lambda x: x[1]["wr"], reverse=True))
+
+def analyze_confidence_calibration(trades):
+    if not trades:
+        return {}
+    score_buckets = {
+        "80-84": {"trades": [], "expected_wr": 82},
+        "85-89": {"trades": [], "expected_wr": 87},
+        "90-94": {"trades": [], "expected_wr": 92},
+        "95-100": {"trades": [], "expected_wr": 97},
+    }
+    for t in trades:
+        score = t.get("score", 0)
+        if 80 <= score <= 84:
+            score_buckets["80-84"]["trades"].append(t)
+        elif 85 <= score <= 89:
+            score_buckets["85-89"]["trades"].append(t)
+        elif 90 <= score <= 94:
+            score_buckets["90-94"]["trades"].append(t)
+        elif 95 <= score <= 100:
+            score_buckets["95-100"]["trades"].append(t)
+    calibration = {}
+    for bucket, data in score_buckets.items():
+        trades_in_bucket = data["trades"]
+        if len(trades_in_bucket) >= 10:
+            wins = sum(1 for t in trades_in_bucket if t.get("outcome") == "win")
+            actual_wr = (wins / len(trades_in_bucket)) * 100
+            expected_wr = data["expected_wr"]
+            diff = actual_wr - expected_wr
+            calibration[bucket] = {
+                "total": len(trades_in_bucket), "actual_wr": round(actual_wr, 1),
+                "expected_wr": expected_wr, "diff": round(diff, 1),
+                "status": "✅ متوازن" if abs(diff) <= 5 else ("⚠️ مبالغ" if diff < -5 else "🔥 أقوى من المتوقع")
+            }
+    return calibration
+
+def grid_search_optimization(trades, strategy="king", market_type=None):
+    if market_type:
+        trades = [t for t in trades if ("-OTC" in t.get("pair", "").upper()) == (market_type == "otc")]
+    if len(trades) < 200:
+        return None, "غير كافي — محتاج 200+ صفقة"
+    king_trades = [t for t in trades if t.get("strategy") == strategy]
+    if len(king_trades) < 100:
+        return None, f"غير كافي — محتاج 100+ صفقة {strategy}"
+    proposals = []
+    best_adx = 22
+    best_adx_wr = 0
+    best_adx_count = 0
+    for adx_thresh in [18, 20, 22, 24, 26, 28, 30]:
+        subset = [t for t in king_trades if t.get("indicators", {}).get("adx", 0) >= adx_thresh]
+        if len(subset) >= 20:
+            wins = sum(1 for t in subset if t.get("outcome") == "win")
+            wr = (wins / len(subset)) * 100
+            penalty = max(0, (30 - len(subset)) / 100)
+            adjusted_wr = wr - penalty
+            if adjusted_wr > best_adx_wr:
+                best_adx_wr = adjusted_wr
+                best_adx = adx_thresh
+                best_adx_count = len(subset)
+    if best_adx != 22 and best_adx_count >= 30:
+        proposals.append({
+            "filter": "ADX", "current": 22, "proposed": best_adx,
+            "reason": f"WR يتحسن لـ {best_adx_wr:.1f}% مع ADX ≥ {best_adx} (عينة: {best_adx_count})",
+            "impact": "يقلل الإشارات قليلاً ويرفع الجودة"
+        })
+    best_rsi_low, best_rsi_high = 45, 60
+    best_rsi_wr = 0
+    best_rsi_count = 0
+    for low in range(40, 50, 2):
+        for high in range(55, 65, 2):
+            subset = [t for t in king_trades
+                      if t.get("direction") == "CALL"
+                      and low <= t.get("indicators", {}).get("rsi", 0) <= high]
+            if len(subset) >= 15:
+                wins = sum(1 for t in subset if t.get("outcome") == "win")
+                wr = (wins / len(subset)) * 100
+                penalty = max(0, (25 - len(subset)) / 100)
+                adjusted_wr = wr - penalty
+                if adjusted_wr > best_rsi_wr:
+                    best_rsi_wr = adjusted_wr
+                    best_rsi_low, best_rsi_high = low, high
+                    best_rsi_count = len(subset)
+    if (best_rsi_low, best_rsi_high) != (45, 60) and best_rsi_count >= 20:
+        proposals.append({
+            "filter": "RSI CALL", "current": "45–60",
+            "proposed": f"{best_rsi_low}–{best_rsi_high}",
+            "reason": f"WR يتحسن لـ {best_rsi_wr:.1f}% (عينة: {best_rsi_count})",
+            "impact": "تعديل دقيق لنطاق RSI"
+        })
+    return proposals, "تم التحليل بنجاح"
+
+def optimize_weights(trades):
+    if len(trades) < 300:
+        return None, "غير كافي — محتاج 300+ صفقة"
+    king_trades = [t for t in trades if t.get("strategy") == "king"]
+    if len(king_trades) < 150:
+        return None, "غير كافي — محتاج 150+ صفقة King"
+    filter_performance = {}
+    with data_lock:
+        current_weights = dict(KING_WEIGHTS)
+    for fname in current_weights.keys():
+        with_filter = [t for t in king_trades if t.get("filters", {}).get(fname, False)]
+        without_filter = [t for t in king_trades if not t.get("filters", {}).get(fname, False)]
+        if len(with_filter) >= 20 and len(without_filter) >= 20:
+            wr_with = sum(1 for t in with_filter if t.get("outcome") == "win") / len(with_filter) * 100
+            wr_without = sum(1 for t in without_filter if t.get("outcome") == "win") / len(without_filter) * 100
+            filter_performance[fname] = {
+                "wr_with": wr_with, "wr_without": wr_without,
+                "diff": wr_with - wr_without, "count": len(with_filter)
+            }
+    if not filter_performance:
+        return None, "لا توجد بيانات كافية"
+    new_weights = current_weights.copy()
+    adjustments = []
+    for fname, perf in filter_performance.items():
+        diff = perf["diff"]
+        current = current_weights[fname]
+        if diff > 10:
+            new_w = min(current + 3, 25)
+            adjustments.append(f"{fname}: {current} → {new_w} (+{diff:.1f}% WR)")
+        elif diff < -5:
+            new_w = max(current - 2, 3)
+            adjustments.append(f"{fname}: {current} → {new_w} ({diff:.1f}% WR)")
+        else:
+            new_w = current
+        new_weights[fname] = new_w
+    current_sum = sum(new_weights.values())
+    if current_sum != 100:
+        factor = 100 / current_sum
+        new_weights = {k: max(1, round(v * factor)) for k, v in new_weights.items()}
+        diff = 100 - sum(new_weights.values())
+        if diff != 0:
+            max_key = max(new_weights, key=new_weights.get)
+            new_weights[max_key] += diff
+    return {
+        "old_weights": current_weights, "new_weights": new_weights,
+        "adjustments": adjustments, "filter_performance": filter_performance
+    }, "تم تحديث الأوزان"
+
+def calculate_feature_importance(trades, strategy="king"):
+    if len(trades) < 100:
+        return None, "غير كافي"
+    st_trades = [t for t in trades if t.get("strategy") == strategy]
+    if len(st_trades) < 50:
+        return None, "غير كافي للاستراتيجية"
+    baseline_wins = sum(1 for t in st_trades if t.get("outcome") == "win")
+    baseline_wr = (baseline_wins / len(st_trades)) * 100
+    filter_names = list(st_trades[0]["filters"].keys()) if st_trades and st_trades[0].get("filters") else []
+    importance = {}
+    for fname in filter_names:
+        without_filter = [t for t in st_trades if not t.get("filters", {}).get(fname, False)]
+        with_filter = [t for t in st_trades if t.get("filters", {}).get(fname, False)]
+        if len(with_filter) >= 20 and len(without_filter) >= 20:
+            wr_with = sum(1 for t in with_filter if t.get("outcome") == "win") / len(with_filter) * 100
+            wr_without = sum(1 for t in without_filter if t.get("outcome") == "win") / len(without_filter) * 100
+            imp = wr_with - wr_without
+            importance[fname] = {
+                "importance": round(imp, 2), "wr_with": round(wr_with, 1),
+                "wr_without": round(wr_without, 1), "count": len(with_filter)
+            }
+    if importance:
+        total_imp = sum(abs(v["importance"]) for v in importance.values())
+        if total_imp > 0:
+            weights = {}
+            for fname, data in importance.items():
+                weights[fname] = max(1, round((abs(data["importance"]) / total_imp) * 100))
+            current_sum = sum(weights.values())
+            if current_sum != 100:
+                factor = 100 / current_sum
+                weights = {k: max(1, round(v * factor)) for k, v in weights.items()}
+                diff = 100 - sum(weights.values())
+                if diff != 0:
+                    max_key = max(weights, key=weights.get)
+                    weights[max_key] += diff
+            return {"weights": weights, "importance": importance, "baseline_wr": round(baseline_wr, 1)}, "تم"
+    return None, "لا توجد بيانات كافية"
+
+def optimize_weights_feature_importance(trades):
+    result, status = calculate_feature_importance(trades, strategy="king")
+    if not result:
+        return None, status
+    with data_lock:
+        old_weights = dict(KING_WEIGHTS)
+    new_weights = result["weights"]
+    adjustments = []
+    for fname in old_weights.keys():
+        old_w = old_weights.get(fname, 0)
+        new_w = new_weights.get(fname, old_w)
+        if old_w != new_w:
+            arrow = "↗️" if new_w > old_w else ("↘️" if new_w < old_w else "➡️")
+            adjustments.append(f"{arrow} {fname}: {old_w} → {new_w}")
+    return {
+        "old_weights": old_weights, "new_weights": new_weights,
+        "importance": result["importance"], "baseline_wr": result["baseline_wr"],
+        "adjustments": adjustments
+    }, "تم تحديث الأوزان بناءً على Feature Importance"
+
+# ========== REPORTS ==========
+def generate_report(trades, period="daily", market_type=None):
+    if market_type:
+        trades = [t for t in trades if ("-OTC" in t.get("pair", "").upper()) == (market_type == "otc")]
+    if not trades:
+        return None
+    total = len(trades)
+    wins = sum(1 for t in trades if t.get("outcome") == "win")
+    losses = total - wins
+    wr = (wins / total * 100) if total > 0 else 0
+    pf = (wins * PAYOUT_RATIO) / losses if losses > 0 else float('inf')
+    max_win_streak = max_loss_streak = current_win = current_loss = 0
+    for t in trades:
+        if t.get("outcome") == "win":
+            current_win += 1
+            current_loss = 0
+            max_win_streak = max(max_win_streak, current_win)
+        else:
+            current_loss += 1
+            current_win = 0
+            max_loss_streak = max(max_loss_streak, current_loss)
+    avg_win = PAYOUT_RATIO
+    avg_loss = 1
+    expectancy = (avg_win * (wr/100)) - (avg_loss * (1 - wr/100))
+    pair_rank = rank_pairs(trades)
+    best_pair = pair_rank[0] if pair_rank else None
+    worst_pair = pair_rank[-1] if pair_rank else None
+    hour_stats = analyze_hours(trades)
+    best_hour = next(iter(hour_stats.items())) if hour_stats else None
+    worst_hour = list(hour_stats.items())[-1] if hour_stats else None
+    orig_trades = [t for t in trades if t.get("strategy") == "original"]
+    king_trades = [t for t in trades if t.get("strategy") == "king"]
+    smart_trades = [t for t in trades if t.get("strategy") == "smart"]
+    pro_trades = [t for t in trades if t.get("strategy") == "pro"]
+    quantum_trades = [t for t in trades if t.get("strategy") == "quantum"]
+    orig_wr = (sum(1 for t in orig_trades if t.get("outcome") == "win") / len(orig_trades) * 100) if orig_trades else 0
+    king_wr = (sum(1 for t in king_trades if t.get("outcome") == "win") / len(king_trades) * 100) if king_trades else 0
+    smart_wr = (sum(1 for t in smart_trades if t.get("outcome") == "win") / len(smart_trades) * 100) if smart_trades else 0
+    pro_wr = (sum(1 for t in pro_trades if t.get("outcome") == "win") / len(pro_trades) * 100) if pro_trades else 0
+    quantum_wr = (sum(1 for t in quantum_trades if t.get("outcome") == "win") / len(quantum_trades) * 100) if quantum_trades else 0
+    return {
+        "period": period, "market_type": market_type or "all",
+        "total_trades": total, "wins": wins, "losses": losses,
+        "win_rate": round(wr, 1), "profit_factor": round(pf, 2),
+        "max_win_streak": max_win_streak, "max_loss_streak": max_loss_streak,
+        "expectancy": round(expectancy, 3), "best_pair": best_pair,
+        "worst_pair": worst_pair, "best_hour": best_hour, "worst_hour": worst_hour,
+        "original": {"total": len(orig_trades), "wr": round(orig_wr, 1)},
+        "king": {"total": len(king_trades), "wr": round(king_wr, 1)},
+        "smart": {"total": len(smart_trades), "wr": round(smart_wr, 1)},
+        "pro": {"total": len(pro_trades), "wr": round(pro_wr, 1)},
+        "quantum": {"total": len(quantum_trades), "wr": round(quantum_wr, 1)},
+        "filter_eval": evaluate_filters(trades),
+        "calibration": analyze_confidence_calibration(trades),
+        "pair_rankings": pair_rank[:5] if len(pair_rank) >= 5 else pair_rank,
+    }
+
+def format_report_message(report):
+    if not report:
+        return "📊 *لا توجد بيانات للتقرير*"
+    period_name = {"daily": "اليومي", "weekly": "الأسبوعي", "monthly": "الشهري"}.get(report["period"], report["period"])
+    market_label = report.get("market_type", "")
+    market_prefix = f" [{market_label.upper()}]" if market_label else ""
+    msg = (
+        f"📊 *تقرير {period_name}{market_prefix}*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"📈 *إجمالي الصفقات:* {report['total_trades']}\n"
+        f"✅ *رابحة:* {report['wins']} | ❌ *خاسرة:* {report['losses']}\n"
+        f"🎯 *نسبة الربح:* {report['win_rate']}%\n"
+        f"💰 *Profit Factor:* {report['profit_factor']}\n"
+        f"📊 *Expectancy:* {report['expectancy']}\n"
+        f"🔥 *أطول سلسلة رابحة:* {report['max_win_streak']}\n"
+        f"💔 *أطول سلسلة خاسرة:* {report['max_loss_streak']}\n\n"
+    )
+    if report.get("best_pair"):
+        bp = report["best_pair"]
+        msg += f"🏆 *أفضل زوج:* `{bp['pair']}` — WR: {bp['wr']}%\n"
+    if report.get("worst_pair"):
+        wp = report["worst_pair"]
+        msg += f"⚠️ *أسوأ زوج:* `{wp['pair']}` — WR: {wp['wr']}%\n"
+    msg += f"\n📋 *الاستراتيجيات:*\n"
+    msg += f"  الأصلية: {report['original']['total']} صفقة — WR: {report['original']['wr']}%\n"
+    msg += f"  👑 King: {report['king']['total']} صفقة — WR: {report['king']['wr']}%\n"
+    msg += f"  🏆 SMC: {report['smart']['total']} صفقة — WR: {report['smart']['wr']}%\n"
+    msg += f"  🔥 Pro: {report['pro']['total']} صفقة — WR: {report['pro']['wr']}%\n"
+    msg += f"  🧠 Quantum: {report['quantum']['total']} صفقة — WR: {report['quantum']['wr']}%\n"
+    if report.get("filter_eval"):
+        msg += f"\n🔬 *ترتيب الفلاتر:*\n"
+        for i, (fname, fdata) in enumerate(list(report["filter_eval"].items())[:5], 1):
+            emoji = "🟢" if fdata["worth"] == "High" else ("🟡" if fdata["worth"] == "Med" else "🔴")
+            msg += f"  {i}. {emoji} `{fname}` — WR: {fdata['wr']}% ({fdata['worth']})\n"
+    if report.get("calibration"):
+        msg += f"\n⚖️ *معايرة الثقة:*\n"
+        for bucket, cdata in report["calibration"].items():
+            msg += f"  {bucket}: {cdata['status']} (فعلي: {cdata['actual_wr']}% vs متوقع: {cdata['expected_wr']}%)\n"
+    return msg
+
+# ========== OPTIMIZATION PROPOSAL ==========
+OPTIMIZATION_PROPOSAL_FILE = "optimization_proposal.json"
+
+def generate_and_send_optimization_proposal():
+    trades = read_trade_log(max_entries=5000)
+    proposals, status = grid_search_optimization(trades)
+    weight_result, weight_status = optimize_weights_feature_importance(trades)
+    if not proposals and not weight_result:
+        logger.info(f"📊 التحسين: {status}")
+        return
+    msg = (
+        f"🔧 *اقتراح تحسين تلقائي*\n"
+        f"📅 التاريخ: {datetime.now(CAIRO_TZ).strftime('%d/%m/%Y %I:%M %p')}\n"
+        f"📊 الصفقات المحللة: {len(trades)}\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+    )
+    if proposals:
+        msg += f"📋 *تعديلات العتبات:*\n"
+        for p in proposals:
+            msg += (
+                f"\n🔹 *{p['filter']}*\n"
+                f"   الحالي: `{p['current']}`\n"
+                f"   المقترح: `{p['proposed']}`\n"
+                f"   السبب: {p['reason']}\n"
+                f"   التأثير: {p['impact']}\n"
+            )
+    if weight_result:
+        msg += f"\n⚖️ *تعديلات أوزان King Strategy (Feature Importance):*\n"
+        msg += f"📊 Baseline WR: {weight_result.get('baseline_wr', 'N/A')}%\n"
+        for adj in weight_result["adjustments"]:
+            msg += f"   • {adj}\n"
+        msg += f"\n📊 الأوزان الجديدة:\n"
+        for k, v in weight_result["new_weights"].items():
+            old = weight_result["old_weights"].get(k, v)
+            arrow = "↗️" if v > old else ("↘️" if v < old else "➡️")
+            msg += f"   {arrow} `{k}`: {old} → {v}\n"
+        if weight_result.get("importance"):
+            msg += f"\n🔬 *Feature Importance:*\n"
+            sorted_imp = sorted(weight_result["importance"].items(), key=lambda x: abs(x[1]["importance"]), reverse=True)
+            for fname, imp_data in sorted_imp[:5]:
+                emoji = "🟢" if imp_data["importance"] > 5 else ("🟡" if imp_data["importance"] > 0 else "🔴")
+                msg += f"   {emoji} `{fname}`: +{imp_data['importance']:.1f}% (مع: {imp_data['wr_with']}% | بدون: {imp_data['wr_without']}%)\n"
+    msg += (
+        f"\n━━━━━━━━━━━━━━━━━━━━\n"
+        f"✅ *للموافقة:* رد `موافق`\n"
+        f"❌ *للرفض:* رد `رفض`\n"
+        f"⏳ *متاح 24 ساعة*\n\n"
+        f"⚠️ *تحذير:* التعديل هيغير عتبات الاستراتيجيات."
+    )
+    proposal_data = {
+        "timestamp": get_iq_time(),
+        "proposals": proposals or [],
+        "weight_result": weight_result,
+        "status": "pending",
+        "message": msg
+    }
+    with data_lock:
+        with open(OPTIMIZATION_PROPOSAL_FILE, 'w', encoding='utf-8') as f:
+            json.dump(proposal_data, f, ensure_ascii=False, indent=2)
+    send_telegram_message(msg)
+    logger.info("🔧 تم إرسال اقتراح تحسين")
+
+def handle_optimization_reply(reply_text):
+    reply_lower = reply_text.lower().strip()
+    try:
+        with data_lock:
+            with open(OPTIMIZATION_PROPOSAL_FILE, 'r', encoding='utf-8') as f:
+                proposal = json.load(f)
+    except Exception as e:
+        logger.warning(f"⚠️ فشل قراءة الاقتراح: {e}")
+        return False, "لا يوجد اقتراح نشط"
+    if proposal.get("status") != "pending":
+        return False, "الاقتراح تم معالجته بالفعل"
+    if get_iq_time() - proposal.get("timestamp", 0) > 86400:
+        proposal["status"] = "expired"
+        with data_lock:
+            with open(OPTIMIZATION_PROPOSAL_FILE, 'w', encoding='utf-8') as f:
+                json.dump(proposal, f, ensure_ascii=False, indent=2)
+        return False, "انتهت صلاحية الاقتراح (24 ساعة)"
+    if reply_lower in ["موافق", "موافقة", "نعم", "yes", "approve", "ok"]:
+        weight_result = proposal.get("weight_result")
+        if weight_result and weight_result.get("new_weights"):
+            global KING_WEIGHTS
+            with data_lock:
+                KING_WEIGHTS = weight_result["new_weights"]
+                save_king_weights(KING_WEIGHTS)
+            logger.info("✅ تم تطبيق أوزان King الجديدة")
+        proposal["status"] = "approved"
+        with data_lock:
+            with open(OPTIMIZATION_PROPOSAL_FILE, 'w', encoding='utf-8') as f:
+                json.dump(proposal, f, ensure_ascii=False, indent=2)
+        return True, "✅ تم تطبيق التعديلات بنجاح!"
+    elif reply_lower in ["رفض", "لا", "no", "reject", "cancel"]:
+        proposal["status"] = "rejected"
+        with data_lock:
+            with open(OPTIMIZATION_PROPOSAL_FILE, 'w', encoding='utf-8') as f:
+                json.dump(proposal, f, ensure_ascii=False, indent=2)
+        return True, "❌ تم رفض الاقتراح. البوت يستمر بالعتبات الحالية."
+    return False, None
+
+# ========== WALK FORWARD ==========
+WALK_FORWARD_FILE = "walk_forward_state.json"
+
+def load_walk_forward_state():
+    try:
+        with data_lock:
+            with open(WALK_FORWARD_FILE, 'r', encoding='utf-8') as f:
+                content = f.read().strip()
+            if not content:
+                return {}
+            return json.loads(content)
+    except Exception:
+        return {}
+
+def save_walk_forward_state(state_data):
+    with data_lock:
+        try:
+            with open(WALK_FORWARD_FILE, 'w', encoding='utf-8') as f:
+                json.dump(state_data, f, indent=2)
+        except Exception as e:
+            logger.error(f"خطأ في حفظ Walk Forward: {e}")
+
+def run_walk_forward_validation(trades, strategy="king", market_type="live"):
+    market_trades = [t for t in trades if ("-OTC" in t.get("pair", "").upper()) == (market_type == "otc")]
+    st_trades = [t for t in market_trades if t.get("strategy") == strategy]
+    if len(st_trades) < WALK_FORWARD_MIN_TRADES:
+        return False, None, f"غير كافي — محتاج {WALK_FORWARD_MIN_TRADES}+ صفقة {strategy}/{market_type.upper()} (حالياً: {len(st_trades)})"
+    wf_state = load_walk_forward_state()
+    state_key = f"{market_type}_{strategy}"
+    last_validated_ts = wf_state.get(state_key, {}).get("last_test_timestamp", 0)
+    split_idx = int(len(st_trades) * WALK_FORWARD_TRAIN_RATIO)
+    train_set = st_trades[:split_idx]
+    test_set = st_trades[split_idx:]
+    fresh_test_set = [t for t in test_set if t.get("timestamp", 0) > last_validated_ts]
+    if len(fresh_test_set) < 20:
+        return False, None, "لا توجد بيانات اختبار جديدة كافية"
+    test_set = fresh_test_set
+    baseline_wins = sum(1 for t in test_set if t.get("outcome") == "win")
+    baseline_wr = (baseline_wins / len(test_set)) * 100
+    best_config = None
+    best_train_wr = 0
+    adx_options = [20, 22, 24, 26, 28]
+    rsi_low_options = [40, 42, 45, 48]
+    rsi_high_options = [55, 58, 60, 62]
+    for adx_t in adx_options:
+        for rsi_l in rsi_low_options:
+            for rsi_h in rsi_high_options:
+                filtered = []
+                for t in train_set:
+                    indicators = t.get("indicators", {})
+                    direction = t.get("direction", "")
+                    adx_ok = indicators.get("adx", 0) >= adx_t
+                    rsi = indicators.get("rsi", 50)
+                    if direction == "CALL":
+                        rsi_ok = rsi_l <= rsi <= rsi_h
+                    else:
+                        rsi_ok = (100 - rsi_h) <= rsi <= (100 - rsi_l)
+                    if adx_ok and rsi_ok:
+                        filtered.append(t)
+                if len(filtered) >= 20:
+                    wins = sum(1 for t in filtered if t.get("outcome") == "win")
+                    wr = (wins / len(filtered)) * 100
+                    if wr > best_train_wr:
+                        best_train_wr = wr
+                        best_config = {"adx": adx_t, "rsi_low": rsi_l, "rsi_high": rsi_h}
+    if not best_config:
+        return False, None, "لم يتم العثور على إعدادات أفضل"
+    test_filtered = []
+    for t in test_set:
+        indicators = t.get("indicators", {})
+        direction = t.get("direction", "")
+        adx_ok = indicators.get("adx", 0) >= best_config["adx"]
+        rsi = indicators.get("rsi", 50)
+        if direction == "CALL":
+            rsi_ok = best_config["rsi_low"] <= rsi <= best_config["rsi_high"]
+        else:
+            rsi_ok = (100 - best_config["rsi_high"]) <= rsi <= (100 - best_config["rsi_low"])
+        if adx_ok and rsi_ok:
+            test_filtered.append(t)
+    test_wr = (sum(1 for t in test_filtered if t.get("outcome") == "win") / len(test_filtered) * 100) if len(test_filtered) >= 10 else 0
+    improvement = test_wr - baseline_wr
+    result = {
+        "market_type": market_type, "strategy": strategy,
+        "train_size": len(train_set), "test_size": len(test_set),
+        "baseline_wr": round(baseline_wr, 1), "new_wr": round(test_wr, 1),
+        "improvement": round(improvement, 1), "best_config": best_config,
+        "approved": improvement > 2
+    }
+    newest_ts = max((t.get("timestamp", 0) for t in test_set), default=last_validated_ts)
+    wf_state[state_key] = {"last_test_timestamp": newest_ts}
+    save_walk_forward_state(wf_state)
+    if result["approved"]:
+        msg = f"✅ Walk Forward [{market_type.upper()}/{strategy}]: مقبول — تحسين {improvement:.1f}% (Baseline: {baseline_wr:.1f}% → New: {test_wr:.1f}%)"
+        settings = load_settings(market_type)
+        settings["adx_threshold"] = best_config["adx"]
+        settings["rsi_low_call"] = best_config["rsi_low"]
+        settings["rsi_high_call"] = best_config["rsi_high"]
+        settings["rsi_low_put"] = 100 - best_config["rsi_high"]
+        settings["rsi_high_put"] = 100 - best_config["rsi_low"]
+        settings["last_updated"] = get_iq_time()
+        settings["walk_forward_wr"] = test_wr
+        settings["baseline_wr"] = baseline_wr
+        settings["approved"] = True
+        save_settings(settings, market_type)
+    else:
+        msg = f"❌ Walk Forward [{market_type.upper()}/{strategy}]: مرفوض — تحسين {improvement:.1f}% فقط (Baseline: {baseline_wr:.1f}% → New: {test_wr:.1f}%)"
+    return result["approved"], result, msg
+
+# ========== MONTE CARLO ==========
+MONTE_CARLO_FILE = "monte_carlo_results.json"
+
+def run_monte_carlo(trades, strategy="king", market_type=None):
+    st_trades = [t for t in trades if t.get("strategy") == strategy]
+    if len(st_trades) < MONTE_CARLO_MIN_TRADES:
+        return None, f"غير كافي — محتاج {MONTE_CARLO_MIN_TRADES}+ صفقة"
+    n = len(st_trades)
+    outcomes = [1 if t.get("outcome") == "win" else 0 for t in st_trades]
+    baseline_wr = sum(outcomes) / n * 100
+    simulations = []
+    rng = np.random.default_rng()
+    for _ in range(MONTE_CARLO_SIMULATIONS):
+        sim_outcomes = []
+        while len(sim_outcomes) < n:
+            start_idx = rng.integers(0, n - BLOCK_SIZE + 1)
+            block = outcomes[start_idx:start_idx + BLOCK_SIZE]
+            sim_outcomes.extend(block)
+        sim_outcomes = sim_outcomes[:n]
+        sim_wr = sum(sim_outcomes) / n * 100
+        cumulative = 0
+        max_dd = peak = 0
+        for o in sim_outcomes:
+            cumulative += (1 if o == 1 else -1)
+            if cumulative > peak:
+                peak = cumulative
+            dd = peak - cumulative
+            if dd > max_dd:
+                max_dd = dd
+        simulations.append({"wr": sim_wr, "max_dd": max_dd})
+    wrs = [s["wr"] for s in simulations]
+    dds = [s["max_dd"] for s in simulations]
+    wr_mean = np.mean(wrs)
+    wr_std = np.std(wrs)
+    wr_5th = np.percentile(wrs, 5)
+    wr_95th = np.percentile(wrs, 95)
+    dd_mean = np.mean(dds)
+    dd_95th = np.percentile(dds, 95)
+    ruin_count = sum(1 for s in simulations if s["max_dd"] > 50)
+    risk_of_ruin = (ruin_count / MONTE_CARLO_SIMULATIONS) * 100
+    stable_count = sum(1 for s in simulations if s["wr"] >= 60)
+    stability = (stable_count / MONTE_CARLO_SIMULATIONS) * 100
+    return {
+        "strategy": strategy, "market_type": market_type, "trades": n, "simulations": MONTE_CARLO_SIMULATIONS,
+        "baseline_wr": round(baseline_wr, 1), "mc_mean_wr": round(wr_mean, 1),
+        "mc_wr_std": round(wr_std, 1), "mc_wr_5th": round(wr_5th, 1),
+        "mc_wr_95th": round(wr_95th, 1), "mc_mean_dd": round(dd_mean, 1),
+        "mc_dd_95th": round(dd_95th, 1), "risk_of_ruin": round(risk_of_ruin, 1),
+        "stability": round(stability, 1),
+        "status": "✅ مستقر" if stability >= 80 and risk_of_ruin < 5 else ("⚠️ متوسط" if stability >= 60 else "🔴 ضعيف")
+    }, "تم"
+
+def format_monte_carlo_message(result):
+    if not result:
+        return "📊 *Monte Carlo: لا توجد بيانات كافية*"
+    market_label = result.get("market_type", "")
+    market_prefix = f" [{market_label.upper()}]" if market_label else ""
+    return (
+        f"🎲 *محاكاة Monte Carlo{market_prefix}*\n"
+        f"الاستراتيجية: `{result['strategy']}`\n"
+        f"الصفقات: {result['trades']} | المحاكاة: {result['simulations']:,}\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"📊 *نسبة الربح:*\n"
+        f"   Baseline: {result['baseline_wr']}%\n"
+        f"   MC Mean: {result['mc_mean_wr']}% (±{result['mc_wr_std']}%)\n"
+        f"   5th–95th: {result['mc_wr_5th']}% – {result['mc_wr_95th']}%\n\n"
+        f"📉 *Max Drawdown:*\n"
+        f"   Mean: {result['mc_mean_dd']} صفقات\n"
+        f"   95th: {result['mc_dd_95th']} صفقات\n\n"
+        f"⚠️ *Risk of Ruin:* {result['risk_of_ruin']}%\n"
+        f"🛡️ *الاستقرار:* {result['stability']}%\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"{result['status']}"
+    )
+
+def save_monte_carlo_results(results_dict):
+    try:
+        with data_lock:
+            with open(MONTE_CARLO_FILE, 'w', encoding='utf-8') as f:
+                json.dump(results_dict, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error(f"خطأ في حفظ نتائج Monte Carlo: {e}")
+
+def format_monte_carlo_summary(results_dict):
+    if not results_dict:
+        return "📊 *Monte Carlo: لا توجد بيانات*"
+    msg = "🎲 *Monte Carlo — ملخص شهري*\n"
+    msg += f"📅 {datetime.now(CAIRO_TZ).strftime('%d/%m/%Y %I:%M %p')}\n"
+    msg += "━━━━━━━━━━━━━━━━━━━━\n\n"
+    for market in ["live", "otc"]:
+        market_data = results_dict.get(market, {})
+        if not market_data:
+            continue
+        market_emoji = "🟢" if market == "live" else "🔵"
+        msg += f"{market_emoji} *{market.upper()}*\n"
+        for strategy, result in market_data.items():
+            msg += f"  📌 `{strategy}`:\n"
+            msg += f"     ⚠️ Risk of Ruin: {result.get('risk_of_ruin', 'N/A')}%\n"
+            msg += f"     📉 Max Drawdown: {result.get('mc_dd_95th', 'N/A')} صفقات\n"
+            msg += f"     🛡️ الاستقرار: {result.get('stability', 'N/A')}%\n"
+            msg += f"     📊 Baseline WR: {result.get('baseline_wr', 'N/A')}%\n"
+            msg += f"     {result.get('status', '')}\n"
+        msg += "\n"
+    msg += "━━━━━━━━━━━━━━━━━━━━"
+    return msg
+
+# ========== MARKET REGIME ==========
+
+def detect_market_regime(pair, tf=300):
+    key = f"regime_{pair}"
+    now = get_iq_time()
+    with data_lock:
+        if key in state.regime_cache and now - state.regime_cache[key][1] < REGIME_CACHE_TTL:
+            return state.regime_cache[key][0]
+    try:
+        df = get_cached_df_king(pair, tf, 80)
+        if df is None or len(df) < 30:
+            return "unknown"
+        df['ALMA_20'] = calculate_alma(df['Close'], 20, 0.85, 6)
+        df['ALMA_80'] = calculate_alma(df['Close'], 80, 0.85, 6)
+        atr_series = calculate_atr_series(df, 14)
+        atr = atr_series.iloc[-1]
+        atr_avg = atr_series.tail(20).mean()
+        adx, _, _ = calculate_adx(df, 14)
+        bbw = bollinger_bandwidth(df, 20)
+        if adx >= 25 and atr > atr_avg * 1.2:
+            regime = "trending"
+        elif adx < 18 and bbw < 0.001:
+            regime = "ranging"
+        elif atr > atr_avg * 1.8:
+            regime = "high_vol"
+        elif atr < atr_avg * 0.5:
+            regime = "low_vol"
+        else:
+            regime = "mixed"
+        with data_lock:
+            state.regime_cache[key] = (regime, now)
+        return regime
+    except Exception as e:
+        logger.error(f"خطأ في تحديد حالة السوق {pair}: {e}")
+        return "unknown"
+
+def check_pair_disabled(pair):
+    now = get_iq_time()
+    with data_lock:
+        if pair in state.disabled_pairs:
+            if now < state.disabled_pairs[pair]:
+                return True, f"متوقف حتى {datetime.fromtimestamp(state.disabled_pairs[pair]).strftime('%d/%m %H:%M')}"
+            else:
+                del state.disabled_pairs[pair]
+                logger.info(f"✅ {pair} عاد للعمل")
+                return False, None
+    return False, None
+
+def update_disabled_pairs():
+    try:
+        all_trades = read_trade_log(max_entries=10000)
+        pair_stats = {}
+        for t in all_trades:
+            p = t.get("pair", "")
+            if p not in pair_stats:
+                pair_stats[p] = {"win": 0, "loss": 0, "total": 0}
+            if pair_stats[p]["total"] < DISABLE_WINDOW:
+                pair_stats[p]["total"] += 1
+                if t.get("outcome") == "win":
+                    pair_stats[p]["win"] += 1
+                else:
+                    pair_stats[p]["loss"] += 1
+        newly_disabled = []
+        with data_lock:
+            for pair, stat in pair_stats.items():
+                if stat["total"] >= 30:
+                    wr = (stat["win"] / stat["total"]) * 100
+                    if wr < DISABLE_THRESHOLD and pair not in state.disabled_pairs:
+                        disabled_until = get_iq_time() + DISABLE_DURATION
+                        state.disabled_pairs[pair] = disabled_until
+                        newly_disabled.append((pair, wr))
+                        logger.warning(f"🚫 {pair} متوقف — WR: {wr:.1f}% (آخر {stat['total']} صفقة)")
+        if newly_disabled:
+            msg = "🚫 *توقيف أزواج تلقائي*\n\n"
+            for p, wr in newly_disabled:
+                msg += f"• `{p}` — WR: {wr:.1f}% (7 أيام)\n"
+            send_telegram_message(msg)
+    except Exception as e:
+        logger.error(f"خطأ في تحديث الأزواج المتوقفة: {e}")
+
+def update_strategy_scores():
+    try:
+        all_trades = read_trade_log(max_entries=STRATEGY_SCORE_WINDOW * 2)
+        for strategy in ["original", "king", "smart", "pro", "quantum"]:
+            trades = [t for t in all_trades if t.get("strategy") == strategy]
+            if len(trades) >= 20:
+                wins = sum(1 for t in trades if t.get("outcome") == "win")
+                wr = (wins / len(trades)) * 100
+                chunks = [trades[i:i+10] for i in range(0, len(trades), 10)]
+                chunk_wrs = []
+                for chunk in chunks:
+                    if chunk:
+                        cw = sum(1 for t in chunk if t.get("outcome") == "win") / len(chunk) * 100
+                        chunk_wrs.append(cw)
+                stability = 100 - np.std(chunk_wrs) if len(chunk_wrs) > 1 else 50
+                score = (wr * 0.6) + (stability * 0.4)
+                with data_lock:
+                    state.strategy_scores[strategy] = {
+                        "win": wins, "loss": len(trades) - wins, "total": len(trades),
+                        "wr": round(wr, 1), "stability": round(stability, 1), "score": round(score, 1)
+                    }
+                logger.info(f"📊 Strategy Score — {strategy}: WR={wr:.1f}%, Score={score:.1f}")
+    except Exception as e:
+        logger.error(f"خطأ في تحديث Strategy Scores: {e}")
+
+def select_strategy_for_regime(regime):
+    return ["original", "king", "smart", "pro", "quantum"]
+
+def calculate_adaptive_threshold(trades, market_type="live"):
+    if not ADAPTIVE_THRESHOLD_ENABLED:
+        return ADAPTIVE_THRESHOLD_MIN
+    market_trades = [t for t in trades if ("-OTC" in t.get("pair", "").upper()) == (market_type == "otc")]
+    recent = market_trades[-ADAPTIVE_THRESHOLD_WINDOW:]
+    if len(recent) < 50:
+        return state.adaptive_thresholds.get(market_type, ADAPTIVE_THRESHOLD_MIN)
+    wins = sum(1 for t in recent if t.get("outcome") == "win")
+    wr = (wins / len(recent)) * 100
+    if wr >= 80:
+        threshold = 80
+    elif wr >= 70:
+        threshold = 85
+    elif wr >= 60:
+        threshold = 90
+    elif wr >= 50:
+        threshold = 95
+    else:
+        threshold = 100
+    threshold = max(ADAPTIVE_THRESHOLD_MIN, min(ADAPTIVE_THRESHOLD_MAX, threshold))
+    with data_lock:
+        state.adaptive_thresholds[market_type] = threshold
+    if len(recent) >= 100:
+        logger.info(f"📊 Adaptive Threshold [{market_type.upper()}]: WR={wr:.1f}% → Threshold={threshold}")
+    return threshold
+
+def get_adaptive_king_level(score, market_type="live"):
+    threshold = state.adaptive_thresholds.get(market_type, 80)
+    if score >= threshold + 15:
+        return 4
+    elif score >= threshold + 10:
+        return 3
+    elif score >= threshold + 5:
+        return 2
+    elif score >= threshold:
+        return 1
+    return 0
+
+# ========== NEWS FUNCTIONS ==========
+
+def update_news():
+    if get_iq_time() - state.last_news_update < 1800:
+        return
+    try:
+        r = requests.get("https://nfs.faireconomy.media/ff_calendar_thisweek.json", timeout=8)
+        if r.status_code == 200:
+            with data_lock:
+                state.news_data = r.json()
+                state.last_news_update = get_iq_time()
+                state.news_fetch_failed = False
+            logger.info(f"✅ تم تحديث الأخبار: {len(state.news_data)} حدث")
+            return
+    except Exception as e:
+        logger.warning(f"⚠️ فشل المصدر الرئيسي للأخبار: {e}")
+    try:
+        r2 = requests.get("https://forexfactory-api.herokuapp.com/get_this_week", timeout=8)
+        if r2.status_code == 200:
+            with data_lock:
+                state.news_data = r2.json()
+                state.last_news_update = get_iq_time()
+                state.news_fetch_failed = False
+            logger.info("✅ تم جلب الأخبار من المصدر الاحتياطي")
+            return
+    except Exception as e:
+        logger.warning(f"⚠️ فشل المصدر الاحتياطي: {e}")
+    with data_lock:
+        state.news_fetch_failed = True
+    logger.error("❌ فشل المصدران في جلب الأخبار")
+
+def is_news_for_pair(pair):
+    day_of_week = datetime.now(CAIRO_TZ).weekday()
+    if day_of_week in [5, 6]:
+        return False
+    update_news()
+    with data_lock:
+        if state.news_fetch_failed:
+            logger.warning("⚠️ الأخبار غير متاحة، الإشارات مستمرة")
+            return False
+        news_snapshot = state.news_data.copy()
+    now = datetime.now(UTC_TZ)
+    for ev in news_snapshot:
+        try:
+            impact = str(ev.get('impact','')).upper()
+            if impact not in ['HIGH','RED','3']:
+                continue
+            curr = str(ev.get('country', ev.get('currency', ''))).upper()
+            if curr not in CURRENCY_PAIRS or pair not in CURRENCY_PAIRS[curr]:
+                continue
+            ev_date = ev.get('date')
+            et = datetime.fromtimestamp(ev_date, tz=UTC_TZ) if isinstance(ev_date, (int, float)) else pd.to_datetime(ev_date).tz_localize(UTC_TZ)
+            diff = abs((now - et).total_seconds())
+            if diff <= 900:
+                return True
+        except Exception:
+            continue
+    return False
+
+def is_market_open_chaos():
+    day_of_week = datetime.now(CAIRO_TZ).weekday()
+    if day_of_week in [5, 6]:
+        return False
+    now = get_cairo_time()
+    hm = now.hour * 100 + now.minute
+    return (1000 <= hm <= 1030) or (1530 <= hm <= 1600)
+
+def passes_common_entry_filters(pair):
+    if is_news_for_pair(pair):
+        return False, "فلتر الأخبار"
+    if is_market_open_chaos():
+        return False, "افتتاح السوق"
+    return True, None
 
 # ========== TECHNICAL INDICATORS ==========
 
@@ -1870,7 +1861,7 @@ def get_cached_candles(pair, tf, count, max_age=30, force_refresh=False):
     key = f"{pair}_{tf}_{count}"
 
     if not force_refresh:
-        data = candles_cache.get(key, max_age=max_age)
+        data = candles_cache.get(key)
         if data is not None:
             return data
 
@@ -1886,7 +1877,7 @@ def get_cached_candles(pair, tf, count, max_age=30, force_refresh=False):
         err_str = str(e).lower()
         if "not found" in err_str or "asset" in err_str:
             with data_lock:
-                state.invalid_assets[pair] = get_iq_time()
+                state.invalid_assets.add(pair)
             logger.warning(f"⚠️ {pair} غير متاح")
         else:
             logger.error(f"خطأ جلب شموع {pair}: {e}")
@@ -1897,11 +1888,9 @@ def get_cached_df(pair, tf, count):
     data = df_cache.get(key)
     if data is not None:
         return data
-    raw = get_cached_candles(pair, tf, count, max_age=60)
+    raw = get_cached_candles(pair, tf, count, max_age=15)
     if not raw or len(raw) < 55:
-        return None, None
-    last_to = raw[-1].get('to', 0)
-    curr_idx = -2 if last_to > get_iq_time() else -1
+        return None
     df = pd.DataFrame(raw)
     df.rename(columns={'open':'Open','max':'High','min':'Low','close':'Close','volume':'Volume'}, inplace=True)
     df['ALMA_9'] = calculate_alma(df['Close'], 9, 0.85, 6)
@@ -1911,38 +1900,34 @@ def get_cached_df(pair, tf, count):
     df['Stoch_K'], df['Stoch_D'] = calculate_stoch(df, 14, 3)
     df['Vol_MA'] = df['Volume'].rolling(window=20).mean()
     df['ROC'] = calculate_roc(df['Close'], 5)
-    df_cache.set(key, (df, curr_idx))
-    return df, curr_idx
+    df_cache.set(key, df)
+    return df
 
 def get_cached_df_king(pair, tf, count):
     key = f"king_{pair}_{tf}_{count}"
     data = king_df_cache.get(key)
     if data is not None:
         return data
-    raw = get_cached_candles(pair, tf, count, max_age=60)
+    raw = get_cached_candles(pair, tf, count, max_age=15)
     if not raw or len(raw) < 60:
-        return None, None
-    last_to = raw[-1].get('to', 0)
-    curr_idx = -2 if last_to > get_iq_time() else -1
+        return None
     df = pd.DataFrame(raw)
     df.rename(columns={'open':'Open','max':'High','min':'Low','close':'Close','volume':'Volume'}, inplace=True)
-    king_df_cache.set(key, (df, curr_idx))
-    return df, curr_idx
+    king_df_cache.set(key, df)
+    return df
 
 def get_cached_df_smart(pair, tf, count):
     key = f"smart_{pair}_{tf}_{count}"
     data = smart_df_cache.get(key)
     if data is not None:
         return data
-    raw = get_cached_candles(pair, tf, count, max_age=60)
+    raw = get_cached_candles(pair, tf, count, max_age=15)
     if not raw or len(raw) < 80:
-        return None, None
-    last_to = raw[-1].get('to', 0)
-    curr_idx = -2 if last_to > get_iq_time() else -1
+        return None
     df = pd.DataFrame(raw)
     df.rename(columns={'open':'Open','max':'High','min':'Low','close':'Close','volume':'Volume'}, inplace=True)
-    smart_df_cache.set(key, (df, curr_idx))
-    return df, curr_idx
+    smart_df_cache.set(key, df)
+    return df
 
 # ========== HIGHER TIMEFRAME TRENDS ==========
 
@@ -2004,7 +1989,7 @@ def get_king_htf_trend(pair):
 
 # ========== TRADE HELPERS ==========
 
-def _build_trade_dict(pair, direction, entry_price, expire_offset, is_king,
+def _build_trade_dict(pair, direction, entry_price, expire_offset, is_king, is_martingale,
                       signal_level, signal_name, score, filters, indicators, strategy):
     def convert_bool_to_int(obj):
         if isinstance(obj, dict):
@@ -2024,8 +2009,9 @@ def _build_trade_dict(pair, direction, entry_price, expire_offset, is_king,
         'timeframe': '5m',
         'direction': direction,
         'entry_price': entry_price,
-        'expire_time': ((int(get_iq_time()) // 300) + 2) * 300,
+        'expire_time': get_iq_time() + expire_offset,
         'warned_loss': False,
+        'is_martingale': is_martingale,
         'is_king': is_king,
         'signal_level': signal_level,
         'signal_name': signal_name,
@@ -2095,89 +2081,750 @@ def already_sent_this_candle_pro(pair):
         state.pa_sent_signals[key] = get_iq_time()
     return False
 
-# ========== NEWS FUNCTIONS ==========
-
-CURRENCY_PAIRS = {
-    'USD': ['EURUSD','GBPUSD','USDJPY','AUDUSD','USDCAD','USDCHF'],
-    'EUR': ['EURUSD','EURJPY','EURGBP','EURAUD','EURCAD'],
-    'GBP': ['GBPUSD','EURGBP','GBPJPY'],
-    'JPY': ['USDJPY','EURJPY','AUDJPY','CADJPY','GBPJPY'],
-    'AUD': ['AUDUSD','AUDCAD','AUDJPY','EURAUD'],
-    'CAD': ['USDCAD','AUDCAD','CADJPY','EURCAD'],
-    'CHF': ['USDCHF']
-}
-
-def update_news():
-    if get_iq_time() - state.last_news_update < 1800:
-        return
-    try:
-        r = requests.get("https://nfs.faireconomy.media/ff_calendar_thisweek.json", timeout=8)
-        if r.status_code == 200:
-            with data_lock:
-                state.news_data = r.json()
-                state.last_news_update = get_iq_time()
-                state.news_fetch_failed = False
-            logger.info(f"✅ تم تحديث الأخبار: {len(state.news_data)} حدث")
-            return
-    except Exception as e:
-        logger.warning(f"⚠️ فشل المصدر الرئيسي للأخبار: {e}")
-    try:
-        r2 = requests.get("https://forexfactory-api.herokuapp.com/get_this_week", timeout=8)
-        if r2.status_code == 200:
-            with data_lock:
-                state.news_data = r2.json()
-                state.last_news_update = get_iq_time()
-                state.news_fetch_failed = False
-            logger.info("✅ تم جلب الأخبار من المصدر الاحتياطي")
-            return
-    except Exception as e:
-        logger.warning(f"⚠️ فشل المصدر الاحتياطي: {e}")
+def already_sent_this_candle_quantum(pair):
+    key = f"quantum_{pair}_{(int(get_iq_time()) // 300) * 300}"
     with data_lock:
-        state.news_fetch_failed = True
-    logger.error("❌ فشل المصدران في جلب الأخبار")
-
-def is_news_for_pair(pair):
-    day_of_week = datetime.now(CAIRO_TZ).weekday()
-    if day_of_week in [5, 6]:
-        return False
-    update_news()
-    with data_lock:
-        if state.news_fetch_failed:
-            logger.warning("⚠️ الأخبار غير متاحة، الإشارات مستمرة")
-            return False
-        news_snapshot = state.news_data.copy()
-    now = datetime.now(UTC_TZ)
-    for ev in news_snapshot:
-        try:
-            impact = str(ev.get('impact','')).upper()
-            if impact not in ['HIGH','RED','3']:
-                continue
-            curr = str(ev.get('country', ev.get('currency', ''))).upper()
-            if curr not in CURRENCY_PAIRS or pair not in CURRENCY_PAIRS[curr]:
-                continue
-            ev_date = ev.get('date')
-            et = datetime.fromtimestamp(ev_date, tz=UTC_TZ) if isinstance(ev_date, (int, float)) else pd.to_datetime(ev_date).tz_localize(UTC_TZ)
-            diff = abs((now - et).total_seconds())
-            if diff <= 900:
-                return True
-        except Exception:
-            continue
+        if key in state.quantum_sent_signals:
+            return True
+        state.quantum_sent_signals[key] = get_iq_time()
     return False
 
-def is_market_open_chaos():
-    day_of_week = datetime.now(CAIRO_TZ).weekday()
-    if day_of_week in [5, 6]:
-        return False
-    now = get_cairo_time()
-    hm = now.hour * 100 + now.minute
-    return (1000 <= hm <= 1030) or (1530 <= hm <= 1600)
+# ========== QUANTUM FUNCTIONS ==========
 
-def passes_common_entry_filters(pair):
-    if is_news_for_pair(pair):
-        return False, "فلتر الأخبار"
-    if is_market_open_chaos():
-        return False, "افتتاح السوق"
-    return True, None
+def analyze_volatility_filter(volatility):
+    config = QUANTUM_CONFIG.get("volatility_filter", {})
+    
+    reject_low = config.get("reject_low", 0.0003)
+    reject_high = config.get("reject_high", 0.012)
+    ideal_low = config.get("ideal_low", 0.001)
+    ideal_high = config.get("ideal_high", 0.005)
+    score_bonus = config.get("score_bonus", 5)
+    score_penalty = config.get("score_penalty", 10)
+    
+    if volatility < reject_low:
+        return {
+            'status': 'REJECT',
+            'reason': f'⚠️ تقلب منخفض جداً ({volatility:.4f}) - السوق راكد',
+            'score_adjust': 0,
+            'can_enter': False
+        }
+    
+    if volatility > reject_high:
+        return {
+            'status': 'REJECT',
+            'reason': f'⚠️ تقلب عالي جداً ({volatility:.4f}) - السوق عنيف',
+            'score_adjust': 0,
+            'can_enter': False
+        }
+    
+    if volatility < ideal_low:
+        return {
+            'status': 'WARNING',
+            'reason': f'⚠️ تقلب منخفض ({volatility:.4f}) - خصم {score_penalty} نقطة',
+            'score_adjust': -score_penalty,
+            'can_enter': True,
+            'emoji': '😴'
+        }
+    
+    if ideal_low <= volatility <= ideal_high:
+        return {
+            'status': 'IDEAL',
+            'reason': f'✅ تقلب مثالي ({volatility:.4f}) - مكافأة +{score_bonus} نقطة',
+            'score_adjust': score_bonus,
+            'can_enter': True,
+            'emoji': '🎯'
+        }
+    
+    if volatility < reject_high:
+        penalty = score_penalty // 2
+        return {
+            'status': 'WARNING',
+            'reason': f'⚠️ تقلب عالي ({volatility:.4f}) - خصم {penalty} نقطة',
+            'score_adjust': -penalty,
+            'can_enter': True,
+            'emoji': '⚡'
+        }
+    
+    return {
+        'status': 'OK',
+        'reason': f'تقلب متوسط ({volatility:.4f})',
+        'score_adjust': 0,
+        'can_enter': True,
+        'emoji': '📊'
+    }
+
+def analyze_market_condition_quantum(df):
+    try:
+        if len(df) < 30:
+            return "unknown"
+        adx, _, _ = calculate_adx(df, 14)
+        atr_series = calculate_atr_series(df, 14)
+        atr = atr_series.iloc[-1]
+        atr_avg = atr_series.tail(20).mean()
+        bbw = bollinger_bandwidth(df, 20)
+        if adx >= 25 and atr > atr_avg * 1.2:
+            return "trending"
+        elif adx < 18 and bbw < 0.001:
+            return "ranging"
+        elif atr > atr_avg * 1.8:
+            return "high_vol"
+        elif atr < atr_avg * 0.5:
+            return "low_vol"
+        else:
+            return "mixed"
+    except Exception as e:
+        logger.error(f"خطأ في تحليل حالة السوق Quantum: {e}")
+        return "unknown"
+
+def detect_market_structure_quantum(df):
+    try:
+        df_swings = detect_swings(df, window=2)
+        structure, _, _ = get_market_structure(df_swings, lookback=30)
+        if structure in ["BULLISH", "BEARISH"]:
+            return structure
+        return None
+    except Exception as e:
+        logger.error(f"خطأ في اكتشاف هيكل السوق Quantum: {e}")
+        return None
+
+def detect_liquidity_sweep_quantum(df, curr):
+    try:
+        df_swings = detect_swings(df, window=2)
+        sweep_call = detect_liquidity_sweep(df_swings, "CALL", 0.0003)
+        if sweep_call[0]:
+            return "BULLISH"
+        sweep_put = detect_liquidity_sweep(df_swings, "PUT", 0.0003)
+        if sweep_put[0]:
+            return "BEARISH"
+        return None
+    except Exception as e:
+        logger.error(f"خطأ في اكتشاف Liquidity Sweep Quantum: {e}")
+        return None
+
+def detect_order_block_quantum(df, curr):
+    try:
+        price = curr['Close']
+        start = max(5, len(df) - 20)
+
+        for i in range(start, len(df)):
+            candle = df.iloc[i]
+            prev = df.iloc[i-1]
+            if (candle['Close'] > candle['Open'] and 
+                candle['Close'] > prev['High'] and 
+                prev['Close'] < prev['Open'] and
+                (candle['Close'] - candle['Open']) > abs(prev['Close'] - prev['Open']) * 1.5):
+                if prev['Low'] <= price <= prev['High'] * 1.002:
+                    return "BULLISH"
+
+        for i in range(start, len(df)):
+            candle = df.iloc[i]
+            prev = df.iloc[i-1]
+            if (candle['Close'] < candle['Open'] and 
+                candle['Close'] < prev['Low'] and 
+                prev['Close'] > prev['Open'] and
+                (candle['Open'] - candle['Close']) > abs(prev['Close'] - prev['Open']) * 1.5):
+                if prev['Low'] * 0.998 <= price <= prev['High']:
+                    return "BEARISH"
+        return None
+    except Exception as e:
+        logger.error(f"خطأ في اكتشاف Order Block Quantum: {e}")
+        return None
+
+def detect_fvg_quantum(df, curr):
+    try:
+        start = max(2, len(df) - 20)
+
+        for i in range(start, len(df) - 1):
+            if df['Low'].iloc[i] > df['High'].iloc[i-2]:
+                return {"type": "BULLISH", "top": df['Low'].iloc[i], "bottom": df['High'].iloc[i-2], "idx": i}
+
+        for i in range(start, len(df) - 1):
+            if df['High'].iloc[i] < df['Low'].iloc[i-2]:
+                return {"type": "BEARISH", "top": df['Low'].iloc[i-2], "bottom": df['High'].iloc[i], "idx": i}
+        return None
+    except Exception as e:
+        logger.error(f"خطأ في اكتشاف FVG Quantum: {e}")
+        return None
+
+def fvg_retest_quantum(df, fvg):
+    try:
+        if fvg is None:
+            return False
+        start_idx = max(fvg['idx'] + 1, len(df) - 15)
+        for i in range(start_idx, len(df)):
+            if df['Low'].iloc[i] <= fvg["top"] and df['High'].iloc[i] >= fvg["bottom"]:
+                return True
+        return False
+    except Exception as e:
+        logger.error(f"خطأ في التحقق من FVG Retest Quantum: {e}")
+        return False
+
+def volume_confirmation_quantum(df, curr):
+    try:
+        if "Volume" not in df.columns or curr['Volume'] <= 0:
+            return False
+        vol_ma = df['Volume'].tail(20).mean()
+        return curr['Volume'] >= vol_ma * 1.1
+    except Exception as e:
+        logger.error(f"خطأ في تأكيد الحجم Quantum: {e}")
+        return False
+
+def momentum_confirmation_quantum(df, curr):
+    try:
+        if 'RSI' not in df.columns or 'ROC' not in df.columns:
+            return None
+        if 'ALMA_9' not in df.columns or 'ALMA_50' not in df.columns:
+            return None
+
+        rsi = curr['RSI']
+        roc = curr['ROC']
+        alma9 = curr['ALMA_9']
+        alma50 = curr['ALMA_50']
+
+        if rsi > 55 and alma9 > alma50 and roc > 0:
+            return "BULLISH"
+        if rsi < 45 and alma9 < alma50 and roc < 0:
+            return "BEARISH"
+        return None
+    except Exception as e:
+        logger.error(f"خطأ في تأكيد الزخم Quantum: {e}")
+        return None
+
+def calculate_confidence_score_quantum(structure, liquidity, order_block, fvg, volume, momentum):
+    call = 0
+    put = 0
+    reasons = []
+    weights = QUANTUM_CONFIG.get("weights", {
+        "structure": 20, "liquidity": 20, "order_block": 15,
+        "fvg": 15, "volume": 5, "momentum": 20
+    })
+
+    if structure == "BULLISH":
+        call += weights["structure"]; reasons.append("📈 هيكل صاعد")
+    elif structure == "BEARISH":
+        put += weights["structure"]; reasons.append("📉 هيكل هابط")
+
+    if liquidity == "BULLISH":
+        call += weights["liquidity"]; reasons.append("💧 Liquidity Sweep صاعد")
+    elif liquidity == "BEARISH":
+        put += weights["liquidity"]; reasons.append("💧 Liquidity Sweep هابط")
+
+    if order_block == "BULLISH":
+        call += weights["order_block"]; reasons.append("📦 Order Block صاعد")
+    elif order_block == "BEARISH":
+        put += weights["order_block"]; reasons.append("📦 Order Block هابط")
+
+    if fvg and fvg["type"] == "BULLISH":
+        call += weights["fvg"]; reasons.append("🔲 FVG صاعد")
+    elif fvg and fvg["type"] == "BEARISH":
+        put += weights["fvg"]; reasons.append("🔲 FVG هابط")
+
+    if volume:
+        if structure == "BULLISH" or liquidity == "BULLISH":
+            call += weights["volume"]; reasons.append("📊 حجم مرتفع")
+        elif structure == "BEARISH" or liquidity == "BEARISH":
+            put += weights["volume"]; reasons.append("📊 حجم مرتفع")
+
+    if momentum == "BULLISH":
+        call += weights["momentum"]; reasons.append("⚡ زخم صاعد")
+    elif momentum == "BEARISH":
+        put += weights["momentum"]; reasons.append("⚡ زخم هابط")
+
+    if call > put:
+        return {"direction": "CALL", "score": min(call, 100), "reasons": reasons}
+    elif put > call:
+        return {"direction": "PUT", "score": min(put, 100), "reasons": reasons}
+    else:
+        return {"direction": None, "score": 0, "reasons": []}
+
+def duplicate_signal_quantum(pair, direction):
+    key = f"quantum_{pair}_{direction}_{(int(get_iq_time()) // 300) * 300}"
+    with data_lock:
+        if key in quantum_memory:
+            return True
+        quantum_memory[key] = get_iq_time()
+        now = get_iq_time()
+        for k in list(quantum_memory.keys()):
+            if now - quantum_memory[k] > 600:
+                del quantum_memory[k]
+    return False
+
+def update_quantum_weights(trade_history):
+    if len(trade_history) < QUANTUM_CONFIG["learning"]["min_trades"]:
+        return
+    
+    features = list(QUANTUM_CONFIG["weights"].keys())
+    updates = []
+    
+    for feature in features:
+        feature_trades = [t for t in trade_history if t.get('filters', {}).get(feature, False)]
+        
+        if len(feature_trades) >= 20:
+            wins = sum(1 for t in feature_trades if t.get('outcome') == 'win')
+            winrate = (wins / len(feature_trades)) * 100
+            
+            old_weight = QUANTUM_CONFIG["weights"][feature]
+            
+            if winrate > 75:
+                new_weight = min(old_weight + 2, QUANTUM_CONFIG["learning"]["max_weight"])
+                updates.append(f"{feature}: {old_weight} → {new_weight} (WR: {winrate:.1f}%) ✅")
+            elif winrate < 50:
+                new_weight = max(old_weight - 2, QUANTUM_CONFIG["learning"]["min_weight"])
+                updates.append(f"{feature}: {old_weight} → {new_weight} (WR: {winrate:.1f}%) 🔄")
+            else:
+                new_weight = old_weight
+            
+            QUANTUM_CONFIG["weights"][feature] = new_weight
+    
+    if updates:
+        quantum_weights_history.append({
+            "timestamp": get_iq_time(),
+            "updates": updates,
+            "weights": QUANTUM_CONFIG["weights"].copy()
+        })
+        try:
+            with open("quantum_weights_history.json", 'w', encoding='utf-8') as f:
+                json.dump(quantum_weights_history, f, indent=2)
+        except Exception as e:
+            logger.error(f"خطأ في حفظ تاريخ أوزان Quantum: {e}")
+        logger.info(f"🧠 Quantum تم تحديث الأوزان: {updates}")
+
+def feature_importance_quantum(trade_history):
+    if len(trade_history) < 50:
+        return {"status": "بيانات غير كافية (تحتاج 50+ صفقة)"}
+    
+    importance = {}
+    features = ['structure', 'liquidity', 'order_block', 'fvg', 'volume', 'momentum']
+    feature_names = {
+        'structure': 'Structure',
+        'liquidity': 'Liquidity Sweep',
+        'order_block': 'Order Block',
+        'fvg': 'FVG',
+        'volume': 'Volume',
+        'momentum': 'Momentum'
+    }
+    
+    total_trades = len(trade_history)
+    
+    for feature in features:
+        feature_trades = [t for t in trade_history if t.get('filters', {}).get(feature, False)]
+        
+        if len(feature_trades) >= 20:
+            wins = sum(1 for t in feature_trades if t.get('outcome') == 'win')
+            winrate = (wins / len(feature_trades)) * 100
+            coverage = len(feature_trades) / total_trades * 100
+            importance_score = winrate * 0.7 + coverage * 0.3
+            
+            importance[feature_names[feature]] = {
+                "winrate": round(winrate, 1),
+                "coverage": round(coverage, 1),
+                "importance": round(importance_score, 1),
+                "trades": len(feature_trades)
+            }
+        else:
+            importance[feature_names[feature]] = {
+                "winrate": 0,
+                "coverage": 0,
+                "importance": 0,
+                "trades": 0,
+                "status": "بيانات غير كافية"
+            }
+    
+    sorted_importance = dict(sorted(
+        importance.items(),
+        key=lambda x: x[1]['importance'] if isinstance(x[1], dict) else 0,
+        reverse=True
+    ))
+    
+    return sorted_importance
+
+def generate_quantum_performance_report(trades):
+    if not trades:
+        return "📊 *لا توجد بيانات كافية لتقرير Quantum*"
+    
+    quantum_trades = [t for t in trades if t.get('strategy') == 'quantum']
+    
+    if len(quantum_trades) < 10:
+        return f"📊 *بيانات Quantum غير كافية* (تحتاج 10+ صفقة، حالياً: {len(quantum_trades)})"
+    
+    total = len(quantum_trades)
+    wins = sum(1 for t in quantum_trades if t.get('outcome') == 'win')
+    losses = total - wins
+    wr = (wins / total * 100) if total > 0 else 0
+    
+    levels = {}
+    for t in quantum_trades:
+        level = t.get('level', 0)
+        if level not in levels:
+            levels[level] = {"win": 0, "loss": 0, "total": 0}
+        levels[level]["total"] += 1
+        if t.get('outcome') == 'win':
+            levels[level]["win"] += 1
+        else:
+            levels[level]["loss"] += 1
+    
+    importance = feature_importance_quantum(quantum_trades)
+    weights = QUANTUM_CONFIG["weights"]
+    
+    msg = (
+        f"🧠 *تقرير أداء Quantum Smart Flow*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"📈 *إجمالي الصفقات:* {total}\n"
+        f"✅ *رابحة:* {wins} | ❌ *خاسرة:* {losses}\n"
+        f"🎯 *نسبة الربح:* {wr:.1f}%\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"📊 *توزيع المستويات:*\n"
+    )
+    
+    for level, data in sorted(levels.items()):
+        lwr = (data["win"] / data["total"] * 100) if data["total"] > 0 else 0
+        name = QUANTUM_SIGNAL_NAMES.get(level, (f"Level {level}", ""))[0]
+        msg += f"  {name}: {data['total']} صفقة — WR: {lwr:.1f}%\n"
+    
+    msg += (
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"⚖️ *الأوزان الحالية:*\n"
+    )
+    
+    for key, value in weights.items():
+        msg += f"  {key}: {value}\n"
+    
+    if isinstance(importance, dict) and "status" not in importance:
+        msg += (
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"🔬 *أهمية العوامل:*\n"
+        )
+        for feature, data in list(importance.items())[:4]:
+            if isinstance(data, dict) and data.get('winrate', 0) > 0:
+                msg += f"  {feature}: WR {data['winrate']}% (غطاء {data['coverage']}%)\n"
+    
+    return msg
+
+def handle_quantum_command(command):
+    cmd = command.lower().strip()
+    
+    if cmd == "/quantum_weights":
+        msg = "🧠 *الأوزان الحالية Quantum:*\n"
+        for key, value in QUANTUM_CONFIG["weights"].items():
+            msg += f"  {key}: {value}\n"
+        return msg
+    
+    elif cmd == "/quantum_stats":
+        trades = read_trade_log(max_entries=5000)
+        return generate_quantum_performance_report(trades)
+    
+    elif cmd == "/quantum_feature":
+        trades = read_trade_log(max_entries=5000)
+        quantum_trades = [t for t in trades if t.get('strategy') == 'quantum']
+        importance = feature_importance_quantum(quantum_trades)
+        
+        if isinstance(importance, dict) and "status" in importance:
+            return f"🔬 *Feature Importance - Quantum:*\n{importance['status']}"
+        
+        msg = "🔬 *Feature Importance - Quantum:*\n"
+        for feature, data in importance.items():
+            if isinstance(data, dict):
+                msg += f"  {feature}: WR {data.get('winrate', 0)}% (غطاء {data.get('coverage', 0)}%)\n"
+        return msg
+    
+    elif cmd == "/quantum_weights reset":
+        QUANTUM_CONFIG["weights"] = {
+            "structure": 20,
+            "liquidity": 20,
+            "order_block": 15,
+            "fvg": 15,
+            "volume": 5,
+            "momentum": 20
+        }
+        return "✅ *تم إعادة ضبط الأوزان إلى القيم الافتراضية*"
+    
+    else:
+        return None
+
+def quantum_stats_worker():
+    logger.info("🧠 محرك إحصائيات Quantum بدأ")
+    last_learning = 0
+    last_report = 0
+    
+    while not stop_event.is_set():
+        try:
+            now = get_iq_time()
+            
+            if now - last_learning > QUANTUM_CONFIG["learning"]["update_interval"]:
+                trades = read_trade_log(max_entries=5000)
+                quantum_trades = [t for t in trades if t.get('strategy') == 'quantum']
+                
+                if len(quantum_trades) >= QUANTUM_CONFIG["learning"]["min_trades"]:
+                    update_quantum_weights(quantum_trades)
+                    logger.info(f"🧠 تم تحديث أوزان Quantum: {QUANTUM_CONFIG['weights']}")
+                    
+                    msg = "🧠 *تحديث أوزان Quantum*\n"
+                    for key, value in QUANTUM_CONFIG["weights"].items():
+                        msg += f"  {key}: {value}\n"
+                    send_telegram_message(msg)
+                
+                last_learning = now
+            
+            if now - last_report > 604800:
+                trades = read_trade_log(max_entries=10000)
+                report = generate_quantum_performance_report(trades)
+                if report:
+                    send_telegram_message(report)
+                last_report = now
+                
+        except Exception as e:
+            logger.error(f"خطأ في محرك Quantum: {e}")
+            logger.error(traceback.format_exc())
+        
+        stop_event.wait(3600)
+
+def init_quantum_system():
+    logger.info("🧠 تهيئة Quantum Smart Flow Engine...")
+    
+    try:
+        if os.path.exists("quantum_weights_history.json"):
+            with open("quantum_weights_history.json", 'r', encoding='utf-8') as f:
+                history = json.load(f)
+                if history:
+                    last_weights = history[-1].get('weights', {})
+                    if last_weights:
+                        QUANTUM_CONFIG["weights"] = last_weights
+                        logger.info(f"🧠 تم تحميل الأوزان السابقة: {last_weights}")
+    except Exception as e:
+        logger.warning(f"⚠️ فشل تحميل تاريخ الأوزان: {e}")
+    
+    logger.info("🧠 Quantum Smart Flow Engine جاهز!")
+    logger.info(f"📊 الأوزان الحالية: {QUANTUM_CONFIG['weights']}")
+    logger.info(f"🎯 الحد الأدنى Live: {QUANTUM_CONFIG['min_score_live']}")
+    logger.info(f"🎯 الحد الأدنى OTC: {QUANTUM_CONFIG['min_score_otc']}")
+
+def analyze_pair_quantum(pair, timeframe="5m"):
+    tf_seconds, duration_text = 300, "5 دقائق"
+    
+    df = get_cached_df_smart(pair, tf_seconds, 100)
+    if df is None or len(df) < 100:
+        logger.info(f"🛑 Quantum {pair}: لا يوجد بيانات كافية")
+        return None
+
+    regime = analyze_market_condition_quantum(df)
+    if regime == "ranging":
+        logger.info(f"🛑 Quantum {pair}: سوق عرضي (RANGE) - تم الإلغاء")
+        return None
+
+    # استخدام آخر شمعة مقفولة
+    curr = df.iloc[-2]
+    price = curr['Close']
+
+    kalman = get_kalman(pair)
+    smoothed_price = kalman.update(price)
+    volatility = kalman.get_volatility()
+
+    vol_filter = analyze_volatility_filter(volatility)
+    
+    if not vol_filter['can_enter']:
+        logger.info(f"🛑 Quantum {pair}: {vol_filter['reason']}")
+        return None
+    
+    logger.info(f"📊 Quantum {pair}: {vol_filter['reason']}")
+
+    structure = detect_market_structure_quantum(df)
+    liquidity = detect_liquidity_sweep_quantum(df, curr)
+    order_block = detect_order_block_quantum(df, curr)
+    fvg = detect_fvg_quantum(df, curr)
+
+    if fvg:
+        if not fvg_retest_quantum(df, fvg):
+            logger.info(f"🛑 Quantum {pair}: FVG لم يُعاد اختباره - تم الإلغاء")
+            return None
+    else:
+        logger.info(f"🛑 Quantum {pair}: لا يوجد FVG - تم الإلغاء")
+        return None
+
+    volume = volume_confirmation_quantum(df, curr)
+    momentum = momentum_confirmation_quantum(df, curr)
+
+    result = calculate_confidence_score_quantum(structure, liquidity, order_block, fvg, volume, momentum)
+
+    adjusted_score = result['score'] + vol_filter['score_adjust']
+    adjusted_score = max(0, min(100, adjusted_score))
+    
+    logger.info(f"📊 Quantum {pair}: النتيجة الأصلية {result['score']} → معدلة {adjusted_score} ({vol_filter['reason']})")
+
+    min_score = QUANTUM_CONFIG["min_score_otc"] if "OTC" in pair.upper() else QUANTUM_CONFIG["min_score_live"]
+    final_score = adjusted_score
+    
+    if result['direction'] is None or final_score < min_score:
+        logger.info(f"🛑 Quantum {pair}: النتيجة {final_score} < {min_score}")
+        return None
+
+    if duplicate_signal_quantum(pair, result['direction']):
+        logger.info(f"🛑 Quantum {pair}: إشارة مكررة - تم الإلغاء")
+        return None
+
+    if final_score >= 95:
+        level = 4
+        signal_name_ar, signal_name_en = QUANTUM_SIGNAL_NAMES[level]
+    elif final_score >= 90:
+        level = 3
+        signal_name_ar, signal_name_en = QUANTUM_SIGNAL_NAMES[level]
+    elif final_score >= 85:
+        level = 2
+        signal_name_ar, signal_name_en = QUANTUM_SIGNAL_NAMES[level]
+    else:
+        level = 1
+        signal_name_ar, signal_name_en = QUANTUM_SIGNAL_NAMES[level]
+
+    da = "صعود (CALL)" if result['direction'] == "CALL" else "هبوط (PUT)"
+
+    iq_now = get_iq_time()
+    csec = int(iq_now) % 300
+    candle_start = (int(iq_now) // 300) * 300
+    pair_key = f"quantum_{pair}_{candle_start}"
+    pending_key = f"quantum_{pair}_{candle_start}"
+
+    ok, reason = passes_common_entry_filters(pair)
+    if not ok:
+        logger.info(f"🛑 Quantum {pair}: إلغاء - {reason}")
+        return None
+
+    # ===== المرحلة 1: تنبيه مبكر (270-280) =====
+    if 270 <= csec <= 280:
+        with data_lock:
+            if pair_key not in state.quantum_alerted_pairs:
+                state.pending_alerts[pending_key] = {
+                    'direction': result['direction'],
+                    'level': level,
+                    'signal_name': signal_name_ar,
+                    'score': final_score,
+                    'alert_time': iq_now,
+                    'strategy': 'quantum'
+                }
+
+                time_quality = get_time_quality('quantum')
+                regime_badge = get_regime_badge('quantum', regime)
+                vol_emoji = vol_filter.get('emoji', '📊')
+                vol_status = vol_filter['reason']
+
+                msg = (
+                    f"⚠️ *تنبيه مبكر — {signal_name_ar}*\n"
+                    f"الزوج: `{pair}` [5 دقائق]\n"
+                    f"الاتجاه: *{da}*\n"
+                    f"📊 النقاط: *{final_score}/100* (معدلة)\n"
+                    f"⏱️ *صفقة قادمة خلال 20 ثانية...*\n"
+                    f"🔄 *جاري التحقق من الشروط النهائية...*\n"
+                    f"━━━━━━━━━━━━\n"
+                    f"🕐 *الوقت:* {time_quality}\n"
+                    f"📍 {regime_badge}\n"
+                    f"⚛️ Kalman: {smoothed_price:.5f} | {vol_emoji} {vol_status}"
+                )
+                send_telegram_message(msg)
+                state.quantum_alerted_pairs[pair_key] = iq_now
+        return None
+
+    # ===== المرحلة 2 & 3 (280-299) =====
+    if not (280 <= csec <= 299):
+        return None
+
+    with data_lock:
+        pending = state.pending_alerts.get(pending_key)
+
+    if pending and pending['direction'] != result['direction']:
+        send_cancelled_alert(pair, pending['direction'], "الاتجاه تغير في Quantum", 'quantum')
+        with data_lock:
+            if pending_key in state.pending_alerts:
+                del state.pending_alerts[pending_key]
+        return None
+
+    ok, reason = passes_common_entry_filters(pair)
+    if not ok:
+        if pending:
+            send_cancelled_alert(pair, result['direction'], reason, 'quantum')
+        with data_lock:
+            if pending_key in state.pending_alerts:
+                del state.pending_alerts[pending_key]
+        return None
+
+    # ===== المرحلة 3: الإشارة النهائية (293-299) =====
+    if csec >= 293:
+        if already_sent_this_candle_quantum(pair):
+            return None
+
+        with data_lock:
+            if pair_key in state.quantum_alerted_pairs:
+                del state.quantum_alerted_pairs[pair_key]
+            if pending_key in state.pending_alerts:
+                del state.pending_alerts[pending_key]
+
+        time_quality = get_time_quality('quantum')
+        regime_badge = get_regime_badge('quantum', regime)
+        
+        kalman_info = f"Kalman: {smoothed_price:.5f}"
+        vol_emoji = vol_filter.get('emoji', '📊')
+        vol_status = vol_filter['reason']
+        volatility_info = f"{vol_emoji} {vol_status}"
+        
+        indicators_str = f"Score={final_score}/100 | " + " | ".join(result['reasons'][:3])
+        indicators_str += f" | {kalman_info} | {volatility_info}"
+
+        new_trade = _build_trade_dict(
+            pair=pair,
+            direction=result['direction'],
+            entry_price=price,
+            expire_offset=300,
+            is_king=False,
+            is_martingale=False,
+            signal_level=level,
+            signal_name=signal_name_ar,
+            score=final_score,
+            filters={
+                'structure': structure is not None,
+                'liquidity': liquidity is not None,
+                'order_block': order_block is not None,
+                'fvg': fvg is not None,
+                'volume': volume,
+                'momentum': momentum is not None,
+                'volatility_ok': vol_filter['can_enter']
+            },
+            indicators={
+                'score': final_score,
+                'original_score': result['score'],
+                'score_adjust': vol_filter['score_adjust'],
+                'reasons': result['reasons'],
+                'market': regime,
+                'structure': str(structure) if structure else 'None',
+                'liquidity': str(liquidity) if liquidity else 'None',
+                'order_block': str(order_block) if order_block else 'None',
+                'fvg': str(fvg) if fvg else 'None',
+                'kalman_price': round(smoothed_price, 5),
+                'volatility': round(volatility, 4),
+                'volatility_status': vol_filter['status']
+            },
+            strategy='quantum'
+        )
+
+        if not add_trade_atomic(new_trade):
+            return None
+
+        final_signal = send_final_signal(
+            pair, result['direction'], signal_name_ar, final_score,
+            duration_text, indicators_str, 'quantum', regime=regime, signal_level=level
+        )
+        
+        if final_signal is None:
+            logger.info(f"⛔ Quantum {pair}: تم إرسالها مسبقاً (منع التكرار)")
+            return None
+
+        logger.info(f"🧠 Quantum {pair}: {signal_name_ar} تم الإرسال (Score={final_score} | Vol={volatility:.4f})")
+        return final_signal
+
+    return None
+
+def analyze_pair_wrapper_quantum(pair):
+    try:
+        return pair, analyze_pair_quantum(pair, "5m")
+    except Exception as e:
+        logger.error(f"خطأ Quantum في {pair}: {e}")
+        return pair, None
 
 # ========== SIGNAL EVALUATION - ORIGINAL ==========
 
@@ -2242,19 +2889,19 @@ def evaluate_signal_strength(direction, curr, prev, df, price, alma9, alma50,
     
     return 0
 
-# ========== analyze_pair (Original Strategy) ==========
+# ========== analyze_pair (Original Strategy - 3-Stage Arabic) ==========
 
 def analyze_pair(pair, timeframe="5m"):
     tf_seconds, duration_text = 300, "5 دقائق"
-    df, curr_idx = get_cached_df(pair, tf_seconds, 60)
-    if df is None or curr_idx is None or len(df) < 55:
+    df = get_cached_df(pair, tf_seconds, 60)
+    if df is None or len(df) < 55:
         logger.warning(f"⛔ {pair}: لا يوجد بيانات")
         return None
 
     regime = detect_market_regime(pair)
 
-    curr = df.iloc[curr_idx]
-    prev = df.iloc[curr_idx - 1]
+    curr = df.iloc[-2]
+    prev = df.iloc[-3]
 
     price = curr['Close']
     alma9, alma50 = curr['ALMA_9'], curr['ALMA_50']
@@ -2275,10 +2922,8 @@ def analyze_pair(pair, timeframe="5m"):
     near_sup = (abs(price - support) <= (price * 0.0005) or low <= (curr['BBL'] * 1.001)) and support_hits >= 3
     near_res = (abs(price - resistance) <= (price * 0.0005) or high >= (curr['BBU'] * 0.999)) and resistance_hits >= 3
 
+    pair_key = f"{pair}_5m"
     iq_now = get_iq_time()
-    candle_start = (int(iq_now) // 300) * 300
-    pair_key = f"{pair}_5m_{candle_start}"
-    pending_key = f"{pair}_{candle_start}"
     csec = int(iq_now) % 300
 
     potential_direction = None
@@ -2328,6 +2973,7 @@ def analyze_pair(pair, timeframe="5m"):
     emoji = SIGNAL_EMOJIS[strength]
     da = "صعود (CALL)" if potential_direction == "CALL" else "هبوط (PUT)"
 
+    htf_trend = get_higher_tf_trend(pair)
     is_trending = (potential_direction == "CALL" and htf_trend == "CALL") or \
                   (potential_direction == "PUT" and htf_trend == "PUT")
     trend_tag = " 🌊 سوق متجه" if is_trending else ""
@@ -2336,15 +2982,16 @@ def analyze_pair(pair, timeframe="5m"):
         logger.warning(f"⚠️ {pair}: HTF عكسي ({htf_trend} vs {potential_direction}) لكن الإشارة مستمرة")
         trend_tag = " ⚠️ HTF عكسي"
 
-    ok, reason = passes_common_entry_filters(pair)
-    if not ok:
-        logger.info(f"🛑 {pair}: إلغاء — {reason}")
+    with data_lock:
+        in_hunt_mode = len(state.martingale_queue) > 0
+
+    if in_hunt_mode and strength < 2:
         return None
 
     if 270 <= csec <= 280:
         with data_lock:
             if pair_key not in state.alerted_pairs:
-                state.pending_alerts[pending_key] = {
+                state.pending_alerts[pair] = {
                     'direction': potential_direction,
                     'strength': strength,
                     'signal_name': signal_name_ar,
@@ -2357,14 +3004,15 @@ def analyze_pair(pair, timeframe="5m"):
         return None
 
     if 280 <= csec <= 299:
+
         with data_lock:
-            pending = state.pending_alerts.get(pending_key)
+            pending = state.pending_alerts.get(pair)
 
         if pending and pending['direction'] != potential_direction:
             send_cancelled_alert(pair, pending['direction'], "الاتجاه تغير", 'original')
             with data_lock:
-                if pending_key in state.pending_alerts:
-                    del state.pending_alerts[pending_key]
+                if pair in state.pending_alerts:
+                    del state.pending_alerts[pair]
             logger.info(f"🛑 {pair}: إلغاء — الاتجاه تغير")
             return None
 
@@ -2373,8 +3021,8 @@ def analyze_pair(pair, timeframe="5m"):
             if pending:
                 send_cancelled_alert(pair, potential_direction, reason, 'original')
             with data_lock:
-                if pending_key in state.pending_alerts:
-                    del state.pending_alerts[pending_key]
+                if pair in state.pending_alerts:
+                    del state.pending_alerts[pair]
             logger.info(f"🛑 {pair}: إلغاء ({reason})")
             return None
 
@@ -2384,8 +3032,8 @@ def analyze_pair(pair, timeframe="5m"):
             if pending:
                 send_cancelled_alert(pair, potential_direction, f"شمعة ضعيفة ({body_pct:.1%})", 'original')
             with data_lock:
-                if pending_key in state.pending_alerts:
-                    del state.pending_alerts[pending_key]
+                if pair in state.pending_alerts:
+                    del state.pending_alerts[pair]
             logger.info(f"🛑 {pair}: إلغاء — شمعة ضعيفة ({body_pct:.2%})")
             return None
 
@@ -2393,8 +3041,8 @@ def analyze_pair(pair, timeframe="5m"):
             if pending:
                 send_cancelled_alert(pair, potential_direction, "إشارة معاكسة حديثة", 'original')
             with data_lock:
-                if pending_key in state.pending_alerts:
-                    del state.pending_alerts[pending_key]
+                if pair in state.pending_alerts:
+                    del state.pending_alerts[pair]
             logger.info(f"🛑 {pair}: إلغاء — إشارة معاكسة")
             return None
 
@@ -2405,22 +3053,25 @@ def analyze_pair(pair, timeframe="5m"):
             with data_lock:
                 if pair_key in state.alerted_pairs:
                     del state.alerted_pairs[pair_key]
-                if pending_key in state.pending_alerts:
-                    del state.pending_alerts[pending_key]
+                if pair in state.pending_alerts:
+                    del state.pending_alerts[pair]
 
             indicators_str = f"ADX={adx:.1f} | BBW={bbw:.4f} | RSI={rsi:.1f}"
             final_signal = send_final_signal(
                 pair, potential_direction, signal_name_ar, strength * 16,
-                duration_text, indicators_str, 'original', regime=regime, signal_level=strength
+                duration_text, indicators_str, 'original', regime=regime
             )
 
             if final_signal is None:
                 logger.info(f"⛔ {pair}: تم إرسالها مسبقاً (منع التكرار)")
                 return None
 
+            with data_lock:
+                state.recent_signals[pair] = (get_iq_time(), potential_direction)
+
             new_trade = _build_trade_dict(
                 pair=pair, direction=potential_direction, entry_price=curr['Close'],
-                expire_offset=300, is_king=False,
+                expire_offset=300, is_king=False, is_martingale=in_hunt_mode,
                 signal_level=strength, signal_name=signal_name_ar, score=strength * 16,
                 filters={
                     'alma_cross': (a9p <= a50p and a9c > a50c) if potential_direction == "CALL" else (a9p >= a50p and a9c < a50c),
@@ -2442,10 +3093,6 @@ def analyze_pair(pair, timeframe="5m"):
             )
 
             if add_trade_atomic(new_trade):
-                key = f"{pair}_{(int(get_iq_time()) // 300) * 300}"
-                with data_lock:
-                    state.sent_signals[key] = get_iq_time()
-                    state.recent_signals[pair] = (get_iq_time(), potential_direction)
                 logger.info(f"✅ {pair}: {signal_name_ar} تم الإرسال (قوة={strength})")
                 return final_signal
             else:
@@ -2464,7 +3111,7 @@ def analyze_pair_wrapper(pair):
         logger.error(f"خطأ في {pair}: {e}")
         return pair, None
 
-# ========== analyze_pair_king (King Strategy) ==========
+# ========== analyze_pair_king (King Strategy - 3-Stage Arabic) ==========
 
 def analyze_pair_king(pair, timeframe="5m"):
     tf_seconds, duration_text = 300, "5 دقائق"
@@ -2478,8 +3125,8 @@ def analyze_pair_king(pair, timeframe="5m"):
     body_pct_min = settings.get("body_pct_min", 0.60)
     market_type = "otc" if is_otc_pair(pair) else "live"
 
-    df, curr_idx = get_cached_df_king(pair, tf_seconds, 80)
-    if df is None or curr_idx is None or len(df) < 60:
+    df = get_cached_df_king(pair, tf_seconds, 80)
+    if df is None or len(df) < 60:
         logger.info(f"🛑 King {pair}: لا يوجد بيانات")
         return None
 
@@ -2488,14 +3135,13 @@ def analyze_pair_king(pair, timeframe="5m"):
     df = detect_swings(df, window=2)
     structure, last_sh_idx, last_sl_idx = get_market_structure(df, lookback=30)
     
-    adx, plus_di, minus_di = calculate_adx(df, 14)
-    
     if structure == "NEUTRAL":
-        if adx < 20:
-            logger.info(f"🛑 King {pair}: NEUTRAL و ADX={adx:.1f} < 20")
+        adx_check, _, _ = calculate_adx(df, 14)
+        if adx_check < 20:
+            logger.info(f"🛑 King {pair}: NEUTRAL و ADX={adx_check:.1f} < 20")
             return None
         else:
-            logger.info(f"ℹ️ King {pair}: NEUTRAL لكن ADX={adx:.1f} >= 20")
+            logger.info(f"ℹ️ King {pair}: NEUTRAL لكن ADX={adx_check:.1f} >= 20")
 
     potential_direction = "CALL" if structure == "BULLISH" else "PUT"
 
@@ -2505,8 +3151,8 @@ def analyze_pair_king(pair, timeframe="5m"):
     df['Stoch_K'], df['Stoch_D'] = calculate_stoch(df, 14, 3)
     df['ROC'] = calculate_roc(df['Close'], 5)
 
-    curr = df.iloc[curr_idx]
-    prev = df.iloc[curr_idx - 1]
+    curr = df.iloc[-2]
+    prev = df.iloc[-3]
     price = curr['Close']
     alma20 = curr['ALMA_20']
     alma80 = curr['ALMA_80']
@@ -2518,6 +3164,7 @@ def analyze_pair_king(pair, timeframe="5m"):
     atr_series = calculate_atr_series(df, 14)
     atr = atr_series.iloc[-1]
     atr_avg = atr_series.tail(20).mean()
+    adx, plus_di, minus_di = calculate_adx(df, 14)
     bbw = bollinger_bandwidth(df, 20)
     sup_levels, res_levels = get_smart_sr_levels(df, lookback=30)
 
@@ -2587,25 +3234,18 @@ def analyze_pair_king(pair, timeframe="5m"):
                   (potential_direction == "PUT" and htf_trend == "PUT")
     trend_tag = " 🌊 سوق متجه" if is_trending else ""
 
+    pair_key = f"{pair}_king_5m"
     iq_now = get_iq_time()
-    candle_start = (int(iq_now) // 300) * 300
-    pair_key = f"{pair}_king_5m_{candle_start}"
-    pending_key = f"king_{pair}_{candle_start}"
     csec = int(iq_now) % 300
 
     signal_name_ar, signal_name_en = KING_SIGNAL_NAMES[level]
     emoji = KING_EMOJIS[level]
     da = "صعود (CALL)" if potential_direction == "CALL" else "هبوط (PUT)"
 
-    ok, reason = passes_common_entry_filters(pair)
-    if not ok:
-        logger.info(f"🛑 King {pair}: إلغاء — {reason}")
-        return None
-
     if 270 <= csec <= 280:
         with data_lock:
             if pair_key not in state.king_alerted_pairs:
-                state.pending_alerts[pending_key] = {
+                state.pending_alerts[f"king_{pair}"] = {
                     'direction': potential_direction,
                     'level': level,
                     'signal_name': signal_name_ar,
@@ -2618,14 +3258,15 @@ def analyze_pair_king(pair, timeframe="5m"):
         return None
 
     if 280 <= csec <= 299:
+
         with data_lock:
-            pending = state.pending_alerts.get(pending_key)
+            pending = state.pending_alerts.get(f"king_{pair}")
 
         if pending and pending['direction'] != potential_direction:
             send_cancelled_alert(pair, pending['direction'], "الاتجاه تغير", 'king')
             with data_lock:
-                if pending_key in state.pending_alerts:
-                    del state.pending_alerts[pending_key]
+                if f"king_{pair}" in state.pending_alerts:
+                    del state.pending_alerts[f"king_{pair}"]
             logger.info(f"🛑 King {pair}: إلغاء — الاتجاه تغير")
             return None
 
@@ -2634,8 +3275,8 @@ def analyze_pair_king(pair, timeframe="5m"):
             if pending:
                 send_cancelled_alert(pair, potential_direction, reason, 'king')
             with data_lock:
-                if pending_key in state.pending_alerts:
-                    del state.pending_alerts[pending_key]
+                if f"king_{pair}" in state.pending_alerts:
+                    del state.pending_alerts[f"king_{pair}"]
             logger.info(f"🛑 King {pair}: إلغاء ({reason})")
             return None
 
@@ -2648,12 +3289,12 @@ def analyze_pair_king(pair, timeframe="5m"):
                 logger.info(f"🛑 King {pair}: تم الإرسال مسبقاً")
                 return None
             with data_lock:
-                if pending_key in state.pending_alerts:
-                    del state.pending_alerts[pending_key]
+                if f"king_{pair}" in state.pending_alerts:
+                    del state.pending_alerts[f"king_{pair}"]
 
             new_trade = _build_trade_dict(
                 pair=pair, direction=potential_direction, entry_price=curr['Close'],
-                expire_offset=300, is_king=True,
+                expire_offset=300, is_king=True, is_martingale=False,
                 signal_level=level, signal_name=signal_name_ar, score=score,
                 filters={
                     'structure_ok': structure in ["BULLISH", "BEARISH"],
@@ -2675,15 +3316,10 @@ def analyze_pair_king(pair, timeframe="5m"):
                 logger.info(f"🛑 King {pair}: مكررة")
                 return None
 
-            key = f"king_{pair}_{(int(get_iq_time()) // 300) * 300}"
-            with data_lock:
-                state.king_sent_signals[key] = get_iq_time()
-                state.recent_signals[pair] = (get_iq_time(), potential_direction)
-
             indicators_str = f"Score={score}/100 | ADX={adx:.1f} | RSI={rsi:.1f}"
             final_signal = send_final_signal(
                 pair, potential_direction, signal_name_ar, score,
-                duration_text, indicators_str, 'king', regime=regime, signal_level=level
+                duration_text, indicators_str, 'king', regime=regime
             )
             
             if final_signal is None:
@@ -2705,7 +3341,7 @@ def analyze_pair_wrapper_king(pair):
         logger.error(f"خطأ King في {pair}: {e}")
         return pair, None
 
-# ========== SMC STRATEGY ==========
+# ========== SMC STRATEGY - 3-STAGE ARABIC ==========
 
 def detect_fvg(df):
     fvg_bull, fvg_bear = [], []
@@ -2744,8 +3380,8 @@ def detect_breaker_blocks(df, lookback=40):
 
 def analyze_pair_smc(pair, timeframe="5m"):
     tf_seconds, duration_text = 300, "5 دقائق"
-    df, curr_idx = get_cached_df_smart(pair, tf_seconds, 100)
-    if df is None or curr_idx is None or len(df) < 80:
+    df = get_cached_df_smart(pair, tf_seconds, 100)
+    if df is None or len(df) < 80:
         logger.info(f"🛑 SMC {pair}: لا يوجد بيانات")
         return None
 
@@ -2776,7 +3412,7 @@ def analyze_pair_smc(pair, timeframe="5m"):
     df['ALMA_50'] = calculate_alma(df['Close'], 50, 0.85, 6)
     df['RSI'] = wilder_rsi(df['Close'], 14)
 
-    curr = df.iloc[curr_idx]
+    curr = df.iloc[-2]
     price = curr['Close']
     rsi = curr['RSI']
 
@@ -2818,8 +3454,8 @@ def analyze_pair_smc(pair, timeframe="5m"):
     if (bias == "CALL" and 30 <= rsi <= 50) or (bias == "PUT" and 50 <= rsi <= 70):
         score += 10; conf.append("RSI")
 
-    if score < 75:
-        logger.info(f"🛑 SMC {pair}: Score={score} < 75")
+    if score < 80:
+        logger.info(f"🛑 SMC {pair}: Score={score} < 80")
         return None
 
     if not (sweep_ok or ob_hit or bb_hit or fvg_hit):
@@ -2840,19 +3476,11 @@ def analyze_pair_smc(pair, timeframe="5m"):
     iq_now = get_iq_time()
     csec = int(iq_now) % 300
 
-    ok, reason = passes_common_entry_filters(pair)
-    if not ok:
-        logger.info(f"🛑 SMC {pair}: إلغاء — {reason}")
-        return None
-
-    candle_start = (int(iq_now) // 300) * 300
-    pair_key = f"smart_{pair}_{candle_start}"
-    pending_key = f"smart_{pair}_{candle_start}"
-
     if 270 <= csec <= 280:
         with data_lock:
+            pair_key = f"smart_{pair}"
             if pair_key not in state.smart_alerted_pairs:
-                state.pending_alerts[pending_key] = {
+                state.pending_alerts[f"smart_{pair}"] = {
                     'direction': bias,
                     'level': level,
                     'signal_name': name,
@@ -2868,14 +3496,15 @@ def analyze_pair_smc(pair, timeframe="5m"):
         logger.info(f"🛑 SMC {pair}: الوقت غير مناسب ({csec})")
         return None
 
+
     with data_lock:
-        pending = state.pending_alerts.get(pending_key)
+        pending = state.pending_alerts.get(f"smart_{pair}")
 
     if pending and pending['direction'] != bias:
         send_cancelled_alert(pair, pending['direction'], "الاتجاه تغير", 'smart')
         with data_lock:
-            if pending_key in state.pending_alerts:
-                del state.pending_alerts[pending_key]
+            if f"smart_{pair}" in state.pending_alerts:
+                del state.pending_alerts[f"smart_{pair}"]
         logger.info(f"🛑 SMC {pair}: إلغاء — الاتجاه تغير")
         return None
 
@@ -2884,8 +3513,8 @@ def analyze_pair_smc(pair, timeframe="5m"):
         if pending:
             send_cancelled_alert(pair, bias, reason, 'smart')
         with data_lock:
-            if pending_key in state.pending_alerts:
-                del state.pending_alerts[pending_key]
+            if f"smart_{pair}" in state.pending_alerts:
+                del state.pending_alerts[f"smart_{pair}"]
         logger.info(f"🛑 SMC {pair}: إلغاء ({reason})")
         return None
 
@@ -2894,10 +3523,11 @@ def analyze_pair_smc(pair, timeframe="5m"):
             logger.info(f"🛑 SMC {pair}: تم الإرسال مسبقاً")
             return None
         with data_lock:
+            pair_key = f"smart_{pair}"
             if pair_key in state.smart_alerted_pairs:
                 del state.smart_alerted_pairs[pair_key]
-            if pending_key in state.pending_alerts:
-                del state.pending_alerts[pending_key]
+            if f"smart_{pair}" in state.pending_alerts:
+                del state.pending_alerts[f"smart_{pair}"]
 
         da = "صعود (CALL)" if bias == "CALL" else "هبوط (PUT)"
         
@@ -2932,15 +3562,11 @@ def analyze_pair_smc(pair, timeframe="5m"):
             logger.info(f"🛑 SMC {pair}: مكررة")
             return None
 
-        key = f"smart_{pair}_{(int(get_iq_time()) // 300) * 300}"
-        with data_lock:
-            state.smart_sent_signals[key] = get_iq_time()
-
         conf_str = ', '.join(conf)
         indicators_str = f"Score={score}/100 | Factors: {conf_str}"
         final_signal = send_final_signal(
             pair, bias, name, score,
-            duration_text, indicators_str, 'smart', regime=regime, signal_level=level
+            duration_text, indicators_str, 'smart', regime=regime
         )
         
         if final_signal is None:
@@ -2960,13 +3586,13 @@ def analyze_pair_wrapper_smc(pair):
         logger.error(f"خطأ SMC في {pair}: {e}")
         return pair, None
 
-# ========== PRO STRATEGY ==========
+# ========== PRO STRATEGY - 3-STAGE ARABIC ==========
 
 def analyze_pair_pro(pair, timeframe="5m"):
     tf_seconds, duration_text = 300, "5 دقائق"
     
-    df, curr_idx = get_cached_df_king(pair, tf_seconds, 60)
-    if df is None or curr_idx is None or len(df) < 40:
+    df = get_cached_df_king(pair, tf_seconds, 60)
+    if df is None or len(df) < 40:
         logger.info(f"🛑 Pro {pair}: لا يوجد بيانات")
         return None
 
@@ -2988,8 +3614,8 @@ def analyze_pair_pro(pair, timeframe="5m"):
     last_res = highs[-1]
     last_sup = lows[-1]
     
-    curr = df.iloc[curr_idx]
-    prev = df.iloc[curr_idx - 1]
+    curr = df.iloc[-2]
+    prev = df.iloc[-3]
     price = curr['Close']
     
     vol_ma = df['Volume'].tail(20).mean()
@@ -3065,19 +3691,10 @@ def analyze_pair_pro(pair, timeframe="5m"):
     emoji = PRO_EMOJIS[level]
     da = "صعود (CALL)" if direction == "CALL" else "هبوط (PUT)"
     
-    ok, reason = passes_common_entry_filters(pair)
-    if not ok:
-        logger.info(f"🛑 Pro {pair}: إلغاء — {reason}")
-        return None
-
-    candle_start = (int(iq_now) // 300) * 300
-    pair_key = f"pro_{pair}_{candle_start}"
-    pending_key = f"pro_{pair}_{candle_start}"
-
     if 270 <= csec <= 280:
         with data_lock:
-            if pair_key not in state.pa_alerted_pairs:
-                state.pending_alerts[pending_key] = {
+            if pair not in state.pa_alerted_pairs:
+                state.pending_alerts[f"pro_{pair}"] = {
                     'direction': direction,
                     'level': level,
                     'signal_name': name_ar,
@@ -3086,21 +3703,22 @@ def analyze_pair_pro(pair, timeframe="5m"):
                     'strategy': 'pro'
                 }
                 send_early_alert(pair, direction, name_ar, score, 'pro', regime=regime)
-                state.pa_alerted_pairs[pair_key] = iq_now
+                state.pa_alerted_pairs[pair] = iq_now
         return None
     
     if not (280 <= csec <= 299):
         logger.info(f"🛑 Pro {pair}: الوقت غير مناسب ({csec})")
         return None
     
+    
     with data_lock:
-        pending = state.pending_alerts.get(pending_key)
+        pending = state.pending_alerts.get(f"pro_{pair}")
     
     if pending and pending['direction'] != direction:
         send_cancelled_alert(pair, pending['direction'], "الاتجاه تغير", 'pro')
         with data_lock:
-            if pending_key in state.pending_alerts:
-                del state.pending_alerts[pending_key]
+            if f"pro_{pair}" in state.pending_alerts:
+                del state.pending_alerts[f"pro_{pair}"]
         logger.info(f"🛑 Pro {pair}: إلغاء — الاتجاه تغير")
         return None
     
@@ -3109,8 +3727,8 @@ def analyze_pair_pro(pair, timeframe="5m"):
         if pending:
             send_cancelled_alert(pair, direction, reason, 'pro')
         with data_lock:
-            if pending_key in state.pending_alerts:
-                del state.pending_alerts[pending_key]
+            if f"pro_{pair}" in state.pending_alerts:
+                del state.pending_alerts[f"pro_{pair}"]
         logger.info(f"🛑 Pro {pair}: إلغاء ({reason})")
         return None
     
@@ -3119,10 +3737,10 @@ def analyze_pair_pro(pair, timeframe="5m"):
             logger.info(f"🛑 Pro {pair}: تم الإرسال مسبقاً")
             return None
         with data_lock:
-            if pair_key in state.pa_alerted_pairs:
-                del state.pa_alerted_pairs[pair_key]
-            if pending_key in state.pending_alerts:
-                del state.pending_alerts[pending_key]
+            if pair in state.pa_alerted_pairs:
+                del state.pa_alerted_pairs[pair]
+            if f"pro_{pair}" in state.pending_alerts:
+                del state.pending_alerts[f"pro_{pair}"]
     
         with data_lock:
             state.recent_signals[pair] = (get_iq_time(), direction)
@@ -3152,15 +3770,11 @@ def analyze_pair_pro(pair, timeframe="5m"):
             logger.info(f"🛑 Pro {pair}: مكررة")
             return None
     
-        key = f"pro_{pair}_{(int(get_iq_time()) // 300) * 300}"
-        with data_lock:
-            state.pa_sent_signals[key] = get_iq_time()
-    
         factors_str = ' | '.join(factors)
         indicators_str = f"Score={score}/100 | {factors_str}"
         final_signal = send_final_signal(
             pair, direction, name_ar, score,
-            duration_text, indicators_str, 'pro', regime=regime, signal_level=level
+            duration_text, indicators_str, 'pro', regime=regime
         )
         
         if final_signal is None:
@@ -3180,158 +3794,6 @@ def analyze_pair_wrapper_pro(pair):
         logger.error(f"خطأ Pro في {pair}: {e}")
         return pair, None
 
-# ========== MARKET REGIME ==========
-
-def detect_market_regime(pair, tf=300):
-    key = f"regime_{pair}"
-    now = get_iq_time()
-    with data_lock:
-        if key in state.regime_cache and now - state.regime_cache[key][1] < REGIME_CACHE_TTL:
-            cached = state.regime_cache[key][0]
-            if isinstance(cached, dict):
-                return cached.get("regime", "unknown")
-            return cached
-    try:
-        df = get_cached_df_king(pair, tf, 80)
-        if df is None or len(df) < 30:
-            return "unknown"
-        thresholds = get_pair_thresholds(pair)
-        adx_trend = thresholds["adx_trending"]
-        adx_range = thresholds["adx_ranging"]
-        df['ALMA_20'] = calculate_alma(df['Close'], 20, 0.85, 6)
-        df['ALMA_80'] = calculate_alma(df['Close'], 80, 0.85, 6)
-        atr_series = calculate_atr_series(df, 14)
-        atr = atr_series.iloc[-1]
-        atr_avg = atr_series.tail(20).mean()
-        adx, plus_di, minus_di = calculate_adx(df, 14)
-        bbw = bollinger_bandwidth(df, 20)
-        if adx >= adx_trend and atr > atr_avg * 1.2:
-            ltf_regime = "trending"
-        elif adx < adx_range and bbw < 0.001:
-            ltf_regime = "ranging"
-        elif atr > atr_avg * 1.8:
-            ltf_regime = "high_vol"
-        elif atr < atr_avg * 0.5:
-            ltf_regime = "low_vol"
-        else:
-            ltf_regime = "mixed"
-        confirmed_regime, htf_confidence, confirmation_type = confirm_regime_with_htf(pair, ltf_regime)
-        if htf_confidence >= 50:
-            logger.info(f"📊 Regime {pair}: LTF={ltf_regime} | HTF={confirmed_regime} | Conf={htf_confidence}% | Type={confirmation_type}")
-        with data_lock:
-            state.regime_cache[key] = (confirmed_regime, now)
-        return confirmed_regime
-    except Exception as e:
-        logger.error(f"خطأ في تحديد حالة السوق {pair}: {e}")
-        return "unknown"
-
-def check_pair_disabled(pair):
-    now = get_iq_time()
-    with data_lock:
-        if pair in state.disabled_pairs:
-            if now < state.disabled_pairs[pair]:
-                return True, f"متوقف حتى {datetime.fromtimestamp(state.disabled_pairs[pair]).strftime('%d/%m %H:%M')}"
-            else:
-                del state.disabled_pairs[pair]
-                logger.info(f"✅ {pair} عاد للعمل")
-                return False, None
-    return False, None
-
-def update_disabled_pairs():
-    try:
-        all_trades = read_trade_log(max_entries=10000)
-        pair_stats = {}
-        for t in all_trades:
-            p = t.get("pair", "")
-            if p not in pair_stats:
-                pair_stats[p] = {"win": 0, "loss": 0, "total": 0}
-            if pair_stats[p]["total"] < DISABLE_WINDOW:
-                pair_stats[p]["total"] += 1
-                if t.get("outcome") == "win":
-                    pair_stats[p]["win"] += 1
-                else:
-                    pair_stats[p]["loss"] += 1
-        newly_disabled = []
-        with data_lock:
-            for pair, stat in pair_stats.items():
-                if stat["total"] >= 30:
-                    wr = (stat["win"] / stat["total"]) * 100
-                    if wr < DISABLE_THRESHOLD and pair not in state.disabled_pairs:
-                        disabled_until = get_iq_time() + DISABLE_DURATION
-                        state.disabled_pairs[pair] = disabled_until
-                        newly_disabled.append((pair, wr))
-                        logger.warning(f"🚫 {pair} متوقف — WR: {wr:.1f}% (آخر {stat['total']} صفقة)")
-        if newly_disabled:
-            msg = "🚫 *توقيف أزواج تلقائي*\n\n"
-            for p, wr in newly_disabled:
-                msg += f"• `{p}` — WR: {wr:.1f}% (7 أيام)\n"
-            send_telegram_message(msg)
-    except Exception as e:
-        logger.error(f"خطأ في تحديث الأزواج المتوقفة: {e}")
-
-def update_strategy_scores():
-    try:
-        all_trades = read_trade_log(max_entries=STRATEGY_SCORE_WINDOW * 2)
-        for strategy in ["original", "king", "smart", "pro", "quantum"]:
-            trades = [t for t in all_trades if t.get("strategy") == strategy]
-            if len(trades) >= 20:
-                wins = sum(1 for t in trades if t.get("outcome") == "win")
-                wr = (wins / len(trades)) * 100
-                chunks = [trades[i:i+10] for i in range(0, len(trades), 10)]
-                chunk_wrs = []
-                for chunk in chunks:
-                    if chunk:
-                        cw = sum(1 for t in chunk if t.get("outcome") == "win") / len(chunk) * 100
-                        chunk_wrs.append(cw)
-                stability = 100 - np.std(chunk_wrs) if len(chunk_wrs) > 1 else 50
-                score = (wr * 0.6) + (stability * 0.4)
-                with data_lock:
-                    state.strategy_scores[strategy] = {
-                        "win": wins, "loss": len(trades) - wins, "total": len(trades),
-                        "wr": round(wr, 1), "stability": round(stability, 1), "score": round(score, 1)
-                    }
-                logger.info(f"📊 Strategy Score — {strategy}: WR={wr:.1f}%, Score={score:.1f}")
-    except Exception as e:
-        logger.error(f"خطأ في تحديث Strategy Scores: {e}")
-
-def calculate_adaptive_threshold(trades, market_type="live"):
-    if not ADAPTIVE_THRESHOLD_ENABLED:
-        return ADAPTIVE_THRESHOLD_MIN
-    market_trades = [t for t in trades if ("-OTC" in t.get("pair", "").upper()) == (market_type == "otc")]
-    recent = market_trades[-ADAPTIVE_THRESHOLD_WINDOW:]
-    if len(recent) < 50:
-        return state.adaptive_thresholds.get(market_type, ADAPTIVE_THRESHOLD_MIN)
-    wins = sum(1 for t in recent if t.get("outcome") == "win")
-    wr = (wins / len(recent)) * 100
-    if wr >= 80:
-        threshold = 80
-    elif wr >= 70:
-        threshold = 85
-    elif wr >= 60:
-        threshold = 90
-    elif wr >= 50:
-        threshold = 95
-    else:
-        threshold = 100
-    threshold = max(ADAPTIVE_THRESHOLD_MIN, min(ADAPTIVE_THRESHOLD_MAX, threshold))
-    with data_lock:
-        state.adaptive_thresholds[market_type] = threshold
-    if len(recent) >= 100:
-        logger.info(f"📊 Adaptive Threshold [{market_type.upper()}]: WR={wr:.1f}% → Threshold={threshold}")
-    return threshold
-
-def get_adaptive_king_level(score, market_type="live"):
-    threshold = state.adaptive_thresholds.get(market_type, 80)
-    if score >= threshold + 15:
-        return 4
-    elif score >= threshold + 10:
-        return 3
-    elif score >= threshold + 5:
-        return 2
-    elif score >= threshold:
-        return 1
-    return 0
-
 # ========== TRADE RESULTS CHECK ==========
 
 def check_trade_results():
@@ -3347,10 +3809,11 @@ def check_trade_results():
         ep = trade['entry_price']
         direction = trade['direction']
         strategy = trade.get('strategy', 'unknown')
+        is_mg = trade.get('is_martingale', False)
         is_king = trade.get('is_king', False)
 
         try:
-            if 0 < time_left <= 20 and not trade.get('warned_loss', False) and not is_king and strategy not in ['smart', 'pro']:
+            if 0 < time_left <= 20 and not trade.get('warned_loss', False) and not is_mg and not is_king and strategy not in ['smart', 'pro', 'quantum']:
                 candles = get_cached_candles(pair, 300, 1, max_age=5, force_refresh=True)
                 if candles and len(candles) >= 1:
                     cp = candles[-1]['close']
@@ -3367,13 +3830,11 @@ def check_trade_results():
                     continue
 
                 target_candle = None
-                best_diff = float('inf')
-                for c in candles:
+                for c in reversed(candles):
                     candle_to = c.get('to', 0)
-                    diff = abs(candle_to - trade['expire_time'])
-                    if diff < best_diff:
-                        best_diff = diff
+                    if candle_to <= trade['expire_time'] + 5:
                         target_candle = c
+                        break
 
                 if target_candle is None:
                     target_candle = candles[-2] if len(candles) >= 2 else candles[-1]
@@ -3392,11 +3853,11 @@ def check_trade_results():
                 )
 
                 if direction == "CALL":
+                    is_win = fp > ep
                     is_tie = abs(fp - ep) < (ep * 0.00005)
-                    is_win = fp >= ep
                 else:
+                    is_win = fp < ep
                     is_tie = abs(fp - ep) < (ep * 0.00005)
-                    is_win = fp <= ep
 
                 diff_pct = abs(fp - ep) / ep * 100 if ep != 0 else 0
                 logger.info(
@@ -3406,7 +3867,14 @@ def check_trade_results():
 
                 ts = get_cairo_time().strftime('%I:%M %p')
 
-                if strategy == 'smart':
+                if strategy == 'quantum':
+                    with data_lock:
+                        state.quantum_stats[pair]['total'] += 1
+                        if is_tie:
+                            state.quantum_stats[pair]['win'] += 0.5
+                        else:
+                            state.quantum_stats[pair]['win' if is_win else 'loss'] += 1
+                elif strategy == 'smart':
                     with data_lock:
                         state.smart_stats[pair]['total'] += 1
                         if is_tie:
@@ -3420,13 +3888,6 @@ def check_trade_results():
                             state.pro_stats[pair]['win'] += 0.5
                         else:
                             state.pro_stats[pair]['win' if is_win else 'loss'] += 1
-                elif strategy == 'quantum':
-                    with data_lock:
-                        state.quantum_stats[pair]['total'] += 1
-                        if is_tie:
-                            state.quantum_stats[pair]['win'] += 0.5
-                        else:
-                            state.quantum_stats[pair]['win' if is_win else 'loss'] += 1
                 elif is_king:
                     with data_lock:
                         state.king_stats[pair]['total'] += 1
@@ -3457,6 +3918,7 @@ def check_trade_results():
                         "indicators": trade.get('indicators', {}),
                         "hour": trade.get('hour', datetime.now(CAIRO_TZ).hour),
                         "day_of_week": datetime.now(CAIRO_TZ).weekday(),
+                        "is_martingale": is_mg,
                         "is_king": is_king,
                         "candle_to": candle_to,
                         "candle_from": candle_from,
@@ -3468,29 +3930,44 @@ def check_trade_results():
                 if is_tie:
                     result_msg = "➖ *تعادل*\nالزوج: `" + pair + "` [5m]\n⏰ `" + ts + "`\nالدخول: " + "{:.5f}".format(ep) + " | الخروج: " + "{:.5f}".format(fp)
                     send_telegram_message(result_msg)
+                elif is_mg:
+                    msg = "✅ *مارتينجيل: رابحة*" if is_win else "❌ *مارتينجيل: خاسرة*"
+                    msg += "\nالزوج: `" + pair + "` [5m]\n⏰ `" + ts + "`\nالدخول: " + "{:.5f}".format(ep) + " | الخروج: " + "{:.5f}".format(fp)
+                    send_telegram_message(msg)
                 else:
                     if is_win:
-                        if strategy == 'pro':
+                        if strategy == 'quantum':
+                            send_telegram_message("🧠 *Quantum — رابحة* 🎯\nالزوج: `" + pair + "` [5m]\n⏰ `" + ts + "`\nالدخول: " + "{:.5f}".format(ep) + " | الخروج: " + "{:.5f}".format(fp))
+                        elif strategy == 'pro':
                             send_telegram_message("🔥 *Pro — رابحة* 🎯\nالزوج: `" + pair + "` [5m]\n⏰ `" + ts + "`\nالدخول: " + "{:.5f}".format(ep) + " | الخروج: " + "{:.5f}".format(fp))
                         elif strategy == 'smart':
                             send_telegram_message("🏆 *SMC — رابحة* 🎯\nالزوج: `" + pair + "` [5m]\n⏰ `" + ts + "`\nالدخول: " + "{:.5f}".format(ep) + " | الخروج: " + "{:.5f}".format(fp))
-                        elif strategy == 'quantum':
-                            send_telegram_message("🧠 *Quantum — رابحة* 🎯\nالزوج: `" + pair + "` [5m]\n⏰ `" + ts + "`\nالدخول: " + "{:.5f}".format(ep) + " | الخروج: " + "{:.5f}".format(fp))
                         elif is_king:
                             send_telegram_message("👑 *" + trade.get('signal_name', 'King') + " — رابحة*\nالزوج: `" + pair + "` [5m]\n⏰ `" + ts + "`\nالدخول: " + "{:.5f}".format(ep) + " | الخروج: " + "{:.5f}".format(fp))
                         else:
                             send_telegram_message("✅ *صفقة رابحة* 🎯\nالزوج: `" + pair + "` [5m]\n⏰ `" + ts + "`\nالدخول: " + "{:.5f}".format(ep) + " | الخروج: " + "{:.5f}".format(fp))
                     else:
-                        if strategy == 'pro':
+                        if strategy == 'quantum':
+                            send_telegram_message("❌ *Quantum — خاسرة* 🧠\nالزوج: `" + pair + "` [5m]\n⏰ `" + ts + "`\nالدخول: " + "{:.5f}".format(ep) + " | الخروج: " + "{:.5f}".format(fp))
+                        elif strategy == 'pro':
                             send_telegram_message("❌ *Pro — خاسرة*\nالزوج: `" + pair + "` [5m]\n⏰ `" + ts + "`\nالدخول: " + "{:.5f}".format(ep) + " | الخروج: " + "{:.5f}".format(fp))
                         elif strategy == 'smart':
                             send_telegram_message("❌ *SMC — خاسرة*\nالزوج: `" + pair + "` [5m]\n⏰ `" + ts + "`\nالدخول: " + "{:.5f}".format(ep) + " | الخروج: " + "{:.5f}".format(fp))
-                        elif strategy == 'quantum':
-                            send_telegram_message("❌ *Quantum — خاسرة* 🧠\nالزوج: `" + pair + "` [5m]\n⏰ `" + ts + "`\nالدخول: " + "{:.5f}".format(ep) + " | الخروج: " + "{:.5f}".format(fp))
                         elif is_king:
                             send_telegram_message("❌ *" + trade.get('signal_name', 'King') + " — خاسرة*\nالزوج: `" + pair + "` [5m]\n⏰ `" + ts + "`\nالدخول: " + "{:.5f}".format(ep) + " | الخروج: " + "{:.5f}".format(fp))
                         else:
-                            send_telegram_message("❌ *صفقة خاسرة*\nالزوج: `" + pair + "` [5m]\n⏰ `" + ts + "`\nالدخول: " + "{:.5f}".format(ep) + " | الخروج: " + "{:.5f}".format(fp))
+                            with data_lock:
+                                if pair not in state.martingale_queue:
+                                    state.martingale_queue[pair] = {'original_direction': direction, 'entry_price': ep, 'time': get_iq_time()}
+                            send_telegram_message(
+                                "❌ *صفقة خاسرة*\n"
+                                "الزوج: `" + pair + "` [5m]\n"
+                                "⏰ `" + ts + "`\n"
+                                "الدخول: " + "{:.5f}".format(ep) + " | الخروج: " + "{:.5f}".format(fp) + "\n\n"
+                                "🔴 *دخول وضع المارتينجيل!*\n"
+                                "🎯 البحث في كل الأزواج عن إشارة *قوية جداً* 🔵 أو أعلى.\n"
+                                "⏳ تحليل السوق..."
+                            )
 
                 trades_to_remove.append(trade)
 
@@ -3573,8 +4050,6 @@ def stats_engine_worker():
         try:
             now = get_iq_time()
             now_dt = datetime.fromtimestamp(now, tz=CAIRO_TZ)
-
-            update_strategy_scores()
 
             if now - last_adaptive_update > 3600:
                 all_trades = read_trade_log(max_entries=10000)
@@ -3682,7 +4157,7 @@ def stats_engine_worker():
 # ========== CLEANUP MEMORY ==========
 
 def cleanup_memory():
-    now = get_iq_time()
+    now = time.time()
     candles_cache.cleanup()
     df_cache.cleanup()
     king_df_cache.cleanup()
@@ -3694,8 +4169,8 @@ def cleanup_memory():
         state.king_recent_signals = {k:v for k,v in state.king_recent_signals.items() if now - v[0] < 1200}
         state.smart_sent_signals = {k:v for k,v in state.smart_sent_signals.items() if now - v < 600}
         state.pa_sent_signals = {k:v for k,v in state.pa_sent_signals.items() if now - v < 600}
-        state.quantum_sent_signals = {k:v for k,v in getattr(state, 'quantum_sent_signals', {}).items() if now - v < 600}
-        state.quantum_alerted_pairs = {k:v for k,v in getattr(state, 'quantum_alerted_pairs', {}).items() if isinstance(v, (int, float)) and now - v < 480}
+        state.quantum_sent_signals = {k:v for k,v in state.quantum_sent_signals.items() if now - v < 600}
+        state.quantum_alerted_pairs = {k:v for k,v in state.quantum_alerted_pairs.items() if isinstance(v, (int, float)) and now - v < 480}
         state.sent_final_signals = {k:v for k,v in state.sent_final_signals.items() if now - v < 600}
         state.pa_alerted_pairs = {k:v for k,v in state.pa_alerted_pairs.items() if isinstance(v, (int, float)) and now - v < 600}
         state.pending_alerts = {k:v for k,v in state.pending_alerts.items() if isinstance(v, dict) and now - v.get('alert_time', 0) < 600}
@@ -3703,25 +4178,27 @@ def cleanup_memory():
         for k in list(state.alerted_pairs.keys()):
             val = state.alerted_pairs[k]
             if isinstance(val, tuple) and len(val) >= 2:
-                if now - val[1] >= 480:
+                if now - val[1] > 480:
                     del state.alerted_pairs[k]
             else:
                 del state.alerted_pairs[k]
         for k in list(state.king_alerted_pairs.keys()):
             val = state.king_alerted_pairs[k]
             if isinstance(val, tuple) and len(val) >= 2:
-                if now - val[1] >= 480:
+                if now - val[1] > 480:
                     del state.king_alerted_pairs[k]
             else:
                 del state.king_alerted_pairs[k]
         for k in list(state.smart_alerted_pairs.keys()):
             val = state.smart_alerted_pairs[k]
             if isinstance(val, (int, float)):
-                if now - val >= 480:
+                if now - val > 480:
                     del state.smart_alerted_pairs[k]
             else:
                 del state.smart_alerted_pairs[k]
-        state.invalid_assets = {k:v for k,v in state.invalid_assets.items() if now - v < 3600}
+        for k in list(state.hunt_mode_announced.keys()):
+            if now - state.hunt_mode_announced[k] > 1200:
+                del state.hunt_mode_announced[k]
 
 # ========== PAIRS ==========
 
@@ -3756,6 +4233,7 @@ def run_bot():
     init_log_files()
     API = connect_iqoption()
     
+    # ===== تهيئة Quantum System =====
     init_quantum_system()
 
     pairs, mode_text = get_pairs_for_today()
@@ -3797,8 +4275,7 @@ def run_bot():
                         f"🔄 *تبديل الوضع!*\n"
                         f"📅 {datetime.now(CAIRO_TZ).strftime('%A %d/%m/%Y')}\n"
                         f"🌐 الوضع الجديد: {mode_text}\n"
-                        f"📋 الأزواج: {len(pairs)}\n"
-                        f"🧠 Quantum Strategy نشطة مع فلتر التقلب"
+                        f"📋 الأزواج: {len(pairs)}"
                     )
                     with data_lock:
                         state.invalid_assets.clear()
@@ -3812,9 +4289,26 @@ def run_bot():
                     continue
 
                 with data_lock:
-                    valid_pairs = [p for p in pairs if p not in state.invalid_assets or get_iq_time() - state.invalid_assets.get(p, 0) > 3600]
+                    valid_pairs = [p for p in pairs if p not in state.invalid_assets]
                 if len(valid_pairs) < len(pairs):
                     logger.info(f"📋 الأزواج المتاحة: {len(valid_pairs)}/{len(pairs)}")
+
+                with data_lock:
+                    mg_queue_copy = dict(state.martingale_queue)
+                if mg_queue_copy:
+                    now_time = get_iq_time()
+                    if now_time - state.last_hunt_message_time >= MARTINGALE_HUNT_INTERVAL:
+                        state.last_hunt_message_time = now_time
+                        send_telegram_message(
+                            f"🔍 *البحث عن مارتينجيل...*\n"
+                            f"🎯 تحليل كل الأزواج المتاحة.\n"
+                            f"⏳ البحث عن *قوية جداً* 🔵 أو أعلى.\n"
+                            f"✅ كل الإشارات العادية شغالة.\n"
+                            f"👑 King شغال.\n"
+                            f"🏆 SMC شغال.\n"
+                            f"🔥 Pro شغال.\n"
+                            f"🧠 Quantum شغال."
+                        )
 
                 active_pairs = []
                 disabled_count = 0
@@ -3850,9 +4344,24 @@ def run_bot():
                 # ========== ORIGINAL ==========
                 if "original" in strategies_to_run:
                     results = list(executor.map(analyze_pair_wrapper, active_pairs))
-                    for pair, signal in results:
-                        if signal:
-                            logger.info(f"✅ إشارة: {pair}")
+
+                    with data_lock:
+                        in_hunt = len(state.martingale_queue) > 0
+
+                    if in_hunt:
+                        martingale_found = False
+                        for pair, signal in results:
+                            if signal and not martingale_found:
+                                logger.info(f"✅ تم العثور على مارتينجيل: {pair}")
+                                martingale_found = True
+                                with data_lock:
+                                    state.martingale_queue.clear()
+                                with data_lock:
+                                    state.alerted_pairs.clear()
+                    else:
+                        for pair, signal in results:
+                            if signal:
+                                logger.info(f"✅ إشارة: {pair}")
 
                 # ========== KING ==========
                 if "king" in strategies_to_run:
@@ -3903,7 +4412,7 @@ def run_bot():
                         quantum_total_wins = sum(s['win'] for s in state.quantum_stats.values())
                         quantum_total_loss = sum(s['loss'] for s in state.quantum_stats.values())
                         quantum_wr = (quantum_total_wins / (quantum_total_wins + quantum_total_loss) * 100) if (quantum_total_wins + quantum_total_loss) > 0 else 0
-                    logger.info(f"📊 دورة #{current_cycle} | الأصلية WR: {wr:.1f}% | King WR: {king_wr:.1f}% | SMC WR: {smart_wr:.1f}% | Pro WR: {pro_wr:.1f}% | Quantum WR: {quantum_wr:.1f}%")
+                    logger.info(f"📊 دورة #{current_cycle} | الأصلية WR: {wr:.1f}% | King WR: {king_wr:.1f}% | SMC WR: {smart_wr:.1f}% | Pro WR: {pro_wr:.1f}% | Quantum WR: {quantum_wr:.1f}% | الإجمالي: {total_wins+total_loss} | King: {king_total_wins+king_total_loss} | SMC: {smart_total_wins+smart_total_loss} | Pro: {pro_total_wins+pro_total_loss} | Quantum: {quantum_total_wins+quantum_total_loss}")
 
             except Exception as e:
                 logger.error(f"خطأ في الحلقة الرئيسية: {e}")
