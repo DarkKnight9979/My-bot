@@ -1894,7 +1894,8 @@ def fvg_retest_quantum(df, fvg):
         start_idx = max(fvg['idx'] + 1, len(df) - 15)
         for i in range(start_idx, len(df)):
             if df['Low'].iloc[i] <= fvg["top"] and df['High'].iloc[i] >= fvg["bottom"]:
-                return True        return False
+                return True
+        return False
     except Exception as e:
         logger.error(f"خطأ في التحقق من FVG Retest Quantum: {e}")
         return False
