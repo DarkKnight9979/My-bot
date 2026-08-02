@@ -2633,8 +2633,8 @@ def analyze_pair(pair, timeframe="5m"):
     # ========== تحسين 3: Smart S/R Levels (بدل Fractals) ==========
     sup_levels, res_levels = get_smart_sr_levels(df, lookback=30)
     
-    # ========== تحسين 4: Market Structure ==========
-    df_swings = detect_swings(df, window=2)
+    # ========== تحسين 4: Market Structure (تم الإصلاح باستخدام df.copy()) ==========
+    df_swings = detect_swings(df.copy(), window=2)
     structure, _, _ = get_market_structure(df_swings, lookback=30)
 
     # تحديد الاتجاه
