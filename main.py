@@ -2630,12 +2630,12 @@ def analyze_pair(pair, timeframe="5m"):
     adx, _, _ = calculate_adx(df, 14)
     bbw = bollinger_bandwidth(df, 20)
     
-    # ========== تحسين 3: Smart S/R Levels (بدل Fractals) ==========
-    sup_levels, res_levels = get_smart_sr_levels(df, lookback=30)
-    
-    # ========== تحسين 4: Market Structure (تم الإصلاح باستخدام df.copy()) ==========
-    df_swings = detect_swings(df.copy(), window=2)
-    structure, _, _ = get_market_structure(df_swings, lookback=30)
+    # ========== تحسين 4: Market Structure (قبل) ==========
+df = detect_swings(df, window=2)  # ← دي لازم تيجي الأول
+structure, _, _ = get_market_structure(df, lookback=30)
+
+# ========== تحسين 3: Smart S/R Levels (بعدين) ==========
+sup_levels, res_levels = get_smart_sr_levels(df, lookback=30)  # ← دلوقتي df فيه الأعمدة المطلوبة
 
     # تحديد الاتجاه
     potential_direction = None
