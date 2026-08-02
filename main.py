@@ -2468,70 +2468,135 @@ def analyze_pair_wrapper_quantum(pair):
         logger.error(f"خطأ Quantum في {pair}: {e}")
         return pair, None
 
-# ========== SIGNAL EVALUATION - ORIGINAL ==========
+# ===================================================================
+# ========== ORIGINAL STRATEGY ENHANCED WEIGHTS ==========
+# ===================================================================
+ORIGINAL_WEIGHTS = {
+    "trend": 20,        # HTF Trend + ALMA Cross
+    "momentum": 20,     # Stoch + ROC
+    "structure": 15,    # Market Structure (HH/HL/LH/LL)
+    "volume": 15,       # Volume confirmation
+    "candle": 15,       # Candle quality
+    "zone": 10,         # Near S/R zone
+    "adx": 5            # ADX filter
+}
 
-_SIGNAL_LEVEL_CONFIG = [
-    (6, 0.22, 1.5, 22, 0.0015, 0.00035, 0.040),
-    (5, 0.18, 1.5, 18, 0.0012, 0.00028, 0.035),
-    (4, 0.18, 1.5, 16, 0.0010, 0.00025, 0.030),
-    (3, 0.18, 1.5, 14, 0.0008, 0.00022, 0.025),
-]
-
-def evaluate_signal_strength(direction, curr, prev, df, price, alma9, alma50,
-                            stoch_k, stoch_d, rsi, volume, vol_ma,
-                            atr, adx, bbw, roc, near_sup, near_res):
+def evaluate_signal_strength_enhanced(direction, curr, prev, df, price, alma9, alma50,
+                                      stoch_k, stoch_d, rsi, volume, vol_ma,
+                                      atr, adx, bbw, roc, near_sup, near_res,
+                                      structure=None, htf_regime=None):
+    """
+    نظام تقييم محسّن للاستراتيجية الأصلية
+    كل عامل بياخد نقاط حسب قوته، والحد الأدنى للدخول 80 نقطة (Level 5)
+    """
+    score = 0
+    reasons = []
+    w = ORIGINAL_WEIGHTS
+    
+    # 1. Trend (ALMA Cross + HTF Confirmation)
     a9p, a50p = prev['ALMA_9'], prev['ALMA_50']
     a9c, a50c = alma9, alma50
     bullish_cross = (a9p <= a50p) and (a9c > a50c)
     bearish_cross = (a9p >= a50p) and (a9c < a50c)
+    
     has_cross = (direction == "CALL" and bullish_cross) or (direction == "PUT" and bearish_cross)
+    trend_aligned = (direction == "CALL" and price > alma9) or (direction == "PUT" and price < alma9)
+    
+    if has_cross:
+        score += w["trend"] * 0.7
+        reasons.append("ALMA Cross")
+    elif trend_aligned:
+        score += w["trend"] * 0.4
+        reasons.append("ALMA Aligned")
+    
+    # HTF Confirmation — مضاعفة النقاط لو متفق
+    if htf_regime and htf_regime.get("trend") == direction:
+        score += w["trend"] * 0.3
+        reasons.append("HTF Confirm")
+    
+    # 2. Momentum — صارم أكتر
+    if direction == "CALL":
+        stoch_ok = stoch_k > stoch_d and stoch_k > 50  # شرط إضافي: stoch_k > 50
+        roc_ok = roc > 0.03  # رفع ROC من 0.020 لـ 0.030
+    else:
+        stoch_ok = stoch_k < stoch_d and stoch_k < 50  # شرط إضافي: stoch_k < 50
+        roc_ok = roc < -0.03
+    
+    if stoch_ok:
+        score += w["momentum"] * 0.6
+        reasons.append("Stoch OK")
+    if roc_ok:
+        score += w["momentum"] * 0.4
+        reasons.append("ROC OK")
+    
+    # 3. Market Structure (من King/Quantum)
+    if structure:
+        if (direction == "CALL" and structure == "BULLISH") or (direction == "PUT" and structure == "BEARISH"):
+            score += w["structure"]
+            reasons.append("Structure")
+    
+    # 4. Volume — أقوى (رفع من 1.5 لـ 2.0 للحد الأقصى)
+    vol_ratio = volume / vol_ma if vol_ma > 0 else 0
+    if vol_ratio >= 2.0:
+        score += w["volume"]
+        reasons.append("Vol Strong")
+    elif vol_ratio >= 1.5:
+        score += w["volume"] * 0.7
+        reasons.append("Vol OK")
+    elif vol_ratio < 1.2:
+        return 0, []  # رفض مباشر لو الحجم ضعيف
+    
+    # 5. Candle Quality — صارم جداً (مثل King)
     body = abs(curr['Close'] - curr['Open'])
     rng = curr['High'] - curr['Low']
-    body_pct = body / rng if rng > 0 else 0
-
-    if has_cross:
-        if direction == "CALL":
-            cond_stoch = stoch_k > stoch_d
-            cond_price = price > alma9
-        else:
-            cond_stoch = stoch_k < stoch_d
-            cond_price = price < alma9
-        
-        for level, min_body, vol_ratio, min_adx, min_bbw, atr_ratio, min_roc in _SIGNAL_LEVEL_CONFIG:
-            if (cond_stoch and cond_price and
-                body_pct >= min_body and
-                volume >= vol_ma * vol_ratio and
-                adx >= min_adx and
-                bbw >= min_bbw and
-                atr >= (price * atr_ratio) and
-                abs(roc) >= min_roc):
-                
-                if level >= 3:
-                    return level
-
-    if direction == "CALL":
-        cond_base = (price > alma9 * 1.0002) and (stoch_k >= stoch_d)
-        cond_rsi = 28 <= rsi <= 55
-        cond_zone = near_sup or (price <= curr['BBL'] * 1.002)
-        cond_stoch_zone = stoch_k <= 45
+    if rng == 0:
+        return 0, []
+    body_pct = body / rng
+    upper_wick = curr['High'] - max(curr['Close'], curr['Open'])
+    lower_wick = min(curr['Close'], curr['Open']) - curr['Low']
+    shadow_pct = (upper_wick + lower_wick) / rng
+    
+    if body_pct >= 0.65 and shadow_pct <= 0.25:
+        score += w["candle"]
+        reasons.append("Candle Strong")
+    elif body_pct >= 0.50 and shadow_pct <= 0.35:
+        score += w["candle"] * 0.5
+        reasons.append("Candle OK")
     else:
-        cond_base = (price < alma9 * 0.9998) and (stoch_k <= stoch_d)
-        cond_rsi = 45 <= rsi <= 72
-        cond_zone = near_res or (price >= curr['BBU'] * 0.998)
-        cond_stoch_zone = stoch_k >= 55
+        return 0, []  # رفض مباشر
     
-    if (cond_base and cond_rsi and cond_zone and cond_stoch_zone and
-        body_pct >= 0.18 and
-        volume >= vol_ma * 1.5 and
-        adx >= 12 and
-        bbw >= 0.0007 and
-        atr >= (price * 0.00020) and
-        abs(roc) >= 0.020):
-        return 2
+    # 6. Zone (S/R)
+    if (direction == "CALL" and near_sup) or (direction == "PUT" and near_res):
+        score += w["zone"]
+        reasons.append("Zone")
     
-    return 0
+    # 7. ADX — رفع العتبة (من 12 لـ 20)
+    if adx >= 25:
+        score += w["adx"]
+        reasons.append("ADX Strong")
+    elif adx >= 20:
+        score += w["adx"] * 0.5
+        reasons.append("ADX OK")
+    elif adx < 15:
+        return 0, []  # رفض مباشر
+    
+    # فلاتر إضافية صارمة
+    if atr < price * 0.00025:   # رفع من 0.00020
+        return 0, []
+    if bbw < 0.001:             # رفع من 0.0007
+        return 0, []
+    
+    # ===== الحد الأدنى للدخول هو LEVEL 5 (Score >= 80) =====
+    # NO Level 1,2,3,4 — فقط Level 5 و Level 6
+    if score >= 90:
+        level = 6
+    elif score >= 80:
+        level = 5
+    else:
+        level = 0  # مرفوض
+    
+    return level, reasons
 
-# ========== analyze_pair (Original Strategy - 3-Stage Arabic) ==========
 
 def analyze_pair(pair, timeframe="5m"):
     tf_seconds, duration_text = 300, "5 دقائق"
@@ -2540,7 +2605,16 @@ def analyze_pair(pair, timeframe="5m"):
         logger.warning(f"⛔ {pair}: لا يوجد بيانات")
         return None
 
+    # ========== تحسين 1: Regime Detection (مثل Quantum) ==========
     regime = detect_market_regime(pair)
+    if regime == "ranging":
+        logger.info(f"🛑 {pair}: Original — سوق عرضي (مرفوض)")
+        return None
+    
+    # ========== تحسين 2: HTF Analysis متقدم (مش بس Trend) ==========
+    htf = get_htf_market_regime(pair)  # استخدم الدالة المتقدمة اللي موجودة
+    htf_trend = htf.get("trend") if htf else None
+    htf_structure = htf.get("structure") if htf else None
 
     curr = df.iloc[-2]
     prev = df.iloc[-3]
@@ -2555,84 +2629,87 @@ def analyze_pair(pair, timeframe="5m"):
     atr_series = calculate_atr_series(df, 14)
     adx, _, _ = calculate_adx(df, 14)
     bbw = bollinger_bandwidth(df, 20)
-    resistance, support = get_fractal_levels(df, lookback=20)
+    
+    # ========== تحسين 3: Smart S/R Levels (بدل Fractals) ==========
+    sup_levels, res_levels = get_smart_sr_levels(df, lookback=30)
+    
+    # ========== تحسين 4: Market Structure ==========
+    df_swings = detect_swings(df, window=2)
+    structure, _, _ = get_market_structure(df_swings, lookback=30)
 
-    low = curr['Low']
-    high = curr['High']
-    support_hits = df[df['Low'] <= support * 1.001].shape[0]
-    resistance_hits = df[df['High'] >= resistance * 0.999].shape[0]
-    near_sup = (abs(price - support) <= (price * 0.0005) or low <= (curr['BBL'] * 1.001)) and support_hits >= 3
-    near_res = (abs(price - resistance) <= (price * 0.0005) or high >= (curr['BBU'] * 0.999)) and resistance_hits >= 3
-
-    pair_key = f"{pair}_5m"
-    iq_now = get_iq_time()
-    csec = int(iq_now) % 300
-
+    # تحديد الاتجاه
     potential_direction = None
     a9p, a50p = prev['ALMA_9'], prev['ALMA_50']
     a9c, a50c = alma9, alma50
     bullish_cross = (a9p <= a50p) and (a9c > a50c)
     bearish_cross = (a9p >= a50p) and (a9c < a50c)
 
-    if bullish_cross and stoch_k > stoch_d:
+    # شروط أقوى: أضفنا stoch_k > 50 للـ CALL و < 50 للـ PUT
+    if bullish_cross and stoch_k > stoch_d and stoch_k > 50:
         potential_direction = "CALL"
-    elif bearish_cross and stoch_k < stoch_d:
+    elif bearish_cross and stoch_k < stoch_d and stoch_k < 50:
         potential_direction = "PUT"
-    elif price > alma9 and stoch_k > stoch_d and rsi <= 68:
+    elif price > alma9 and stoch_k > stoch_d and rsi <= 65 and stoch_k > 50:
         potential_direction = "CALL"
-    elif price < alma9 and stoch_k < stoch_d and rsi >= 32:
+    elif price < alma9 and stoch_k < stoch_d and rsi >= 35 and stoch_k < 50:
         potential_direction = "PUT"
 
     if potential_direction is None:
-        logger.info(f"⛔ {pair}: لا يوجد اتجاه")
         return None
 
-    htf_trend = get_higher_tf_trend(pair)
+    # ========== تحسين 5: HTF Filter أقوى ==========
     if htf_trend is not None and htf_trend != potential_direction:
-        logger.info(f"🛑 {pair}: HTF عكسي ({htf_trend} vs {potential_direction})، تم الإلغاء")
+        logger.info(f"🛑 {pair}: HTF Trend عكسي")
         return None
+    
+    # Structure عكسي = رفض
+    if htf_structure:
+        if (potential_direction == "CALL" and htf_structure == "BEARISH") or \
+           (potential_direction == "PUT" and htf_structure == "BULLISH"):
+            logger.info(f"🛑 {pair}: HTF Structure عكسي")
+            return None
 
+    # ========== تحسين 6: فلاتر صارمة ==========
     atr_avg = atr_series.tail(20).mean()
-    if atr < atr_avg * 0.5:
-        logger.info(f"🛑 {pair}: تقلب منخفض (ATR={atr:.5f} < avg*0.5={atr_avg*0.5:.5f})، تم الإلغاء")
+    if atr < atr_avg * 0.7:  # رفع من 0.5
+        logger.info(f"🛑 {pair}: تقلب منخفض (ATR < avg*0.7)")
+        return None
+    
+    # فلتر جديد: تقلب عالي جداً = رفض
+    if atr > atr_avg * 2.5:
+        logger.info(f"🛑 {pair}: تقلب عالي جداً (ATR > avg*2.5)")
         return None
 
-    if curr['Volume'] <= vol_ma * 1.5:
-        logger.info(f"🛑 {pair}: حجم تداول ضعيف ({curr['Volume']:.0f} <= {vol_ma*1.5:.0f})، تم الإلغاء")
+    if curr['Volume'] <= vol_ma * 1.8:  # رفع من 1.5
+        logger.info(f"🛑 {pair}: حجم ضعيف (Vol < MA*1.8)")
         return None
 
-    strength = evaluate_signal_strength(
+    # ========== تحسين 7: تقييم محسّن ==========
+    near_sup = any(abs(price - level) <= price * 0.0005 for level in sup_levels)
+    near_res = any(abs(price - level) <= price * 0.0005 for level in res_levels)
+
+    strength, reasons = evaluate_signal_strength_enhanced(
         potential_direction, curr, prev, df, price, alma9, alma50,
-        stoch_k, stoch_d, rsi, volume, vol_ma, atr, adx, bbw, roc, near_sup, near_res
+        stoch_k, stoch_d, rsi, volume, vol_ma, atr, adx, bbw, roc,
+        near_sup, near_res, structure=structure, htf_regime=htf
     )
 
-    if strength < 3:
-        body_pct = abs(curr['Close'] - curr['Open']) / (curr['High'] - curr['Low']) if curr['High'] != curr['Low'] else 0
-        logger.info(f"🛑 {pair}: مرفوضة — القوة={strength} < 3 (ADX={adx:.1f}, RSI={rsi:.1f}, Body={body_pct:.2f}, Vol={volume:.0f}/MA={vol_ma:.0f})")
+    # ===== الحد الأدنى للدخول هو LEVEL 5 (Score >= 80) =====
+    if strength < 5:
+        logger.info(f"🛑 {pair}: مرفوضة — القوة={strength} < 5 (Score < 80)")
         return None
 
     signal_name_ar, signal_name_en = SIGNAL_NAMES[strength]
     emoji = SIGNAL_EMOJIS[strength]
     da = "صعود (CALL)" if potential_direction == "CALL" else "هبوط (PUT)"
 
-    htf_trend = get_higher_tf_trend(pair)
-    is_trending = (potential_direction == "CALL" and htf_trend == "CALL") or \
-                  (potential_direction == "PUT" and htf_trend == "PUT")
-    trend_tag = " 🌊 سوق متجه" if is_trending else ""
-    
-    if htf_trend is not None and htf_trend != potential_direction:
-        logger.warning(f"⚠️ {pair}: HTF عكسي ({htf_trend} vs {potential_direction}) لكن الإشارة مستمرة")
-        trend_tag = " ⚠️ HTF عكسي"
-
-    with data_lock:
-        in_hunt_mode = len(state.martingale_queue) > 0
-
-    if in_hunt_mode and strength < 2:
-        return None
+    # ===== نظام 3 مراحل (Early Alert → Confirmation → Final) =====
+    iq_now = get_iq_time()
+    csec = int(iq_now) % 300
 
     if 270 <= csec <= 280:
         with data_lock:
-            if pair_key not in state.alerted_pairs:
+            if pair not in state.alerted_pairs:
                 state.pending_alerts[pair] = {
                     'direction': potential_direction,
                     'strength': strength,
@@ -2642,7 +2719,7 @@ def analyze_pair(pair, timeframe="5m"):
                     'strategy': 'original'
                 }
                 send_early_alert(pair, potential_direction, signal_name_ar, strength * 16, 'original', regime=regime)
-                state.alerted_pairs[pair_key] = (potential_direction, iq_now)
+                state.alerted_pairs[pair] = (potential_direction, iq_now)
         return None
 
     if 280 <= csec <= 299:
@@ -2668,9 +2745,13 @@ def analyze_pair(pair, timeframe="5m"):
             logger.info(f"🛑 {pair}: إلغاء ({reason})")
             return None
 
-        min_body = {6: 0.22, 5: 0.18, 4: 0.18, 3: 0.18, 2: 0.18, 1: 0.08}
-        if not check_candle_quality(curr, min_body_pct=min_body.get(strength, 0.08)):
-            body_pct = abs(curr['Close'] - curr['Open']) / (curr['High'] - curr['Low']) if curr['High'] != curr['Low'] else 0
+        # فحص جودة الشمعة مرة أخرى
+        body = abs(curr['Close'] - curr['Open'])
+        rng = curr['High'] - curr['Low']
+        if rng == 0:
+            return None
+        body_pct = body / rng
+        if body_pct < 0.50:
             if pending:
                 send_cancelled_alert(pair, potential_direction, f"شمعة ضعيفة ({body_pct:.1%})", 'original')
             with data_lock:
@@ -2693,12 +2774,12 @@ def analyze_pair(pair, timeframe="5m"):
                 logger.info(f"⛔ {pair}: تم الإرسال مسبقاً")
                 return None
             with data_lock:
-                if pair_key in state.alerted_pairs:
-                    del state.alerted_pairs[pair_key]
+                if pair in state.alerted_pairs:
+                    del state.alerted_pairs[pair]
                 if pair in state.pending_alerts:
                     del state.pending_alerts[pair]
 
-            indicators_str = f"ADX={adx:.1f} | BBW={bbw:.4f} | RSI={rsi:.1f}"
+            indicators_str = f"ADX={adx:.1f} | BBW={bbw:.4f} | RSI={rsi:.1f} | Reasons: {', '.join(reasons[:3])}"
             final_signal = send_final_signal(
                 pair, potential_direction, signal_name_ar, strength * 16,
                 duration_text, indicators_str, 'original', regime=regime
@@ -2713,29 +2794,32 @@ def analyze_pair(pair, timeframe="5m"):
 
             new_trade = _build_trade_dict(
                 pair=pair, direction=potential_direction, entry_price=curr['Close'],
-                expire_offset=300, is_king=False, is_martingale=in_hunt_mode,
+                expire_offset=300, is_king=False, is_martingale=False,
                 signal_level=strength, signal_name=signal_name_ar, score=strength * 16,
                 filters={
                     'alma_cross': (a9p <= a50p and a9c > a50c) if potential_direction == "CALL" else (a9p >= a50p and a9c < a50c),
                     'price_above_alma': price > alma9 if potential_direction == "CALL" else price < alma9,
                     'stoch_aligned': stoch_k > stoch_d if potential_direction == "CALL" else stoch_k < stoch_d,
-                    'rsi_zone': (28 <= rsi <= 55) if potential_direction == "CALL" else (45 <= rsi <= 72),
+                    'rsi_zone': (28 <= rsi <= 65) if potential_direction == "CALL" else (35 <= rsi <= 72),
                     'near_sr': near_sup if potential_direction == "CALL" else near_res,
-                    'volume_ok': volume >= vol_ma * 0.55,
-                    'adx_ok': adx >= 12,
-                    'bbw_ok': bbw >= 0.0007,
-                    'atr_ok': atr >= (price * 0.00020)
+                    'volume_ok': volume >= vol_ma * 1.8,
+                    'adx_ok': adx >= 20,
+                    'bbw_ok': bbw >= 0.001,
+                    'atr_ok': atr >= (price * 0.00025),
+                    'structure_ok': structure in ["BULLISH", "BEARISH"]
                 },
                 indicators={
                     'adx': float(adx), 'rsi': float(rsi), 'bbw': float(bbw),
                     'atr': float(atr), 'roc': float(roc),
-                    'stoch_k': float(stoch_k), 'stoch_d': float(stoch_d)
+                    'stoch_k': float(stoch_k), 'stoch_d': float(stoch_d),
+                    'structure': str(structure) if structure else 'None',
+                    'reasons': reasons
                 },
                 strategy='original'
             )
 
             if add_trade_atomic(new_trade):
-                logger.info(f"✅ {pair}: {signal_name_ar} تم الإرسال (قوة={strength})")
+                logger.info(f"✅ {pair}: {signal_name_ar} تم الإرسال (قوة={strength} | Score={strength*16})")
                 return final_signal
             else:
                 logger.info(f"🛑 {pair}: مرفوضة (مكررة)")
