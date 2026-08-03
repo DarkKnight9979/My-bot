@@ -48,7 +48,7 @@ BLOCK_SIZE = 20
 REGIME_CACHE_TTL = 300
 ADAPTIVE_THRESHOLD_ENABLED = True
 ADAPTIVE_THRESHOLD_WINDOW = 250
-ADAPTIVE_THRESHOLD_MIN = 80
+ADAPTIVE_THRESHOLD_MIN = 65
 ADAPTIVE_THRESHOLD_MAX = 100
 SETTINGS_CACHE_TTL = 300
 
@@ -91,8 +91,8 @@ def get_pair_thresholds(pair):
 
 # ========== QUANTUM CONFIGURATION ==========
 QUANTUM_CONFIG = {
-    "min_score_live": 85,
-    "min_score_otc": 80,
+    "min_score_live": 70,
+    "min_score_otc": 65,
     "cooldown": 300,
     "weights": {
         "structure": 20,
@@ -119,7 +119,7 @@ QUANTUM_CONFIG = {
         "ideal_high": 0.005,
         "score_bonus": 5,
         "score_penalty": 10,
-        "reject_low": 0.0003,
+        "reject_low": 0.00001,
         "reject_high": 0.012
     }
 }
@@ -2858,16 +2858,15 @@ def analyze_pair(pair, timeframe="5m"):
 
     # ========== تحسين 6: فلاتر صارمة ==========
     atr_avg = atr_series.tail(20).mean()
-    if atr < atr_avg * 0.7:  # رفع من 0.5
+    if atr < atr_avg * 0.4:  # رفع من 0.5
         logger.info(f"🛑 {pair}: تقلب منخفض (ATR < avg*0.7)")
         return None
     
-    # فلتر جديد: تقلب عالي جداً = رفض
-    if atr > atr_avg * 2.5:
-        logger.info(f"🛑 {pair}: تقلب عالي جداً (ATR > avg*2.5)")
-        return None
+    # فلتر تقلب عالي: تحذير فقط مش رفض
+    if atr > atr_avg * 3.5:
+        logger.info(f"⚠️ {pair}: تقلب عالي (ATR > avg*3.5) — مستمر بحذر")
 
-    if curr['Volume'] <= vol_ma * 1.8:  # رفع من 1.5
+    if curr['Volume'] <= vol_ma * 1.2:  # رفع من 1.5
         logger.info(f"🛑 {pair}: حجم ضعيف (Vol < MA*1.8)")
         return None
 
@@ -3052,7 +3051,7 @@ def analyze_pair_king(pair, timeframe="5m"):
     
     if structure == "NEUTRAL":
         adx_check, _, _ = calculate_adx(df, 14)
-        if adx_check < 20:
+        if adx_check < 12:
             logger.info(f"🛑 King {pair}: NEUTRAL و ADX={adx_check:.1f} < 20")
             return None
         else:
@@ -3085,7 +3084,7 @@ def analyze_pair_king(pair, timeframe="5m"):
 
     sweep_ok, sweep_level = detect_liquidity_sweep(df, potential_direction, sweep_threshold=sweep_threshold)
     if not sweep_ok:
-        if adx < 20:
+        if adx < 12:
             logger.info(f"🛑 King {pair}: لا يوجد Sweep و ADX={adx:.1f} < 20")
             return None
         else:
@@ -3113,8 +3112,8 @@ def analyze_pair_king(pair, timeframe="5m"):
         stoch_ok = stoch_k < stoch_d
 
     candle_ok, body_pct = check_king_candle_quality(curr)
-    if body_pct < body_pct_min:
-        logger.info(f"🛑 King {pair}: body_pct < {body_pct_min}")
+    if body_pct < 0.45:
+        logger.info(f"🛑 King {pair}: body_pct < 0.45")
         return None
 
     near_sr = False
@@ -3138,7 +3137,7 @@ def analyze_pair_king(pair, timeframe="5m"):
 
     level = get_adaptive_king_level(score, market_type=market_type)
     if level == 0:
-        logger.info(f"🛑 King {pair}: Score={score} < 80")
+        logger.info(f"🛑 King {pair}: Score={score} < 65")
         return None
 
     htf_trend = get_king_htf_trend(pair)
@@ -3371,7 +3370,7 @@ def analyze_pair_smc(pair, timeframe="5m"):
     if (bias == "CALL" and 30 <= rsi <= 50) or (bias == "PUT" and 50 <= rsi <= 70):
         score += 10; conf.append("RSI")
 
-    if score < 80:
+    if score < 65:
         logger.info(f"🛑 SMC {pair}: Score={score} < 80")
         return None
 
@@ -3520,8 +3519,14 @@ def analyze_pair_pro(pair, timeframe="5m"):
     df = detect_swings(df, window=2)
     structure, _, _ = get_market_structure(df, lookback=30)
     if structure == "NEUTRAL":
-        logger.info(f"🛑 Pro {pair}: Structure NEUTRAL")
-        return None
+        # Allow NEUTRAL if we have at least some swing points
+        recent_swings = df.tail(30)
+        sh_count = len(recent_swings[recent_swings['is_swing_high']])
+        sl_count = len(recent_swings[recent_swings['is_swing_low']])
+        if sh_count < 1 or sl_count < 1:
+            logger.info(f"🛑 Pro {pair}: Structure NEUTRAL ولا يوجد قمم/قيعان")
+            return None
+        logger.info(f"ℹ️ Pro {pair}: Structure NEUTRAL لكن يوجد {sh_count} قمة و {sl_count} قاع — مستمر")
     
     recent = df.tail(30)
     highs = recent[recent['is_swing_high']]['High'].values
@@ -3594,7 +3599,7 @@ def analyze_pair_pro(pair, timeframe="5m"):
                 score += 5
                 factors.append("Sweep")
     
-    if direction is None or score < 75:
+    if direction is None or score < 60:
         logger.info(f"🛑 Pro {pair}: Score={score} < 75 أو لا يوجد اتجاه")
         return None
     
