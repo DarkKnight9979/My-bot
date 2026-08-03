@@ -10,7 +10,7 @@ import pytz
 import traceback
 import json
 import queue
-from datetime import datetime
+from datetime, timedelta import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
 from flask import Flask
 from iqoptionapi.stable_api import IQ_Option
@@ -91,8 +91,8 @@ def get_pair_thresholds(pair):
 
 # ========== QUANTUM CONFIGURATION ==========
 QUANTUM_CONFIG = {
-    "min_score_live": 75,
-    "min_score_otc": 70,
+    "min_score_live": 70,
+    "min_score_otc": 65,
     "cooldown": 300,
     "weights": {
         "structure": 20,
@@ -119,7 +119,7 @@ QUANTUM_CONFIG = {
         "ideal_high": 0.005,
         "score_bonus": 5,
         "score_penalty": 10,
-        "reject_low": 0.0001,
+        "reject_low": 0.00005,
         "reject_high": 0.012
     }
 }
@@ -275,7 +275,7 @@ API = None
 
 # ========== TIME FUNCTIONS ==========
 def get_cairo_time():
-    return datetime.now(CAIRO_TZ)
+    return datetime.now(pytz.utc) + timedelta(hours=3)
 
 def get_iq_time():
     with data_lock:
@@ -2764,7 +2764,7 @@ def evaluate_signal_strength_enhanced(direction, curr, prev, df, price, alma9, a
     elif adx >= 20:
         score += w["adx"] * 0.5
         reasons.append("ADX OK")
-    elif adx < 15:
+    elif adx < 12:
         return 0, []  # رفض مباشر
     
     # فلاتر إضافية صارمة
@@ -2938,7 +2938,7 @@ def analyze_pair(pair, timeframe="5m"):
         if rng == 0:
             return None
         body_pct = body / rng
-        if body_pct < 0.50:
+        if body_pct < 0.45:
             if pending:
                 send_cancelled_alert(pair, potential_direction, f"شمعة ضعيفة ({body_pct:.1%})", 'original')
             with data_lock:
@@ -2990,7 +2990,7 @@ def analyze_pair(pair, timeframe="5m"):
                     'stoch_aligned': stoch_k > stoch_d if potential_direction == "CALL" else stoch_k < stoch_d,
                     'rsi_zone': (28 <= rsi <= 65) if potential_direction == "CALL" else (35 <= rsi <= 72),
                     'near_sr': near_sup if potential_direction == "CALL" else near_res,
-                    'volume_ok': volume >= vol_ma * 1.8,
+                    'volume_ok': volume >= vol_ma * 1.5,
                     'adx_ok': adx >= 20,
                     'bbw_ok': bbw >= 0.001,
                     'atr_ok': atr >= (price * 0.00025),
@@ -3084,7 +3084,7 @@ def analyze_pair_king(pair, timeframe="5m"):
 
     sweep_ok, sweep_level = detect_liquidity_sweep(df, potential_direction, sweep_threshold=sweep_threshold)
     if not sweep_ok:
-        if adx < 15:
+        if adx < 12:
             logger.info(f"🛑 King {pair}: لا يوجد Sweep و ADX={adx:.1f} < 20")
             return None
         else:
@@ -3094,7 +3094,7 @@ def analyze_pair_king(pair, timeframe="5m"):
     momentum_ok = (potential_direction == "CALL" and roc > 0) or (potential_direction == "PUT" and roc < 0)
     volatility_ok = (atr_avg * 0.8 <= atr <= atr_avg * 2.0) if atr_avg > 0 else False
     
-    min_atr = price * 0.0003
+    min_atr = price * 0.0002
     if atr < min_atr:
         logger.info(f"🛑 King {pair}: ATR={atr:.5f} < {min_atr:.5f}")
         return None
@@ -3112,7 +3112,7 @@ def analyze_pair_king(pair, timeframe="5m"):
         stoch_ok = stoch_k < stoch_d
 
     candle_ok, body_pct = check_king_candle_quality(curr)
-    if body_pct < 0.50:
+    if body_pct < 0.45:
         logger.info(f"🛑 King {pair}: body_pct < 0.45")
         return None
 
