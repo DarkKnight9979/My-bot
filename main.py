@@ -91,8 +91,8 @@ def get_pair_thresholds(pair):
 
 # ========== QUANTUM CONFIGURATION ==========
 QUANTUM_CONFIG = {
-    "min_score_live": 70,
-    "min_score_otc": 65,
+    "min_score_live": 75,
+    "min_score_otc": 70,
     "cooldown": 300,
     "weights": {
         "structure": 20,
@@ -119,7 +119,7 @@ QUANTUM_CONFIG = {
         "ideal_high": 0.005,
         "score_bonus": 5,
         "score_penalty": 10,
-        "reject_low": 0.00001,
+        "reject_low": 0.0001,
         "reject_high": 0.012
     }
 }
@@ -803,7 +803,7 @@ def send_final_signal(pair, direction, signal_name, score, duration_text, indica
         f"الزوج: `{pair}` (IQ Option) [5 دقائق]\n"
         f"الاتجاه: *{da}*\n"
         f"⏱️ *المدة:* {duration_text}\n"
-        f"📊 *المؤشرات:* {indicators}\n"
+        f"📊 *النقاط:* *{score}/100*\n"
         f"🕐 *الوقت:* {time_quality}\n"
         f"📍 *حالة السوق:* {regime_badge}\n"
         f"⚡ *ادخل الآن في الشمعة القادمة!*"
@@ -3051,7 +3051,7 @@ def analyze_pair_king(pair, timeframe="5m"):
     
     if structure == "NEUTRAL":
         adx_check, _, _ = calculate_adx(df, 14)
-        if adx_check < 12:
+        if adx_check < 15:
             logger.info(f"🛑 King {pair}: NEUTRAL و ADX={adx_check:.1f} < 20")
             return None
         else:
@@ -3084,7 +3084,7 @@ def analyze_pair_king(pair, timeframe="5m"):
 
     sweep_ok, sweep_level = detect_liquidity_sweep(df, potential_direction, sweep_threshold=sweep_threshold)
     if not sweep_ok:
-        if adx < 12:
+        if adx < 15:
             logger.info(f"🛑 King {pair}: لا يوجد Sweep و ADX={adx:.1f} < 20")
             return None
         else:
@@ -3112,7 +3112,7 @@ def analyze_pair_king(pair, timeframe="5m"):
         stoch_ok = stoch_k < stoch_d
 
     candle_ok, body_pct = check_king_candle_quality(curr)
-    if body_pct < 0.45:
+    if body_pct < 0.50:
         logger.info(f"🛑 King {pair}: body_pct < 0.45")
         return None
 
@@ -3370,7 +3370,7 @@ def analyze_pair_smc(pair, timeframe="5m"):
     if (bias == "CALL" and 30 <= rsi <= 50) or (bias == "PUT" and 50 <= rsi <= 70):
         score += 10; conf.append("RSI")
 
-    if score < 65:
+    if score < 70:
         logger.info(f"🛑 SMC {pair}: Score={score} < 80")
         return None
 
@@ -3599,7 +3599,7 @@ def analyze_pair_pro(pair, timeframe="5m"):
                 score += 5
                 factors.append("Sweep")
     
-    if direction is None or score < 60:
+    if direction is None or score < 65:
         logger.info(f"🛑 Pro {pair}: Score={score} < 75 أو لا يوجد اتجاه")
         return None
     
