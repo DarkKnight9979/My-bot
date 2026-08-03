@@ -350,6 +350,8 @@ DEFAULT_KING_WEIGHTS = {
 WEIGHTS_FILE = "king_weights.json"
 
 def load_king_weights():
+    if not os.path.exists(WEIGHTS_FILE):
+        return DEFAULT_KING_WEIGHTS.copy()
     try:
         with open(WEIGHTS_FILE, 'r', encoding='utf-8') as f:
             data = json.load(f)
@@ -386,20 +388,21 @@ def load_settings(market_type="live"):
         "walk_forward_wr": 0,
         "baseline_wr": 0
     }
+    if not os.path.exists(file_path):
+        return default.copy()
     try:
-        if os.path.exists(file_path):
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read().strip()
-            if not content:
-                with open(file_path, 'w', encoding='utf-8') as f:
-                    json.dump(default, f)
-                return default.copy()
-            data = json.loads(content)
-            if isinstance(data, dict):
-                for key in default:
-                    if key not in data:
-                        data[key] = default[key]
-                return data
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read().strip()
+        if not content:
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(default, f)
+            return default.copy()
+        data = json.loads(content)
+        if isinstance(data, dict):
+            for key in default:
+                if key not in data:
+                    data[key] = default[key]
+            return data
     except Exception as e:
         logger.warning(f"⚠️ فشل تحميل إعدادات {market_type}: {e}")
         try:
@@ -1372,6 +1375,8 @@ def handle_optimization_reply(reply_text):
 WALK_FORWARD_FILE = "walk_forward_state.json"
 
 def load_walk_forward_state():
+    if not os.path.exists(WALK_FORWARD_FILE):
+        return {}
     try:
         with data_lock:
             with open(WALK_FORWARD_FILE, 'r', encoding='utf-8') as f:
