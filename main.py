@@ -1207,8 +1207,6 @@ def generate_daily_sheet(trades):
     stats = {}
     for strategy in strategies:
         st_trades = [t for t in today_trades if t.get("strategy") == strategy]
-        if not st_trades:
-            continue
 
         wins = sum(1 for t in st_trades if t.get("outcome") == "win")
         losses = sum(1 for t in st_trades if t.get("outcome") == "loss")
