@@ -10,7 +10,7 @@ import pytz
 import traceback
 import json
 import queue
-from datetime, timedelta import datetime, timedelta
+from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
 from flask import Flask
 from iqoptionapi.stable_api import IQ_Option
