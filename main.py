@@ -634,30 +634,15 @@ def get_kalman(pair):
         kalman_instances[pair] = KalmanFilter(q=0.001, r=0.05)
     return kalman_instances[pair]
 
-def get_regime_badge(strategy_name, regime, htf_data=None):
+def get_regime_badge(strategy_name, regime, htf_data=None, indicator_counts=None):
     """
-    إرجاع شارة حالة السوق مع عرض المؤشرات المحسّنة (Supertrend + MACD + EMA)
+    إرجاع شارة حالة السوق مع عرض المؤشرات المحسّنة (Supertrend + MACD + EMA + ALMA)
     """
-    # بناء نص المؤشرات المحسّنة لو متاحة
     enhancers = ""
-    if htf_data and isinstance(htf_data, dict):
-        st = htf_data.get("supertrend")
-        macd = htf_data.get("macd")
-        ema = htf_data.get("ema_alignment")
-        strength = htf_data.get("trend_strength", "")
-
-        parts = []
-        if st:
-            parts.append(f"ST:{st}")
-        if macd:
-            parts.append(f"MACD:{macd}")
-        if ema:
-            parts.append(f"EMA:{ema}")
-        if strength:
-            parts.append(f"قوة:{strength}")
-
-        if parts:
-            enhancers = " (" + " | ".join(parts) + ")"
+    if indicator_counts and isinstance(indicator_counts, dict):
+        htf = indicator_counts.get("1H", {})
+        ltf = indicator_counts.get("5m", {})
+        enhancers = f"\n📊 [1H]: {htf.get('CALL',0)}↑ / {htf.get('PUT',0)}↓ / {htf.get('NEUTRAL',0)}! / [5m]: {ltf.get('CALL',0)}↑ / {ltf.get('PUT',0)}↓ / {ltf.get('NEUTRAL',0)}!"
 
     badges = {
         'original': {
@@ -758,11 +743,10 @@ def get_time_quality(strategy_name):
     return "⏳ وقت عادي"
 
 # ====== تم التعديل هنا: إضافة htf_data=None ======
-def send_early_alert(pair, direction, signal_name, score, strategy_name, regime="unknown", htf_data=None):
+def send_early_alert(pair, direction, signal_name, score, strategy_name, regime="unknown", htf_data=None, indicator_counts=None):
     da = "صعود (CALL)" if direction == "CALL" else "هبوط (PUT)"
     time_quality = get_time_quality(strategy_name)
-    # ====== تم التعديل هنا: تمرير htf_data لـ get_regime_badge ======
-    regime_badge = get_regime_badge(strategy_name, regime, htf_data)
+    regime_badge = get_regime_badge(strategy_name, regime, htf_data, indicator_counts)
     msg = (
         f"⚠️ *تنبيه مبكر — {signal_name}*\n"
         f"الزوج: `{pair}` [5 دقائق]\n"
@@ -787,10 +771,10 @@ def send_cancelled_alert(pair, direction, reason, strategy_name):
     )
     send_telegram_message(msg)
 
-def send_final_signal(pair, direction, signal_name, score, duration_text, indicators, strategy_name, regime="unknown", signal_level=None, htf_data=None):
+def send_final_signal(pair, direction, signal_name, score, duration_text, indicators, strategy_name, regime="unknown", signal_level=None, htf_data=None, indicator_counts=None):
     da = "صعود (CALL)" if direction == "CALL" else "هبوط (PUT)"
     time_quality = get_time_quality(strategy_name)
-    regime_badge = get_regime_badge(strategy_name, regime, htf_data)
+    regime_badge = get_regime_badge(strategy_name, regime, htf_data, indicator_counts)
     
     msg_hash = f"{pair}_{direction}_{strategy_name}_{int(get_iq_time()) // 300}"
     with data_lock:
@@ -2539,8 +2523,9 @@ def analyze_pair_quantum(pair, timeframe="5m"):
                     'strategy': 'quantum'
                 }
 
+                indicator_counts = get_indicator_counts(pair, df)
                 time_quality = get_time_quality('quantum')
-                regime_badge = get_regime_badge('quantum', regime)
+                regime_badge = get_regime_badge('quantum', regime, None, indicator_counts)
                 vol_emoji = vol_filter.get('emoji', '📊')
                 vol_status = vol_filter['reason']
 
@@ -2594,8 +2579,9 @@ def analyze_pair_quantum(pair, timeframe="5m"):
             if pending_key in state.pending_alerts:
                 del state.pending_alerts[pending_key]
 
+        indicator_counts = get_indicator_counts(pair, df)
         time_quality = get_time_quality('quantum')
-        regime_badge = get_regime_badge('quantum', regime)
+        regime_badge = get_regime_badge('quantum', regime, None, indicator_counts)
         
         kalman_info = f"Kalman: {smoothed_price:.5f}"
         vol_emoji = vol_filter.get('emoji', '📊')
@@ -2915,8 +2901,9 @@ def analyze_pair(pair, timeframe="5m"):
                     'alert_time': iq_now,
                     'strategy': 'original'
                 }
+                indicator_counts = get_indicator_counts(pair, df)
                 htf_data = get_htf_market_regime(pair)
-                send_early_alert(pair, potential_direction, signal_name_ar, strength * 16, 'original', regime=regime, htf_data=htf_data)
+                send_early_alert(pair, potential_direction, signal_name_ar, strength * 16, 'original', regime=regime, htf_data=htf_data, indicator_counts=indicator_counts)
                 state.alerted_pairs[pair] = (potential_direction, iq_now)
         return None
 
@@ -2978,10 +2965,11 @@ def analyze_pair(pair, timeframe="5m"):
                     del state.pending_alerts[pair]
 
             indicators_str = f"ADX={adx:.1f} | BBW={bbw:.4f} | RSI={rsi:.1f} | Reasons: {', '.join(reasons[:3])}"
+            indicator_counts = get_indicator_counts(pair, df)
             htf_data = get_htf_market_regime(pair)
             final_signal = send_final_signal(
                 pair, potential_direction, signal_name_ar, strength * 16,
-                duration_text, indicators_str, 'original', regime=regime, signal_level=strength, htf_data=htf_data
+                duration_text, indicators_str, 'original', regime=regime, signal_level=strength, htf_data=htf_data, indicator_counts=indicator_counts
             )
 
             if final_signal is None:
@@ -3178,8 +3166,9 @@ def analyze_pair_king(pair, timeframe="5m"):
                     'alert_time': iq_now,
                     'strategy': 'king'
                 }
+                indicator_counts = get_indicator_counts(pair, df)
                 htf_data = get_htf_market_regime(pair)
-                send_early_alert(pair, potential_direction, signal_name_ar, score, 'king', regime=regime, htf_data=htf_data)
+                send_early_alert(pair, potential_direction, signal_name_ar, score, 'king', regime=regime, htf_data=htf_data, indicator_counts=indicator_counts)
                 state.king_alerted_pairs[pair_key] = (potential_direction, iq_now)
         return None
 
@@ -3242,11 +3231,12 @@ def analyze_pair_king(pair, timeframe="5m"):
                 logger.info(f"🛑 King {pair}: مكررة")
                 return None
 
+            indicator_counts = get_indicator_counts(pair, df)
             indicators_str = f"Score={score}/100 | ADX={adx:.1f} | RSI={rsi:.1f}"
             htf_data = get_htf_market_regime(pair)
             final_signal = send_final_signal(
                 pair, potential_direction, signal_name_ar, score,
-                duration_text, indicators_str, 'king', regime=regime, htf_data=htf_data
+                duration_text, indicators_str, 'king', regime=regime, htf_data=htf_data, indicator_counts=indicator_counts
             )
             
             if final_signal is None:
@@ -3415,8 +3405,9 @@ def analyze_pair_smc(pair, timeframe="5m"):
                     'alert_time': iq_now,
                     'strategy': 'smart'
                 }
+                indicator_counts = get_indicator_counts(pair, df)
                 htf_data = get_htf_market_regime(pair)
-                send_early_alert(pair, bias, name, score, 'smart', regime=regime, htf_data=htf_data)
+                send_early_alert(pair, bias, name, score, 'smart', regime=regime, htf_data=htf_data, indicator_counts=indicator_counts)
                 state.smart_alerted_pairs[pair_key] = iq_now
         return None
 
@@ -3491,11 +3482,12 @@ def analyze_pair_smc(pair, timeframe="5m"):
             return None
 
         conf_str = ', '.join(conf)
+        indicator_counts = get_indicator_counts(pair, df)
         indicators_str = f"Score={score}/100 | Factors: {conf_str}"
         htf_data = get_htf_market_regime(pair)
         final_signal = send_final_signal(
             pair, bias, name, score,
-            duration_text, indicators_str, 'smart', regime=regime, htf_data=htf_data
+            duration_text, indicators_str, 'smart', regime=regime, htf_data=htf_data, indicator_counts=indicator_counts
         )
         
         if final_signal is None:
@@ -3637,8 +3629,9 @@ def analyze_pair_pro(pair, timeframe="5m"):
                     'alert_time': iq_now,
                     'strategy': 'pro'
                 }
+                indicator_counts = get_indicator_counts(pair, df)
                 htf_data = get_htf_market_regime(pair)
-                send_early_alert(pair, direction, name_ar, score, 'pro', regime=regime, htf_data=htf_data)
+                send_early_alert(pair, direction, name_ar, score, 'pro', regime=regime, htf_data=htf_data, indicator_counts=indicator_counts)
                 state.pa_alerted_pairs[pair] = iq_now
         return None
     
@@ -3706,12 +3699,13 @@ def analyze_pair_pro(pair, timeframe="5m"):
             logger.info(f"🛑 Pro {pair}: مكررة")
             return None
     
+        indicator_counts = get_indicator_counts(pair, df)
         factors_str = ' | '.join(factors)
         indicators_str = f"Score={score}/100 | {factors_str}"
         htf_data = get_htf_market_regime(pair)
         final_signal = send_final_signal(
             pair, direction, name_ar, score,
-            duration_text, indicators_str, 'pro', regime=regime, htf_data=htf_data
+            duration_text, indicators_str, 'pro', regime=regime, htf_data=htf_data, indicator_counts=indicator_counts
         )
         
         if final_signal is None:
@@ -4174,6 +4168,103 @@ def get_ema_alignment(df):
         return "PUT", 0.6
     else:
         return None, 0.0
+
+def calculate_indicator_votes_for_df(df):
+    """حساب أصوات المؤشرات الأربعة: Supertrend, MACD, EMA, ALMA"""
+    votes = {"CALL": 0, "PUT": 0, "NEUTRAL": 0}
+    if df is None or len(df) < 10:
+        return votes
+
+    curr = df.iloc[-1]
+    prev = df.iloc[-2] if len(df) > 1 else curr
+
+    # 1. Supertrend
+    try:
+        st_line, st_dir = calculate_supertrend(df, period=10, multiplier=3)
+        if st_dir.iloc[-1] == 1:
+            votes["CALL"] += 1
+        elif st_dir.iloc[-1] == -1:
+            votes["PUT"] += 1
+        else:
+            votes["NEUTRAL"] += 1
+    except Exception:
+        votes["NEUTRAL"] += 1
+
+    # 2. MACD
+    try:
+        macd_line, signal_line, histogram = calculate_macd(df['Close'])
+        if macd_line.iloc[-1] > signal_line.iloc[-1]:
+            votes["CALL"] += 1
+        else:
+            votes["PUT"] += 1
+    except Exception:
+        votes["NEUTRAL"] += 1
+
+    # 3. EMA Alignment
+    try:
+        ema_trend, _ = get_ema_alignment(df)
+        if ema_trend == "CALL":
+            votes["CALL"] += 1
+        elif ema_trend == "PUT":
+            votes["PUT"] += 1
+        else:
+            votes["NEUTRAL"] += 1
+    except Exception:
+        votes["NEUTRAL"] += 1
+
+    # 4. ALMA Trend
+    try:
+        if 'ALMA_9' not in df.columns:
+            df['ALMA_9'] = calculate_alma(df['Close'], 9, 0.85, 6)
+        if 'ALMA_50' not in df.columns:
+            df['ALMA_50'] = calculate_alma(df['Close'], 50, 0.85, 6)
+        a9c = df['ALMA_9'].iloc[-1]
+        a50c = df['ALMA_50'].iloc[-1]
+        a9p = df['ALMA_9'].iloc[-2] if len(df) > 1 else a9c
+        a50p = df['ALMA_50'].iloc[-2] if len(df) > 1 else a50c
+
+        if a9c > a50c and a9p > a50p:
+            votes["CALL"] += 1
+        elif a9c < a50c and a9p < a50p:
+            votes["PUT"] += 1
+        else:
+            votes["NEUTRAL"] += 1
+    except Exception:
+        votes["NEUTRAL"] += 1
+
+    return votes
+
+
+def get_indicator_counts(pair, df_5m=None):
+    """جمع أصوات المؤشرات من 1H و 5m"""
+    counts = {"1H": {"CALL": 0, "PUT": 0, "NEUTRAL": 0}, "5m": {"CALL": 0, "PUT": 0, "NEUTRAL": 0}}
+
+    # 1H
+    try:
+        candles_1h = get_cached_candles(pair, TIMEFRAME_1H, 80, max_age=300)
+        if candles_1h and len(candles_1h) >= 50:
+            df_h = pd.DataFrame(candles_1h)
+            df_h.rename(columns={'open':'Open','max':'High','min':'Low','close':'Close','volume':'Volume'}, inplace=True)
+            counts["1H"] = calculate_indicator_votes_for_df(df_h)
+    except Exception:
+        pass
+
+    # 5m
+    try:
+        if df_5m is not None and len(df_5m) >= 10:
+            counts["5m"] = calculate_indicator_votes_for_df(df_5m.copy())
+        else:
+            candles_5m = get_cached_candles(pair, TIMEFRAME_5M, 80, max_age=300)
+            if candles_5m and len(candles_5m) >= 50:
+                df_5m_new = pd.DataFrame(candles_5m)
+                df_5m_new.rename(columns={'open':'Open','max':'High','min':'Low','close':'Close','volume':'Volume'}, inplace=True)
+                counts["5m"] = calculate_indicator_votes_for_df(df_5m_new)
+    except Exception:
+        pass
+
+    return counts
+
+
 
 def detect_swings(df, window=2):
     df = df.copy()
