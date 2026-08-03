@@ -527,6 +527,16 @@ def telegram_reply_worker():
                         text = message.get("text", "").strip()
                         if not text:
                             continue
+                        # ===== REPORT COMMAND =====
+                        if text.lower() == "/report":
+                            trades = read_trade_log(max_entries=10000)
+                            report, error = generate_daily_sheet(trades)
+                            if error:
+                                _send_telegram_raw(f"📊 *{error}*")
+                            else:
+                                _send_telegram_raw(format_daily_sheet(report))
+                            continue
+
                         # ===== QUANTUM COMMANDS =====
                         if text.startswith("/quantum"):
                             response = handle_quantum_command(text)
@@ -1165,6 +1175,118 @@ def format_report_message(report):
         msg += f"\n⚖️ *معايرة الثقة:*\n"
         for bucket, cdata in report["calibration"].items():
             msg += f"  {bucket}: {cdata['status']} (فعلي: {cdata['actual_wr']}% vs متوقع: {cdata['expected_wr']}%)\n"
+    return msg
+
+
+# ========== DAILY SHEET REPORT ==========
+
+def generate_daily_sheet(trades):
+    """توليد شيت النتائج اليومية مجمعة حسب الاستراتيجية"""
+    if not trades:
+        return None, "لا توجد صفقات مسجلة"
+
+    # تصفية صفقات اليوم فقط (آخر 24 ساعة)
+    now = get_iq_time()
+    today_trades = [t for t in trades if now - t.get("timestamp", 0) <= 86400]
+
+    if not today_trades:
+        return None, "لا توجد صفقات اليوم"
+
+    strategies = ["original", "king", "smart", "pro", "quantum"]
+    strategy_names = {
+        "original": "الأصلية",
+        "king": "👑 King",
+        "smart": "🏆 SMC",
+        "pro": "🔥 Pro", 
+        "quantum": "🧠 Quantum"
+    }
+
+    stats = {}
+    for strategy in strategies:
+        st_trades = [t for t in today_trades if t.get("strategy") == strategy]
+        if not st_trades:
+            continue
+
+        wins = sum(1 for t in st_trades if t.get("outcome") == "win")
+        losses = sum(1 for t in st_trades if t.get("outcome") == "loss")
+        ties = sum(1 for t in st_trades if t.get("outcome") == "tie")
+        total = len(st_trades)
+
+        stats[strategy] = {
+            "name": strategy_names.get(strategy, strategy),
+            "total": total,
+            "wins": wins,
+            "losses": losses,
+            "ties": ties,
+            "wr": round((wins / total * 100), 1) if total > 0 else 0
+        }
+
+    if not stats:
+        return None, "لا توجد صفقات باستراتيجيات معروفة اليوم"
+
+    total_all = sum(s["total"] for s in stats.values())
+    total_wins = sum(s["wins"] for s in stats.values())
+    total_losses = sum(s["losses"] for s in stats.values())
+    total_ties = sum(s["ties"] for s in stats.values())
+    total_wr = round((total_wins / total_all * 100), 1) if total_all > 0 else 0
+
+    return {
+        "strategies": stats,
+        "total": total_all,
+        "wins": total_wins,
+        "losses": total_losses,
+        "ties": total_ties,
+        "wr": total_wr,
+        "date": datetime.now(CAIRO_TZ).strftime('%d/%m/%Y')
+    }, None
+
+
+def format_daily_sheet(report):
+    """تنسيق شيت النتائج اليومية كرسالة تليجرام"""
+    if not report:
+        return "📊 *لا توجد بيانات للتقرير اليومي*"
+
+    msg = (
+        f"📋 *شيت نتائج اليوم — {report['date']}*
+"
+        f"━━━━━━━━━━━━━━━━━━━━
+
+"
+    )
+
+    for strategy, data in report["strategies"].items():
+        msg += (
+            f"*{data['name']}*
+"
+            f"  📊 إجمالي: `{data['total']}`  "
+            f"✅ رابحة: `{data['wins']}`  "
+            f"❌ خاسرة: `{data['losses']}`  "
+            f"➖ تعادل: `{data['ties']}`
+"
+            f"  🎯 نسبة الربح: `{data['wr']}%`
+
+"
+        )
+
+    msg += (
+        f"━━━━━━━━━━━━━━━━━━━━
+"
+        f"📈 *الإجمالي الكلي لليوم*
+
+"
+        f"  📊 إجمالي الصفقات: `{report['total']}`
+"
+        f"  ✅ إجمالي رابحة: `{report['wins']}`
+"
+        f"  ❌ إجمالي خاسرة: `{report['losses']}`
+"
+        f"  ➖ إجمالي تعادل: `{report['ties']}`
+"
+        f"  🎯 نسبة الربح الإجمالية: `{report['wr']}%`
+"
+        f"━━━━━━━━━━━━━━━━━━━━"
+    )
+
     return msg
 
 # ========== OPTIMIZATION PROPOSAL ==========
@@ -4133,6 +4255,10 @@ def get_king_htf_trend(pair):
 
 # ========== TRADE RESULTS CHECK ==========
 
+def check_tie(ep, fp):
+    """التعادل: سعر الدخول يساوي سعر الخروج بالضبط"""
+    return float(ep) == float(fp)
+
 def check_trade_results():
     current_time = get_iq_time()
     trades_to_remove = []
@@ -4189,12 +4315,11 @@ def check_trade_results():
                     "CurrentTime:" + str(current_time)
                 )
 
+                is_tie = check_tie(ep, fp)
                 if direction == "CALL":
-                    is_win = fp > ep
-                    is_tie = abs(fp - ep) < (ep * 0.00005)
+                    is_win = fp > ep and not is_tie
                 else:
-                    is_win = fp < ep
-                    is_tie = abs(fp - ep) < (ep * 0.00005)
+                    is_win = fp < ep and not is_tie
 
                 diff_pct = abs(fp - ep) / ep * 100 if ep != 0 else 0
                 logger.info(
