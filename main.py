@@ -757,10 +757,12 @@ def get_time_quality(strategy_name):
     
     return "⏳ وقت عادي"
 
-def send_early_alert(pair, direction, signal_name, score, strategy_name, regime="unknown"):
+# ====== تم التعديل هنا: إضافة htf_data=None ======
+def send_early_alert(pair, direction, signal_name, score, strategy_name, regime="unknown", htf_data=None):
     da = "صعود (CALL)" if direction == "CALL" else "هبوط (PUT)"
     time_quality = get_time_quality(strategy_name)
-    regime_badge = get_regime_badge(strategy_name, regime)
+    # ====== تم التعديل هنا: تمرير htf_data لـ get_regime_badge ======
+    regime_badge = get_regime_badge(strategy_name, regime, htf_data)
     msg = (
         f"⚠️ *تنبيه مبكر — {signal_name}*\n"
         f"الزوج: `{pair}` [5 دقائق]\n"
