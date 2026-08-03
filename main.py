@@ -1246,46 +1246,25 @@ def format_daily_sheet(report):
     if not report:
         return "📊 *لا توجد بيانات للتقرير اليومي*"
 
-    msg = (
-        f"📋 *شيت نتائج اليوم — {report['date']}*
-"
-        f"━━━━━━━━━━━━━━━━━━━━
-
-"
-    )
+    msg = "📋 *شيت نتائج اليوم — " + report['date'] + "*\n"
+    msg += "━━━━━━━━━━━━━━━━━━━━\n\n"
 
     for strategy, data in report["strategies"].items():
-        msg += (
-            f"*{data['name']}*
-"
-            f"  📊 إجمالي: `{data['total']}`  "
-            f"✅ رابحة: `{data['wins']}`  "
-            f"❌ خاسرة: `{data['losses']}`  "
-            f"➖ تعادل: `{data['ties']}`
-"
-            f"  🎯 نسبة الربح: `{data['wr']}%`
+        msg += "*" + data['name'] + "*\n"
+        msg += "  📊 إجمالي: `" + str(data['total']) + "`  "
+        msg += "✅ رابحة: `" + str(data['wins']) + "`  "
+        msg += "❌ خاسرة: `" + str(data['losses']) + "`  "
+        msg += "➖ تعادل: `" + str(data['ties']) + "`\n"
+        msg += "  🎯 نسبة الربح: `" + str(data['wr']) + "%`\n\n"
 
-"
-        )
-
-    msg += (
-        f"━━━━━━━━━━━━━━━━━━━━
-"
-        f"📈 *الإجمالي الكلي لليوم*
-
-"
-        f"  📊 إجمالي الصفقات: `{report['total']}`
-"
-        f"  ✅ إجمالي رابحة: `{report['wins']}`
-"
-        f"  ❌ إجمالي خاسرة: `{report['losses']}`
-"
-        f"  ➖ إجمالي تعادل: `{report['ties']}`
-"
-        f"  🎯 نسبة الربح الإجمالية: `{report['wr']}%`
-"
-        f"━━━━━━━━━━━━━━━━━━━━"
-    )
+    msg += "━━━━━━━━━━━━━━━━━━━━\n"
+    msg += "📈 *الإجمالي الكلي لليوم*\n\n"
+    msg += "  📊 إجمالي الصفقات: `" + str(report['total']) + "`\n"
+    msg += "  ✅ إجمالي رابحة: `" + str(report['wins']) + "`\n"
+    msg += "  ❌ إجمالي خاسرة: `" + str(report['losses']) + "`\n"
+    msg += "  ➖ إجمالي تعادل: `" + str(report['ties']) + "`\n"
+    msg += "  🎯 نسبة الربح الإجمالية: `" + str(report['wr']) + "%`\n"
+    msg += "━━━━━━━━━━━━━━━━━━━━"
 
     return msg
 
