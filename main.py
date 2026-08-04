@@ -52,6 +52,25 @@ ADAPTIVE_THRESHOLD_MIN = 65
 ADAPTIVE_THRESHOLD_MAX = 100
 SETTINGS_CACHE_TTL = 300
 
+# ========== SCORE CONFIGURATION ==========
+MIN_SCORE_ALL_STRATEGIES = 80
+
+SCORE_LEVELS = {
+    1: (80, 84),
+    2: (85, 89),
+    3: (90, 94),
+    4: (95, 100)
+}
+
+# ========== REGIME ASSIGNMENT ==========
+STRATEGY_REGIMES = {
+    'original': ['trending', 'high_vol'],
+    'king': ['trending', 'high_vol'],
+    'quantum': ['trending', 'high_vol'],
+    'smart': ['high_vol'],
+    'pro': ['ranging', 'mixed']
+}
+
 # ========== HTF & PAIR-SPECIFIC CONFIGURATION ==========
 TIMEFRAME_4H = 14400
 HTF_REGIME_CACHE_TTL = 900
@@ -700,6 +719,19 @@ CURRENCY_PAIRS = {
 }
 
 # ========== FUNCIONES DE ALERTAS EN ÁRABE ==========
+
+def get_signal_level(score):
+    """تقسيم موحد للمستويات"""
+    if score >= 95: return 4
+    elif score >= 90: return 3
+    elif score >= 85: return 2
+    elif score >= 80: return 1
+    return 0
+
+def check_regime_for_strategy(strategy_name, regime):
+    """كل استراتيجية تشتغل في سوقها بس"""
+    allowed = STRATEGY_REGIMES.get(strategy_name, ['trending'])
+    return regime in allowed
 
 def get_time_quality(strategy_name):
     now = get_cairo_time()
