@@ -2544,7 +2544,7 @@ def analyze_pair_quantum(pair, timeframe="5m"):
         return None
 
     # ===== المرحلة 1: تنبيه مبكر (270-280) =====
-    if 270 <= csec <= 280:
+    if 250 <= csec <= 280:
         with data_lock:
             # ===== التعديل: استخدام pair_key بدلاً من pair فقط =====
             if pair_key not in state.quantum_alerted_pairs:
@@ -2649,12 +2649,14 @@ def analyze_pair_quantum(pair, timeframe="5m"):
                 'fvg': fvg is not None,
                 'volume': volume,
                 'momentum': momentum is not None,
-                'volatility_ok': vol_filter['can_enter']
+                'volatility_ok': vol_filter['can_enter'],
+                'regime_penalty': regime_penalty
             },
             indicators={
                 'score': final_score,
                 'original_score': result['score'],
                 'score_adjust': vol_filter['score_adjust'],
+                'regime_penalty': regime_penalty,
                 'reasons': result['reasons'],
                 'market': regime,
                 'structure': str(structure) if structure else 'None',
@@ -2935,9 +2937,8 @@ def analyze_pair(pair, timeframe="5m"):
     pair_key = f"original_{pair}_{candle_start}"
     pending_key = f"original_{pair}_{candle_start}"
 
-    if 270 <= csec <= 280:
+    if 250 <= csec <= 280:
         with data_lock:
-            # ===== التعديل: استخدام pair_key بدلاً من pair فقط =====
             if pair_key not in state.alerted_pairs:
                 state.pending_alerts[pending_key] = {
                     'direction': potential_direction,
@@ -2987,7 +2988,7 @@ def analyze_pair(pair, timeframe="5m"):
         if rng == 0:
             return None
         body_pct = body / rng
-        if body_pct < 0.45:
+        if body_pct < 0.40:
             if pending:
                 send_cancelled_alert(pair, potential_direction, f"شمعة ضعيفة ({body_pct:.1%})", 'original')
             with data_lock:
@@ -3038,20 +3039,24 @@ def analyze_pair(pair, timeframe="5m"):
                     'alma_cross': (a9p <= a50p and a9c > a50c) if potential_direction == "CALL" else (a9p >= a50p and a9c < a50c),
                     'price_above_alma': price > alma9 if potential_direction == "CALL" else price < alma9,
                     'stoch_aligned': stoch_k > stoch_d if potential_direction == "CALL" else stoch_k < stoch_d,
-                    'rsi_zone': (28 <= rsi <= 65) if potential_direction == "CALL" else (35 <= rsi <= 72),
+                    'rsi_zone': (28 <= rsi <= 68) if potential_direction == "CALL" else (32 <= rsi <= 72),
                     'near_sr': near_sup if potential_direction == "CALL" else near_res,
-                    'volume_ok': volume >= vol_ma * 1.5,
-                    'adx_ok': adx >= 20,
-                    'bbw_ok': bbw >= 0.001,
-                    'atr_ok': atr >= (price * 0.00025),
-                    'structure_ok': structure in ["BULLISH", "BEARISH"]
+                    'volume_ok': volume >= vol_ma * 0.9,
+                    'adx_ok': adx >= 15,
+                    'bbw_ok': bbw >= 0.0007,
+                    'atr_ok': atr >= (price * 0.00020),
+                    'structure_ok': structure in ["BULLISH", "BEARISH"],
+                    'regime_penalty': regime_penalty,
+                    'htf_penalty': htf_penalty
                 },
                 indicators={
                     'adx': float(adx), 'rsi': float(rsi), 'bbw': float(bbw),
                     'atr': float(atr), 'roc': float(roc),
                     'stoch_k': float(stoch_k), 'stoch_d': float(stoch_d),
                     'structure': str(structure) if structure else 'None',
-                    'reasons': reasons
+                    'reasons': reasons,
+                    'regime': regime,
+                    'effective_level': strength
                 },
                 strategy='original'
             )
@@ -3134,11 +3139,11 @@ def analyze_pair_king(pair, timeframe="5m"):
 
     sweep_ok, sweep_level = detect_liquidity_sweep(df, potential_direction, sweep_threshold=sweep_threshold)
     if not sweep_ok:
-        if adx < 12:
-            logger.info(f"🛑 King {pair}: لا يوجد Sweep و ADX={adx:.1f} < 20")
+        if adx < 10:
+            logger.info(f"🛑 King {pair}: لا يوجد Sweep و ADX={adx:.1f} < 10")
             return None
         else:
-            logger.info(f"ℹ️ King {pair}: لا يوجد Sweep لكن ADX={adx:.1f} >= 20")
+            logger.info(f"ℹ️ King {pair}: لا يوجد Sweep لكن ADX={adx:.1f} >= 10")
 
     trend_ok = (potential_direction == "CALL" and alma20 > alma80) or (potential_direction == "PUT" and alma20 < alma80)
     momentum_ok = (potential_direction == "CALL" and roc > 0) or (potential_direction == "PUT" and roc < 0)
@@ -3162,8 +3167,8 @@ def analyze_pair_king(pair, timeframe="5m"):
         stoch_ok = stoch_k < stoch_d
 
     candle_ok, body_pct = check_king_candle_quality(curr)
-    if body_pct < 0.45:
-        logger.info(f"🛑 King {pair}: body_pct < 0.45")
+    if body_pct < 0.40:
+        logger.info(f"🛑 King {pair}: body_pct < 0.40")
         return None
 
     near_sr = False
@@ -3184,6 +3189,9 @@ def analyze_pair_king(pair, timeframe="5m"):
         volatility_ok=volatility_ok, adx_ok=adx_ok, rsi_ok=rsi_ok,
         stoch_ok=stoch_ok, candle_ok=candle_ok
     )
+
+    score -= regime_penalty
+    if score < 0: score = 0
 
     level = get_adaptive_king_level(score, market_type=market_type)
     if level == 0:
@@ -3209,9 +3217,8 @@ def analyze_pair_king(pair, timeframe="5m"):
     emoji = KING_EMOJIS[level]
     da = "صعود (CALL)" if potential_direction == "CALL" else "هبوط (PUT)"
 
-    if 270 <= csec <= 280:
+    if 250 <= csec <= 280:
         with data_lock:
-            # ===== التعديل: استخدام pair_key بدلاً من pair فقط =====
             if pair_key not in state.king_alerted_pairs:
                 state.pending_alerts[pending_key] = {
                     'direction': potential_direction,
@@ -3431,8 +3438,8 @@ def analyze_pair_smc(pair, timeframe="5m"):
     if (bias == "CALL" and 30 <= rsi <= 50) or (bias == "PUT" and 50 <= rsi <= 70):
         score += 10; conf.append("RSI")
 
-    if score < 70:
-        logger.info(f"🛑 SMC {pair}: Score={score} < 80")
+    if score < 65:
+        logger.info(f"🛑 SMC {pair}: Score={score} < 65")
         return None
 
     if not (sweep_ok or ob_hit or bb_hit or fvg_hit):
@@ -3457,9 +3464,8 @@ def analyze_pair_smc(pair, timeframe="5m"):
     pair_key = f"smart_{pair}_{candle_start}"
     pending_key = f"smart_{pair}_{candle_start}"
 
-    if 270 <= csec <= 280:
+    if 250 <= csec <= 280:
         with data_lock:
-            # ===== التعديل: استخدام pair_key بدلاً من pair فقط =====
             if pair_key not in state.smart_alerted_pairs:
                 state.pending_alerts[pending_key] = {
                     'direction': bias,
@@ -3670,8 +3676,8 @@ def analyze_pair_pro(pair, timeframe="5m"):
                 score += 5
                 factors.append("Sweep")
     
-    if direction is None or score < 65:
-        logger.info(f"🛑 Pro {pair}: Score={score} < 75 أو لا يوجد اتجاه")
+    if direction is None or score < 60:
+        logger.info(f"🛑 Pro {pair}: Score={score} < 60 أو لا يوجد اتجاه")
         return None
     
     if score >= 95: level = 4
@@ -3690,9 +3696,8 @@ def analyze_pair_pro(pair, timeframe="5m"):
     emoji = PRO_EMOJIS[level]
     da = "صعود (CALL)" if direction == "CALL" else "هبوط (PUT)"
     
-    if 270 <= csec <= 280:
+    if 250 <= csec <= 280:
         with data_lock:
-            # ===== التعديل: استخدام pair_key بدلاً من pair فقط =====
             if pair_key not in state.pa_alerted_pairs:
                 state.pending_alerts[pending_key] = {
                     'direction': direction,
