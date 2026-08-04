@@ -2534,6 +2534,7 @@ def analyze_pair_quantum(pair, timeframe="5m"):
     iq_now = get_iq_time()
     csec = int(iq_now) % 300
     candle_start = (int(iq_now) // 300) * 300
+    # ===== التعديل: المفتاح الفريد يشمل candle_start =====
     pair_key = f"quantum_{pair}_{candle_start}"
     pending_key = f"quantum_{pair}_{candle_start}"
 
@@ -2545,6 +2546,7 @@ def analyze_pair_quantum(pair, timeframe="5m"):
     # ===== المرحلة 1: تنبيه مبكر (270-280) =====
     if 270 <= csec <= 280:
         with data_lock:
+            # ===== التعديل: استخدام pair_key بدلاً من pair فقط =====
             if pair_key not in state.quantum_alerted_pairs:
                 state.pending_alerts[pending_key] = {
                     'direction': result['direction'],
@@ -2581,8 +2583,14 @@ def analyze_pair_quantum(pair, timeframe="5m"):
     if not (280 <= csec <= 299):
         return None
 
+    # ===== التعديل: التحقق من وجود pending alert =====
     with data_lock:
         pending = state.pending_alerts.get(pending_key)
+
+    # ===== التعديل: إذا لم يوجد pending -> return None (يمنع الإرسال المباشر) =====
+    if not pending:
+        logger.info(f"🛑 Quantum {pair}: لا يوجد تنبيه مبكر سابق — تم الإلغاء")
+        return None
 
     if pending and pending['direction'] != result['direction']:
         send_cancelled_alert(pair, pending['direction'], "الاتجاه تغير في Quantum", 'quantum')
@@ -2602,6 +2610,7 @@ def analyze_pair_quantum(pair, timeframe="5m"):
 
     # ===== المرحلة 3: الإشارة النهائية (293-299) =====
     if csec >= 293:
+        # ===== التعديل: استخدام candle_start في المفتاح =====
         if already_sent_this_candle_quantum(pair):
             return None
 
@@ -2921,11 +2930,16 @@ def analyze_pair(pair, timeframe="5m"):
     # ===== نظام 3 مراحل (Early Alert → Confirmation → Final) =====
     iq_now = get_iq_time()
     csec = int(iq_now) % 300
+    candle_start = (int(iq_now) // 300) * 300
+    # ===== التعديل: المفتاح الفريد يشمل candle_start =====
+    pair_key = f"original_{pair}_{candle_start}"
+    pending_key = f"original_{pair}_{candle_start}"
 
     if 270 <= csec <= 280:
         with data_lock:
-            if pair not in state.alerted_pairs:
-                state.pending_alerts[pair] = {
+            # ===== التعديل: استخدام pair_key بدلاً من pair فقط =====
+            if pair_key not in state.alerted_pairs:
+                state.pending_alerts[pending_key] = {
                     'direction': potential_direction,
                     'strength': strength,
                     'signal_name': signal_name_ar,
@@ -2936,19 +2950,24 @@ def analyze_pair(pair, timeframe="5m"):
                 indicator_counts = get_indicator_counts(pair, df)
                 htf_data = get_htf_market_regime(pair)
                 send_early_alert(pair, potential_direction, signal_name_ar, strength * 16, 'original', regime=regime, htf_data=htf_data, indicator_counts=indicator_counts)
-                state.alerted_pairs[pair] = (potential_direction, iq_now)
+                state.alerted_pairs[pair_key] = (potential_direction, iq_now)
         return None
 
     if 280 <= csec <= 299:
-
+        # ===== التعديل: التحقق من وجود pending alert =====
         with data_lock:
-            pending = state.pending_alerts.get(pair)
+            pending = state.pending_alerts.get(pending_key)
+
+        # ===== التعديل: إذا لم يوجد pending -> return None (يمنع الإرسال المباشر) =====
+        if not pending:
+            logger.info(f"🛑 {pair}: لا يوجد تنبيه مبكر سابق — تم الإلغاء")
+            return None
 
         if pending and pending['direction'] != potential_direction:
             send_cancelled_alert(pair, pending['direction'], "الاتجاه تغير", 'original')
             with data_lock:
-                if pair in state.pending_alerts:
-                    del state.pending_alerts[pair]
+                if pending_key in state.pending_alerts:
+                    del state.pending_alerts[pending_key]
             logger.info(f"🛑 {pair}: إلغاء — الاتجاه تغير")
             return None
 
@@ -2957,8 +2976,8 @@ def analyze_pair(pair, timeframe="5m"):
             if pending:
                 send_cancelled_alert(pair, potential_direction, reason, 'original')
             with data_lock:
-                if pair in state.pending_alerts:
-                    del state.pending_alerts[pair]
+                if pending_key in state.pending_alerts:
+                    del state.pending_alerts[pending_key]
             logger.info(f"🛑 {pair}: إلغاء ({reason})")
             return None
 
@@ -2972,8 +2991,8 @@ def analyze_pair(pair, timeframe="5m"):
             if pending:
                 send_cancelled_alert(pair, potential_direction, f"شمعة ضعيفة ({body_pct:.1%})", 'original')
             with data_lock:
-                if pair in state.pending_alerts:
-                    del state.pending_alerts[pair]
+                if pending_key in state.pending_alerts:
+                    del state.pending_alerts[pending_key]
             logger.info(f"🛑 {pair}: إلغاء — شمعة ضعيفة ({body_pct:.2%})")
             return None
 
@@ -2981,8 +3000,8 @@ def analyze_pair(pair, timeframe="5m"):
             if pending:
                 send_cancelled_alert(pair, potential_direction, "إشارة معاكسة حديثة", 'original')
             with data_lock:
-                if pair in state.pending_alerts:
-                    del state.pending_alerts[pair]
+                if pending_key in state.pending_alerts:
+                    del state.pending_alerts[pending_key]
             logger.info(f"🛑 {pair}: إلغاء — إشارة معاكسة")
             return None
 
@@ -2991,10 +3010,10 @@ def analyze_pair(pair, timeframe="5m"):
                 logger.info(f"⛔ {pair}: تم الإرسال مسبقاً")
                 return None
             with data_lock:
-                if pair in state.alerted_pairs:
-                    del state.alerted_pairs[pair]
-                if pair in state.pending_alerts:
-                    del state.pending_alerts[pair]
+                if pair_key in state.alerted_pairs:
+                    del state.alerted_pairs[pair_key]
+                if pending_key in state.pending_alerts:
+                    del state.pending_alerts[pending_key]
 
             indicators_str = f"ADX={adx:.1f} | BBW={bbw:.4f} | RSI={rsi:.1f} | Reasons: {', '.join(reasons[:3])}"
             indicator_counts = get_indicator_counts(pair, df)
@@ -3179,9 +3198,12 @@ def analyze_pair_king(pair, timeframe="5m"):
                   (potential_direction == "PUT" and htf_trend == "PUT")
     trend_tag = " 🌊 سوق متجه" if is_trending else ""
 
-    pair_key = f"{pair}_king_5m"
     iq_now = get_iq_time()
     csec = int(iq_now) % 300
+    candle_start = (int(iq_now) // 300) * 300
+    # ===== التعديل: المفتاح الفريد يشمل candle_start =====
+    pair_key = f"king_{pair}_{candle_start}"
+    pending_key = f"king_{pair}_{candle_start}"
 
     signal_name_ar, signal_name_en = KING_SIGNAL_NAMES[level]
     emoji = KING_EMOJIS[level]
@@ -3189,8 +3211,9 @@ def analyze_pair_king(pair, timeframe="5m"):
 
     if 270 <= csec <= 280:
         with data_lock:
+            # ===== التعديل: استخدام pair_key بدلاً من pair فقط =====
             if pair_key not in state.king_alerted_pairs:
-                state.pending_alerts[f"king_{pair}"] = {
+                state.pending_alerts[pending_key] = {
                     'direction': potential_direction,
                     'level': level,
                     'signal_name': signal_name_ar,
@@ -3205,15 +3228,20 @@ def analyze_pair_king(pair, timeframe="5m"):
         return None
 
     if 280 <= csec <= 299:
-
+        # ===== التعديل: التحقق من وجود pending alert =====
         with data_lock:
-            pending = state.pending_alerts.get(f"king_{pair}")
+            pending = state.pending_alerts.get(pending_key)
+
+        # ===== التعديل: إذا لم يوجد pending -> return None (يمنع الإرسال المباشر) =====
+        if not pending:
+            logger.info(f"🛑 King {pair}: لا يوجد تنبيه مبكر سابق — تم الإلغاء")
+            return None
 
         if pending and pending['direction'] != potential_direction:
             send_cancelled_alert(pair, pending['direction'], "الاتجاه تغير", 'king')
             with data_lock:
-                if f"king_{pair}" in state.pending_alerts:
-                    del state.pending_alerts[f"king_{pair}"]
+                if pending_key in state.pending_alerts:
+                    del state.pending_alerts[pending_key]
             logger.info(f"🛑 King {pair}: إلغاء — الاتجاه تغير")
             return None
 
@@ -3222,8 +3250,8 @@ def analyze_pair_king(pair, timeframe="5m"):
             if pending:
                 send_cancelled_alert(pair, potential_direction, reason, 'king')
             with data_lock:
-                if f"king_{pair}" in state.pending_alerts:
-                    del state.pending_alerts[f"king_{pair}"]
+                if pending_key in state.pending_alerts:
+                    del state.pending_alerts[pending_key]
             logger.info(f"🛑 King {pair}: إلغاء ({reason})")
             return None
 
@@ -3236,8 +3264,8 @@ def analyze_pair_king(pair, timeframe="5m"):
                 logger.info(f"🛑 King {pair}: تم الإرسال مسبقاً")
                 return None
             with data_lock:
-                if f"king_{pair}" in state.pending_alerts:
-                    del state.pending_alerts[f"king_{pair}"]
+                if pending_key in state.pending_alerts:
+                    del state.pending_alerts[pending_key]
 
             new_trade = _build_trade_dict(
                 pair=pair, direction=potential_direction, entry_price=curr['Close'],
@@ -3424,12 +3452,16 @@ def analyze_pair_smc(pair, timeframe="5m"):
 
     iq_now = get_iq_time()
     csec = int(iq_now) % 300
+    candle_start = (int(iq_now) // 300) * 300
+    # ===== التعديل: المفتاح الفريد يشمل candle_start =====
+    pair_key = f"smart_{pair}_{candle_start}"
+    pending_key = f"smart_{pair}_{candle_start}"
 
     if 270 <= csec <= 280:
         with data_lock:
-            pair_key = f"smart_{pair}"
+            # ===== التعديل: استخدام pair_key بدلاً من pair فقط =====
             if pair_key not in state.smart_alerted_pairs:
-                state.pending_alerts[f"smart_{pair}"] = {
+                state.pending_alerts[pending_key] = {
                     'direction': bias,
                     'level': level,
                     'signal_name': name,
@@ -3447,15 +3479,20 @@ def analyze_pair_smc(pair, timeframe="5m"):
         logger.info(f"🛑 SMC {pair}: الوقت غير مناسب ({csec})")
         return None
 
-
+    # ===== التعديل: التحقق من وجود pending alert =====
     with data_lock:
-        pending = state.pending_alerts.get(f"smart_{pair}")
+        pending = state.pending_alerts.get(pending_key)
+
+    # ===== التعديل: إذا لم يوجد pending -> return None (يمنع الإرسال المباشر) =====
+    if not pending:
+        logger.info(f"🛑 SMC {pair}: لا يوجد تنبيه مبكر سابق — تم الإلغاء")
+        return None
 
     if pending and pending['direction'] != bias:
         send_cancelled_alert(pair, pending['direction'], "الاتجاه تغير", 'smart')
         with data_lock:
-            if f"smart_{pair}" in state.pending_alerts:
-                del state.pending_alerts[f"smart_{pair}"]
+            if pending_key in state.pending_alerts:
+                del state.pending_alerts[pending_key]
         logger.info(f"🛑 SMC {pair}: إلغاء — الاتجاه تغير")
         return None
 
@@ -3464,8 +3501,8 @@ def analyze_pair_smc(pair, timeframe="5m"):
         if pending:
             send_cancelled_alert(pair, bias, reason, 'smart')
         with data_lock:
-            if f"smart_{pair}" in state.pending_alerts:
-                del state.pending_alerts[f"smart_{pair}"]
+            if pending_key in state.pending_alerts:
+                del state.pending_alerts[pending_key]
         logger.info(f"🛑 SMC {pair}: إلغاء ({reason})")
         return None
 
@@ -3474,11 +3511,10 @@ def analyze_pair_smc(pair, timeframe="5m"):
             logger.info(f"🛑 SMC {pair}: تم الإرسال مسبقاً")
             return None
         with data_lock:
-            pair_key = f"smart_{pair}"
             if pair_key in state.smart_alerted_pairs:
                 del state.smart_alerted_pairs[pair_key]
-            if f"smart_{pair}" in state.pending_alerts:
-                del state.pending_alerts[f"smart_{pair}"]
+            if pending_key in state.pending_alerts:
+                del state.pending_alerts[pending_key]
 
         da = "صعود (CALL)" if bias == "CALL" else "هبوط (PUT)"
         
@@ -3645,6 +3681,10 @@ def analyze_pair_pro(pair, timeframe="5m"):
     
     iq_now = get_iq_time()
     csec = int(iq_now) % 300
+    candle_start = (int(iq_now) // 300) * 300
+    # ===== التعديل: المفتاح الفريد يشمل candle_start =====
+    pair_key = f"pro_{pair}_{candle_start}"
+    pending_key = f"pro_{pair}_{candle_start}"
     
     name_ar, name_en = PRO_SIGNAL_NAMES[level]
     emoji = PRO_EMOJIS[level]
@@ -3652,8 +3692,9 @@ def analyze_pair_pro(pair, timeframe="5m"):
     
     if 270 <= csec <= 280:
         with data_lock:
-            if pair not in state.pa_alerted_pairs:
-                state.pending_alerts[f"pro_{pair}"] = {
+            # ===== التعديل: استخدام pair_key بدلاً من pair فقط =====
+            if pair_key not in state.pa_alerted_pairs:
+                state.pending_alerts[pending_key] = {
                     'direction': direction,
                     'level': level,
                     'signal_name': name_ar,
@@ -3664,22 +3705,27 @@ def analyze_pair_pro(pair, timeframe="5m"):
                 indicator_counts = get_indicator_counts(pair, df)
                 htf_data = get_htf_market_regime(pair)
                 send_early_alert(pair, direction, name_ar, score, 'pro', regime=regime, htf_data=htf_data, indicator_counts=indicator_counts)
-                state.pa_alerted_pairs[pair] = iq_now
+                state.pa_alerted_pairs[pair_key] = iq_now
         return None
     
     if not (280 <= csec <= 299):
         logger.info(f"🛑 Pro {pair}: الوقت غير مناسب ({csec})")
         return None
     
-    
+    # ===== التعديل: التحقق من وجود pending alert =====
     with data_lock:
-        pending = state.pending_alerts.get(f"pro_{pair}")
+        pending = state.pending_alerts.get(pending_key)
+
+    # ===== التعديل: إذا لم يوجد pending -> return None (يمنع الإرسال المباشر) =====
+    if not pending:
+        logger.info(f"🛑 Pro {pair}: لا يوجد تنبيه مبكر سابق — تم الإلغاء")
+        return None
     
     if pending and pending['direction'] != direction:
         send_cancelled_alert(pair, pending['direction'], "الاتجاه تغير", 'pro')
         with data_lock:
-            if f"pro_{pair}" in state.pending_alerts:
-                del state.pending_alerts[f"pro_{pair}"]
+            if pending_key in state.pending_alerts:
+                del state.pending_alerts[pending_key]
         logger.info(f"🛑 Pro {pair}: إلغاء — الاتجاه تغير")
         return None
     
@@ -3688,8 +3734,8 @@ def analyze_pair_pro(pair, timeframe="5m"):
         if pending:
             send_cancelled_alert(pair, direction, reason, 'pro')
         with data_lock:
-            if f"pro_{pair}" in state.pending_alerts:
-                del state.pending_alerts[f"pro_{pair}"]
+            if pending_key in state.pending_alerts:
+                del state.pending_alerts[pending_key]
         logger.info(f"🛑 Pro {pair}: إلغاء ({reason})")
         return None
     
@@ -3698,10 +3744,10 @@ def analyze_pair_pro(pair, timeframe="5m"):
             logger.info(f"🛑 Pro {pair}: تم الإرسال مسبقاً")
             return None
         with data_lock:
-            if pair in state.pa_alerted_pairs:
-                del state.pa_alerted_pairs[pair]
-            if f"pro_{pair}" in state.pending_alerts:
-                del state.pending_alerts[f"pro_{pair}"]
+            if pair_key in state.pa_alerted_pairs:
+                del state.pa_alerted_pairs[pair_key]
+            if pending_key in state.pending_alerts:
+                del state.pending_alerts[pending_key]
     
         with data_lock:
             state.recent_signals[pair] = (get_iq_time(), direction)
