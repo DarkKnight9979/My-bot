@@ -2898,16 +2898,16 @@ def analyze_pair(pair, timeframe="5m"):
 
     # ========== تحسين 6: فلاتر صارمة ==========
     atr_avg = atr_series.tail(20).mean()
-    if atr < atr_avg * 0.4:  # رفع من 0.5
-        logger.info(f"🛑 {pair}: تقلب منخفض (ATR < avg*0.7)")
+    if atr < atr_avg * 0.35:
+        logger.info(f"🛑 {pair}: تقلب منخفض جداً (ATR < avg*0.35)")
         return None
     
     # فلتر تقلب عالي: تحذير فقط مش رفض
     if atr > atr_avg * 3.5:
         logger.info(f"⚠️ {pair}: تقلب عالي (ATR > avg*3.5) — مستمر بحذر")
 
-    if curr['Volume'] <= vol_ma * 1.2:  # رفع من 1.5
-        logger.info(f"🛑 {pair}: حجم ضعيف (Vol < MA*1.8)")
+    if curr['Volume'] <= vol_ma * 0.9:
+        logger.info(f"🛑 {pair}: حجم ضعيف جداً (Vol < MA*0.9)")
         return None
 
     # ========== تحسين 7: تقييم محسّن ==========
@@ -2920,7 +2920,21 @@ def analyze_pair(pair, timeframe="5m"):
         near_sup, near_res, structure=structure, htf_regime=htf
     )
 
-    # ===== الحد الأدنى للدخول هو LEVEL 5 (Score >= 80) =====
+    # ===== تطبيق خصومات السوق =====
+    total_penalty = regime_penalty + htf_penalty
+    if total_penalty > 0 and strength > 0:
+        score_map = {2: 60, 3: 70, 4: 80, 5: 90, 6: 100}
+        raw_score = score_map.get(strength, 0)
+        adjusted = raw_score - total_penalty
+        if adjusted >= 95: strength = 6
+        elif adjusted >= 85: strength = 5
+        elif adjusted >= 75: strength = 4
+        elif adjusted >= 65: strength = 3
+        elif adjusted >= 55: strength = 2
+        else: strength = 0
+        logger.info(f"📊 {pair}: Strength بعد خصم {total_penalty} (regime={regime_penalty}, htf={htf_penalty})")
+
+    # ===== الحد الأدنى للإشارة النهائية: LEVEL 5 (Score >= 80) =====
     if strength < 5:
         logger.info(f"🛑 {pair}: مرفوضة — القوة={strength} < 5 (Score < 80)")
         return None
@@ -3100,18 +3114,21 @@ def analyze_pair_king(pair, timeframe="5m"):
         return None
 
     regime = detect_market_regime(pair)
+    regime_penalty = 0
+    if regime == "ranging":
+        regime_penalty = 10
+        logger.info(f"⚠️ King {pair}: سوق عرضي (خصم 10 نقاط)")
 
     df = detect_swings(df, window=2)
     structure, last_sh_idx, last_sl_idx = get_market_structure(df, lookback=30)
-    
+
     if structure == "NEUTRAL":
         adx_check, _, _ = calculate_adx(df, 14)
-        if adx_check < 15:
-            logger.info(f"🛑 King {pair}: NEUTRAL و ADX={adx_check:.1f} < 20")
+        if adx_check < 12:
+            logger.info(f"🛑 King {pair}: NEUTRAL و ADX={adx_check:.1f} < 12")
             return None
         else:
-            logger.info(f"ℹ️ King {pair}: NEUTRAL لكن ADX={adx_check:.1f} >= 20")
-
+            logger.info(f"ℹ️ King {pair}: NEUTRAL لكن ADX={adx_check:.1f} >= 12")
     potential_direction = "CALL" if structure == "BULLISH" else "PUT"
 
     df['ALMA_20'] = calculate_alma(df['Close'], 20, 0.85, 6)
