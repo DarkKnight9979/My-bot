@@ -76,16 +76,14 @@ STRATEGY_REGIMES = {
 TIMEFRAME_4H = 14400
 HTF_REGIME_CACHE_TTL = 900
 
-# Pair-specific volatility and ADX thresholds (based on average daily ranges)
+# Pair-specific volatility and ADX thresholds
 PAIR_THRESHOLDS = {
-    # Major pairs - lower volatility
     "EURUSD": {"adx_trending": 22, "adx_ranging": 16, "atr_min_pct": 0.00025, "atr_max_pct": 0.003, "volatility_ideal_low": 0.0008, "volatility_ideal_high": 0.003},
     "GBPUSD": {"adx_trending": 22, "adx_ranging": 16, "atr_min_pct": 0.00030, "atr_max_pct": 0.004, "volatility_ideal_low": 0.0010, "volatility_ideal_high": 0.004},
     "USDJPY": {"adx_trending": 22, "adx_ranging": 16, "atr_min_pct": 0.00025, "atr_max_pct": 0.003, "volatility_ideal_low": 0.0008, "volatility_ideal_high": 0.003},
     "USDCHF": {"adx_trending": 22, "adx_ranging": 16, "atr_min_pct": 0.00025, "atr_max_pct": 0.003, "volatility_ideal_low": 0.0008, "volatility_ideal_high": 0.003},
     "AUDUSD": {"adx_trending": 22, "adx_ranging": 16, "atr_min_pct": 0.00030, "atr_max_pct": 0.004, "volatility_ideal_low": 0.0010, "volatility_ideal_high": 0.004},
     "USDCAD": {"adx_trending": 22, "adx_ranging": 16, "atr_min_pct": 0.00025, "atr_max_pct": 0.003, "volatility_ideal_low": 0.0008, "volatility_ideal_high": 0.003},
-    # Cross pairs - medium volatility
     "EURJPY": {"adx_trending": 24, "adx_ranging": 18, "atr_min_pct": 0.00040, "atr_max_pct": 0.005, "volatility_ideal_low": 0.0015, "volatility_ideal_high": 0.005},
     "EURGBP": {"adx_trending": 22, "adx_ranging": 16, "atr_min_pct": 0.00025, "atr_max_pct": 0.003, "volatility_ideal_low": 0.0008, "volatility_ideal_high": 0.003},
     "GBPJPY": {"adx_trending": 26, "adx_ranging": 20, "atr_min_pct": 0.00050, "atr_max_pct": 0.006, "volatility_ideal_low": 0.0020, "volatility_ideal_high": 0.006},
@@ -94,7 +92,6 @@ PAIR_THRESHOLDS = {
     "EURAUD": {"adx_trending": 24, "adx_ranging": 18, "atr_min_pct": 0.00035, "atr_max_pct": 0.004, "volatility_ideal_low": 0.0012, "volatility_ideal_high": 0.004},
     "EURCAD": {"adx_trending": 24, "adx_ranging": 18, "atr_min_pct": 0.00035, "atr_max_pct": 0.004, "volatility_ideal_low": 0.0012, "volatility_ideal_high": 0.004},
     "AUDCAD": {"adx_trending": 22, "adx_ranging": 16, "atr_min_pct": 0.00030, "atr_max_pct": 0.004, "volatility_ideal_low": 0.0010, "volatility_ideal_high": 0.004},
-    # OTC pairs - higher volatility
     "EURUSD-OTC": {"adx_trending": 26, "adx_ranging": 20, "atr_min_pct": 0.00050, "atr_max_pct": 0.006, "volatility_ideal_low": 0.0015, "volatility_ideal_high": 0.005},
     "GBPUSD-OTC": {"adx_trending": 26, "adx_ranging": 20, "atr_min_pct": 0.00060, "atr_max_pct": 0.007, "volatility_ideal_low": 0.0020, "volatility_ideal_high": 0.006},
     "USDJPY-OTC": {"adx_trending": 26, "adx_ranging": 20, "atr_min_pct": 0.00050, "atr_max_pct": 0.006, "volatility_ideal_low": 0.0015, "volatility_ideal_high": 0.005},
@@ -106,10 +103,9 @@ PAIR_THRESHOLDS = {
 }
 
 def get_pair_thresholds(pair):
-    """Get pair-specific thresholds, fallback to EURUSD defaults"""
     return PAIR_THRESHOLDS.get(pair, PAIR_THRESHOLDS.get("EURUSD"))
 
-# ========== QUANTUM CONFIGURATION - NEW THRESHOLDS ==========
+# ========== QUANTUM CONFIGURATION ==========
 QUANTUM_CONFIG = {
     "min_score_live": 75,
     "min_score_otc": 75,
@@ -283,11 +279,8 @@ class BotState:
         self.cycle_count = 0
         self.is_reconnecting = False
         self.king_htf_cache = {}
-        # ===== نظام التنبيهات الجديد (3 مراحل) =====
         self.pending_alerts = {}
-        # ===== منع تكرار الإشارات النهائية =====
         self.sent_final_signals = {}
-        # ===== Quantum =====
         self.quantum_alerted_pairs = {}
         self.quantum_sent_signals = {}
 
@@ -559,7 +552,6 @@ def telegram_reply_worker():
                         text = message.get("text", "").strip()
                         if not text:
                             continue
-                        # ===== REPORT COMMAND =====
                         if text.lower() == "/report":
                             trades = read_trade_log(max_entries=10000)
                             report, error = generate_daily_sheet(trades)
@@ -568,8 +560,6 @@ def telegram_reply_worker():
                             else:
                                 _send_telegram_raw(format_daily_sheet(report))
                             continue
-
-                        # ===== QUANTUM COMMANDS =====
                         if text.startswith("/quantum"):
                             response = handle_quantum_command(text)
                             if response:
@@ -655,9 +645,6 @@ def get_kalman(pair):
     return kalman_instances[pair]
 
 def get_regime_badge(strategy_name, regime, htf_data=None, indicator_counts=None):
-    """
-    إرجاع شارة حالة السوق مع عرض المؤشرات المحسّنة (Supertrend + MACD + EMA + ALMA)
-    """
     enhancers = ""
     if indicator_counts and isinstance(indicator_counts, dict):
         htf = indicator_counts.get("1H", {})
@@ -722,7 +709,6 @@ CURRENCY_PAIRS = {
 # ========== FUNCIONES DE ALERTAS EN ÁRABE ==========
 
 def get_signal_level(score):
-    """تقسيم موحد للمستويات - NEW (75-120)"""
     if score >= 110: return 5
     elif score >= 100: return 4
     elif score >= 90: return 3
@@ -731,7 +717,6 @@ def get_signal_level(score):
     return 0
 
 def check_regime_for_strategy(strategy_name, regime):
-    """كل استراتيجية تشتغل في سوقها بس"""
     allowed = STRATEGY_REGIMES.get(strategy_name, ['trending'])
     return regime in allowed
 
@@ -1239,11 +1224,9 @@ def format_report_message(report):
 # ========== DAILY SHEET REPORT ==========
 
 def generate_daily_sheet(trades):
-    """توليد شيت النتائج اليومية مجمعة حسب الاستراتيجية"""
     if not trades:
         return None, "لا توجد صفقات مسجلة"
 
-    # تصفية صفقات اليوم فقط (آخر 24 ساعة)
     now = get_iq_time()
     today_trades = [t for t in trades if now - t.get("timestamp", 0) <= 86400]
 
@@ -1298,7 +1281,6 @@ def generate_daily_sheet(trades):
 
 
 def format_daily_sheet(report):
-    """تنسيق شيت النتائج اليومية كرسالة تليجرام"""
     if not report:
         return "📊 *لا توجد بيانات للتقرير اليومي*"
 
@@ -1640,13 +1622,9 @@ def format_monte_carlo_summary(results_dict):
     msg += "━━━━━━━━━━━━━━━━━━━━"
     return msg
 
-# ========== HTF MARKET ANALYSIS (Higher Timeframe) - NEW ==========
+# ========== HTF MARKET ANALYSIS ==========
 
 def get_htf_market_regime(pair):
-    """
-    Analyze market regime on 1H timeframe with ENHANCED indicators.
-    Uses: ALMA + Supertrend + MACD + EMA Alignment + ADX + Structure
-    """
     key = f"htf_regime_{pair}"
     now = get_iq_time()
     with data_lock:
@@ -1661,7 +1639,6 @@ def get_htf_market_regime(pair):
         df_h = pd.DataFrame(candles)
         df_h.rename(columns={'open':'Open','max':'High','min':'Low','close':'Close','volume':'Volume'}, inplace=True)
 
-        # ===== المؤشرات الأساسية =====
         df_h['ALMA_9'] = calculate_alma(df_h['Close'], 9, 0.85, 6)
         df_h['ALMA_50'] = calculate_alma(df_h['Close'], 50, 0.85, 6)
         atr_series = calculate_atr_series(df_h, 14)
@@ -1670,24 +1647,18 @@ def get_htf_market_regime(pair):
         adx, plus_di, minus_di = calculate_adx(df_h, 14)
         bbw = bollinger_bandwidth(df_h, 20)
 
-        # ===== المؤشرات المحسّنة الجديدة =====
-        # 1. Supertrend
         st_line, st_dir = calculate_supertrend(df_h, period=10, multiplier=3)
         supertrend_signal = "CALL" if st_dir.iloc[-1] == 1 else "PUT" if st_dir.iloc[-1] == -1 else None
 
-        # 2. MACD
         macd_line, signal_line, histogram = calculate_macd(df_h['Close'])
         macd_bullish = macd_line.iloc[-1] > signal_line.iloc[-1] and histogram.iloc[-1] > histogram.iloc[-2] if len(histogram) > 1 else macd_line.iloc[-1] > signal_line.iloc[-1]
         macd_signal = "CALL" if macd_bullish else "PUT"
 
-        # 3. EMA Alignment (تكديس EMAs)
         ema_trend, ema_strength = get_ema_alignment(df_h)
 
-        # Detect HTF market structure
         df_h = detect_swings(df_h, window=2)
         structure, _, _ = get_market_structure(df_h, lookback=30)
 
-        # Determine trend direction from ALMA
         curr_h = df_h.iloc[-1]
         prev_h = df_h.iloc[-2]
         if curr_h['ALMA_9'] > curr_h['ALMA_50'] and prev_h['ALMA_9'] > prev_h['ALMA_50']:
@@ -1697,7 +1668,6 @@ def get_htf_market_regime(pair):
         else:
             alma_trend = None
 
-        # ===== تحديد الاتجاه بتوافق 4 مؤشرات =====
         trend_votes = []
         if alma_trend: trend_votes.append(alma_trend)
         if supertrend_signal: trend_votes.append(supertrend_signal)
@@ -1728,12 +1698,10 @@ def get_htf_market_regime(pair):
             trend_dir = alma_trend
             trend_strength = "weak"
 
-        # Get pair-specific thresholds
         thresholds = get_pair_thresholds(pair)
         adx_trend = thresholds["adx_trending"]
         adx_range = thresholds["adx_ranging"]
 
-        # Determine regime
         if adx >= adx_trend and atr > atr_avg * 1.2 and trend_strength == "strong":
             regime = "trending"
         elif adx < adx_range and bbw < 0.001:
@@ -1747,7 +1715,6 @@ def get_htf_market_regime(pair):
         else:
             regime = "mixed"
 
-        # Calculate confidence
         confidence = 50
         if structure in ["BULLISH", "BEARISH"]:
             confidence += 15
@@ -1788,15 +1755,10 @@ def get_htf_market_regime(pair):
         return {"regime": "unknown", "trend": None, "structure": "unknown", "confidence": 0}
 
 def get_htf_trend_direction(pair):
-    """Get confirmed trend direction from 1H timeframe with structure validation."""
     htf = get_htf_market_regime(pair)
     return htf.get("trend"), htf.get("structure"), htf.get("confidence")
 
 def detect_htf_market_structure(pair):
-    """
-    Detect Higher Highs / Lower Lows structure on 1H timeframe.
-    Returns: structure_type, strength_score
-    """
     try:
         candles = get_cached_candles(pair, TIMEFRAME_1H, 100, max_age=300)
         if not candles or len(candles) < 50:
@@ -1813,7 +1775,6 @@ def detect_htf_market_structure(pair):
         if len(sh_idx) < 3 or len(sl_idx) < 3:
             return "neutral", 0
 
-        # Check for Higher Highs + Higher Lows (Bullish)
         hh_count = 0
         hl_count = 0
         for i in range(1, min(4, len(sh_idx))):
@@ -1823,7 +1784,6 @@ def detect_htf_market_structure(pair):
             if df_h.loc[sl_idx[-i], 'Low'] > df_h.loc[sl_idx[-(i+1)], 'Low']:
                 hl_count += 1
 
-        # Check for Lower Highs + Lower Lows (Bearish)
         lh_count = 0
         ll_count = 0
         for i in range(1, min(4, len(sh_idx))):
@@ -1847,36 +1807,28 @@ def detect_htf_market_structure(pair):
         return "unknown", 0
 
 def confirm_regime_with_htf(pair, ltf_regime):
-    """
-    Confirm LTF regime with HTF analysis.
-    Returns confirmed regime or 'uncertain' if HTF disagrees strongly.
-    """
     htf = get_htf_market_regime(pair)
     htf_regime = htf.get("regime", "unknown")
     htf_confidence = htf.get("confidence", 0)
 
-    # If HTF confidence is low, trust LTF    if htf_confidence < 40:
+    if htf_confidence < 40:
         return ltf_regime, htf_confidence, "ltf_dominant"
 
-    # If both agree, boost confidence
     if htf_regime == ltf_regime:
         return ltf_regime, min(htf_confidence + 20, 100), "confirmed"
 
-    # If HTF says trending but LTF says ranging, trust HTF (higher timeframe is king)
     if htf_regime == "trending" and ltf_regime == "ranging":
         return "trending", htf_confidence, "htf_override"
 
-    # If HTF says ranging but LTF says trending, be cautious
     if htf_regime == "ranging" and ltf_regime == "trending":
         return "mixed", htf_confidence - 20, "conflict"
 
-    # Default: use HTF if confidence is high enough
     if htf_confidence >= 70:
         return htf_regime, htf_confidence, "htf_dominant"
 
     return ltf_regime, htf_confidence, "ltf_dominant"
 
-# ========== MARKET REGIME - UPDATED ==========
+# ========== MARKET REGIME ==========
 
 def detect_market_regime(pair, tf=300):
     key = f"regime_{pair}"
@@ -1892,7 +1844,6 @@ def detect_market_regime(pair, tf=300):
         if df is None or len(df) < 30:
             return "unknown"
 
-        # Get pair-specific thresholds
         thresholds = get_pair_thresholds(pair)
         adx_trend = thresholds["adx_trending"]
         adx_range = thresholds["adx_ranging"]
@@ -1905,7 +1856,6 @@ def detect_market_regime(pair, tf=300):
         adx, plus_di, minus_di = calculate_adx(df, 14)
         bbw = bollinger_bandwidth(df, 20)
 
-        # LTF regime detection with pair-specific thresholds
         if adx >= adx_trend and atr > atr_avg * 1.2:
             ltf_regime = "trending"
         elif adx < adx_range and bbw < 0.001:
@@ -1917,10 +1867,8 @@ def detect_market_regime(pair, tf=300):
         else:
             ltf_regime = "mixed"
 
-        # Confirm with HTF analysis for higher accuracy
         confirmed_regime, htf_confidence, confirmation_type = confirm_regime_with_htf(pair, ltf_regime)
 
-        # Log the multi-timeframe analysis
         if htf_confidence >= 60:
             logger.info(f"📊 Regime {pair}: LTF={ltf_regime} | HTF={confirmed_regime} | Conf={htf_confidence}% | Type={confirmation_type}")
 
@@ -1931,7 +1879,7 @@ def detect_market_regime(pair, tf=300):
         logger.error(f"خطأ في تحديد حالة السوق {pair}: {e}")
         return "unknown"
 
-# ========== QUANTUM FUNCTIONS - UPDATED ==========
+# ========== QUANTUM FUNCTIONS ==========
 
 def analyze_volatility_filter(volatility):
     config = QUANTUM_CONFIG.get("volatility_filter", {})
@@ -2000,7 +1948,6 @@ def analyze_market_condition_quantum(df, pair=None):
         if len(df) < 30:
             return "unknown"
 
-        # Get pair-specific thresholds
         thresholds = get_pair_thresholds(pair) if pair else get_pair_thresholds("EURUSD")
         adx_trend = thresholds["adx_trending"]
         adx_range = thresholds["adx_ranging"]
@@ -2463,13 +2410,20 @@ def analyze_pair_quantum(pair, timeframe="5m"):
         logger.info(f"🛑 Quantum {pair}: لا يوجد بيانات كافية")
         return None
 
-    # استخدام تحليل HTF المحسن
     regime = analyze_market_condition_quantum(df, pair=pair)
+    
+    # ===== إضافة regime_penalty =====
+    regime_penalty = 0
     if regime == "ranging":
         logger.info(f"🛑 Quantum {pair}: سوق عرضي (RANGE) - تم الإلغاء")
         return None
+    elif regime == "low_vol":
+        regime_penalty = 10
+        logger.info(f"⚠️ Quantum {pair}: تقلب منخفض (خصم 10 نقاط)")
+    elif regime == "high_vol":
+        regime_penalty = 5
+        logger.info(f"⚠️ Quantum {pair}: تقلب عالي (خصم 5 نقاط)")
 
-    # استخدام آخر شمعة مقفولة
     curr = df.iloc[-2]
     price = curr['Close']
 
@@ -2503,7 +2457,7 @@ def analyze_pair_quantum(pair, timeframe="5m"):
 
     result = calculate_confidence_score_quantum(structure, liquidity, order_block, fvg, volume, momentum)
 
-    adjusted_score = result['score'] + vol_filter['score_adjust']
+    adjusted_score = result['score'] + vol_filter['score_adjust'] - regime_penalty
     adjusted_score = max(0, min(100, adjusted_score))
     
     logger.info(f"📊 Quantum {pair}: النتيجة الأصلية {result['score']} → معدلة {adjusted_score} ({vol_filter['reason']})")
@@ -2519,7 +2473,6 @@ def analyze_pair_quantum(pair, timeframe="5m"):
         logger.info(f"🛑 Quantum {pair}: إشارة مكررة - تم الإلغاء")
         return None
 
-    # NEW LEVELS (75-120)
     if final_score >= 100:
         level = 4
         signal_name_ar, signal_name_en = QUANTUM_SIGNAL_NAMES[level]
@@ -2546,7 +2499,6 @@ def analyze_pair_quantum(pair, timeframe="5m"):
         logger.info(f"🛑 Quantum {pair}: إلغاء - {reason}")
         return None
 
-    # ===== المرحلة 1: تنبيه مبكر (250-280) =====
     if 250 <= csec <= 280:
         with data_lock:
             if pair_key not in state.quantum_alerted_pairs:
@@ -2581,7 +2533,6 @@ def analyze_pair_quantum(pair, timeframe="5m"):
                 state.quantum_alerted_pairs[pair_key] = iq_now
         return None
 
-    # ===== المرحلة 2 & 3 (280-299) =====
     if not (280 <= csec <= 299):
         return None
 
@@ -2608,7 +2559,6 @@ def analyze_pair_quantum(pair, timeframe="5m"):
                 del state.pending_alerts[pending_key]
         return None
 
-    # ===== المرحلة 3: الإشارة النهائية (293-299) =====
     if csec >= 293:
         if already_sent_this_candle_quantum(pair):
             return None
@@ -2654,6 +2604,7 @@ def analyze_pair_quantum(pair, timeframe="5m"):
                 'score': final_score,
                 'original_score': result['score'],
                 'score_adjust': vol_filter['score_adjust'],
+                'regime_penalty': regime_penalty,
                 'reasons': result['reasons'],
                 'market': regime,
                 'structure': str(structure) if structure else 'None',
@@ -2713,7 +2664,6 @@ def evaluate_signal_strength_enhanced(direction, curr, prev, df, price, alma9, a
     reasons = []
     w = ORIGINAL_WEIGHTS
     
-    # 1. Trend (ALMA Cross + HTF)
     a9p, a50p = prev['ALMA_9'], prev['ALMA_50']
     a9c, a50c = alma9, alma50
     bullish_cross = (a9p <= a50p) and (a9c > a50c)
@@ -2732,7 +2682,6 @@ def evaluate_signal_strength_enhanced(direction, curr, prev, df, price, alma9, a
         score += int(w["trend"] * 0.5)
         reasons.append("HTF Confirm +10")
     
-    # 2. Momentum
     if direction == "CALL":
         stoch_ok = stoch_k > stoch_d and stoch_k > 45
         roc_ok = roc > 0.015
@@ -2747,12 +2696,10 @@ def evaluate_signal_strength_enhanced(direction, curr, prev, df, price, alma9, a
         score += int(w["momentum"] * 0.5)
         reasons.append("ROC OK +10")
     
-    # 3. Structure
     if structure and ((direction == "CALL" and structure == "BULLISH") or (direction == "PUT" and structure == "BEARISH")):
         score += w["structure"]
         reasons.append("Structure +15")
     
-    # 4. Volume
     vol_ratio = volume / vol_ma if vol_ma > 0 else 0
     if vol_ratio >= 1.5:
         score += w["volume"]
@@ -2763,7 +2710,6 @@ def evaluate_signal_strength_enhanced(direction, curr, prev, df, price, alma9, a
     elif vol_ratio < 0.8:
         return 0, []
     
-    # 5. Candle
     body = abs(curr['Close'] - curr['Open'])
     rng = curr['High'] - curr['Low']
     if rng == 0:
@@ -2782,12 +2728,10 @@ def evaluate_signal_strength_enhanced(direction, curr, prev, df, price, alma9, a
     else:
         return 0, []
     
-    # 6. Zone
     if (direction == "CALL" and near_sup) or (direction == "PUT" and near_res):
         score += w["zone"]
         reasons.append("Zone +10")
     
-    # 7. ADX
     if adx >= 22:
         score += w["adx"]
         reasons.append("ADX Strong +5")
@@ -2797,23 +2741,21 @@ def evaluate_signal_strength_enhanced(direction, curr, prev, df, price, alma9, a
     elif adx < 8:
         return 0, []
     
-    # فلاتر إضافية
     if atr < price * 0.00015:
         return 0, []
     if bbw < 0.0006:
         return 0, []
     
-    # NEW LEVELS (75-120)
     if score >= 110:
-        level = 5  # أسطوري 💎
+        level = 5
     elif score >= 100:
-        level = 4  # سوبر ماكس 🔥
+        level = 4
     elif score >= 90:
-        level = 3  # قوية جداً 🟣
+        level = 3
     elif score >= 80:
-        level = 2  # قوية 🔵
+        level = 2
     elif score >= 75:
-        level = 1  # جيدة 🟢
+        level = 1
     else:
         level = 0
     
@@ -2827,13 +2769,20 @@ def analyze_pair(pair, timeframe="5m"):
         logger.warning(f"⛔ {pair}: لا يوجد بيانات")
         return None
 
-    # Regime Detection
+    # ===== Regime Detection مع penalty =====
     regime = detect_market_regime(pair)
-    if regime == "ranging":
-        logger.info(f"🛑 {pair}: Original — سوق عرضي (مرفوض)")
-        return None
     
-    # HTF Analysis
+    regime_penalty = 0
+    htf_penalty = 0
+    
+    if regime == "ranging":
+        regime_penalty = 10
+        logger.info(f"⚠️ {pair}: Original — سوق عرضي (خصم 10 نقاط)")
+    elif regime == "low_vol":
+        regime_penalty = 5
+        logger.info(f"⚠️ {pair}: Original — تقلب منخفض (خصم 5 نقاط)")
+    
+    # ===== HTF Analysis =====
     htf = get_htf_market_regime(pair)
     htf_trend = htf.get("trend") if htf else None
     htf_structure = htf.get("structure") if htf else None
@@ -2857,7 +2806,6 @@ def analyze_pair(pair, timeframe="5m"):
 
     sup_levels, res_levels = get_smart_sr_levels(df, lookback=30)
 
-    # تحديد الاتجاه
     potential_direction = None
     a9p, a50p = prev['ALMA_9'], prev['ALMA_50']
     a9c, a50c = alma9, alma50
@@ -2876,18 +2824,17 @@ def analyze_pair(pair, timeframe="5m"):
     if potential_direction is None:
         return None
 
-    # HTF Filter
+    # ===== HTF Penalty =====
     if htf_trend is not None and htf_trend != potential_direction:
-        logger.info(f"🛑 {pair}: HTF Trend عكسي")
-        return None
+        htf_penalty = 15
+        logger.info(f"⚠️ {pair}: HTF Trend عكسي (خصم 15 نقطة)")
     
     if htf_structure:
         if (potential_direction == "CALL" and htf_structure == "BEARISH") or \
            (potential_direction == "PUT" and htf_structure == "BULLISH"):
-            logger.info(f"🛑 {pair}: HTF Structure عكسي")
-            return None
+            htf_penalty += 10
+            logger.info(f"⚠️ {pair}: HTF Structure عكسي (خصم 10 نقاط إضافية)")
 
-    # فلاتر صارمة
     atr_avg = atr_series.tail(20).mean()
     if atr < atr_avg * 0.3:
         logger.info(f"🛑 {pair}: تقلب منخفض (ATR < avg*0.3)")
@@ -2909,7 +2856,28 @@ def analyze_pair(pair, timeframe="5m"):
         near_sup, near_res, structure=structure, htf_regime=htf
     )
 
-    # NEW MINIMUM: Level 1 (75 points)
+    # ===== تطبيق العقوبات =====
+    total_penalty = regime_penalty + htf_penalty
+    if total_penalty > 0 and strength > 0:
+        score_map = {1: 75, 2: 80, 3: 90, 4: 100, 5: 110}
+        raw_score = score_map.get(strength, 0)
+        adjusted_score = raw_score - total_penalty
+        
+        if adjusted_score >= 110:
+            strength = 5
+        elif adjusted_score >= 100:
+            strength = 4
+        elif adjusted_score >= 90:
+            strength = 3
+        elif adjusted_score >= 80:
+            strength = 2
+        elif adjusted_score >= 75:
+            strength = 1
+        else:
+            strength = 0
+        
+        logger.info(f"📊 {pair}: Strength بعد خصم {total_penalty} (regime={regime_penalty}, htf={htf_penalty}) → {strength}")
+
     if strength < 1:
         logger.info(f"🛑 {pair}: مرفوضة — القوة={strength} < 1 (Score < 75)")
         return None
@@ -2918,7 +2886,6 @@ def analyze_pair(pair, timeframe="5m"):
     emoji = SIGNAL_EMOJIS[strength]
     da = "صعود (CALL)" if potential_direction == "CALL" else "هبوط (PUT)"
 
-    # ===== نظام 3 مراحل =====
     iq_now = get_iq_time()
     csec = int(iq_now) % 300
     candle_start = (int(iq_now) // 300) * 300
@@ -2932,7 +2899,7 @@ def analyze_pair(pair, timeframe="5m"):
                     'direction': potential_direction,
                     'strength': strength,
                     'signal_name': signal_name_ar,
-                    'score': strength * 15 + 60,  # 75-120
+                    'score': strength * 15 + 60,
                     'alert_time': iq_now,
                     'strategy': 'original'
                 }
@@ -2968,7 +2935,6 @@ def analyze_pair(pair, timeframe="5m"):
             logger.info(f"🛑 {pair}: إلغاء ({reason})")
             return None
 
-        # فحص جودة الشمعة مرة أخرى
         body = abs(curr['Close'] - curr['Open'])
         rng = curr['High'] - curr['Low']
         if rng == 0:
@@ -3002,7 +2968,7 @@ def analyze_pair(pair, timeframe="5m"):
                 if pending_key in state.pending_alerts:
                     del state.pending_alerts[pending_key]
 
-            score = strength * 15 + 60  # 75-120
+            score = strength * 15 + 60
             indicators_str = f"ADX={adx:.1f} | BBW={bbw:.4f} | RSI={rsi:.1f} | Reasons: {', '.join(reasons[:3])}"
             indicator_counts = get_indicator_counts(pair, df)
             htf_data = get_htf_market_regime(pair)
@@ -3038,7 +3004,9 @@ def analyze_pair(pair, timeframe="5m"):
                     'atr': float(atr), 'roc': float(roc),
                     'stoch_k': float(stoch_k), 'stoch_d': float(stoch_d),
                     'structure': str(structure) if structure else 'None',
-                    'reasons': reasons
+                    'reasons': reasons,
+                    'regime_penalty': regime_penalty,
+                    'htf_penalty': htf_penalty
                 },
                 strategy='original'
             )
@@ -3062,7 +3030,7 @@ def analyze_pair_wrapper(pair):
         logger.error(f"خطأ في {pair}: {e}")
         return pair, None
 
-# ========== analyze_pair_king (King Strategy - 3-Stage Arabic) ==========
+# ========== analyze_pair_king ==========
 
 def analyze_pair_king(pair, timeframe="5m"):
     tf_seconds, duration_text = 300, "5 دقائق"
@@ -3082,6 +3050,15 @@ def analyze_pair_king(pair, timeframe="5m"):
         return None
 
     regime = detect_market_regime(pair)
+    
+    # ===== إضافة regime_penalty =====
+    regime_penalty = 0
+    if regime == "ranging":
+        regime_penalty = 10
+        logger.info(f"⚠️ King {pair}: سوق عرضي (خصم 10 نقاط)")
+    elif regime == "low_vol":
+        regime_penalty = 5
+        logger.info(f"⚠️ King {pair}: تقلب منخفض (خصم 5 نقاط)")
 
     df = detect_swings(df, window=2)
     structure, last_sh_idx, last_sl_idx = get_market_structure(df, lookback=30)
@@ -3172,20 +3149,21 @@ def analyze_pair_king(pair, timeframe="5m"):
         stoch_ok=stoch_ok, candle_ok=candle_ok
     )
 
-    # NEW MINIMUM: 75 points
+    # ===== تطبيق regime_penalty =====
+    score = score - regime_penalty
+
     if score < 75:
         logger.info(f"🛑 King {pair}: Score={score} < 75")
         return None
     
-    # NEW LEVELS for King (75-120)
     if score >= 110:
-        level = 4  # King Elite
+        level = 4
     elif score >= 100:
-        level = 3  # King Gold
+        level = 3
     elif score >= 90:
-        level = 2  # King Silver
+        level = 2
     elif score >= 75:
-        level = 1  # King Bronze
+        level = 1
     else:
         level = 0
 
@@ -3196,10 +3174,6 @@ def analyze_pair_king(pair, timeframe="5m"):
     htf_trend = get_king_htf_trend(pair)
     if htf_trend is not None and htf_trend != potential_direction:
         logger.warning(f"⚠️ King HTF عكسي لـ {pair} لكن الإشارة مستمرة")
-
-    is_trending = (potential_direction == "CALL" and htf_trend == "CALL") or \
-                  (potential_direction == "PUT" and htf_trend == "PUT")
-    trend_tag = " 🌊 سوق متجه" if is_trending else ""
 
     iq_now = get_iq_time()
     csec = int(iq_now) % 300
@@ -3281,7 +3255,8 @@ def analyze_pair_king(pair, timeframe="5m"):
                     'adx': float(adx), 'rsi': float(rsi), 'roc': float(roc),
                     'atr': float(atr), 'bbw': float(bbw),
                     'stoch_k': float(stoch_k), 'stoch_d': float(stoch_d),
-                    'sweep_threshold_used': float(sweep_threshold)
+                    'sweep_threshold_used': float(sweep_threshold),
+                    'regime_penalty': regime_penalty
                 },
                 strategy='king'
             )
@@ -3317,7 +3292,7 @@ def analyze_pair_wrapper_king(pair):
         logger.error(f"خطأ King في {pair}: {e}")
         return pair, None
 
-# ========== SMC STRATEGY - 3-STAGE ARABIC ==========
+# ========== SMC STRATEGY ==========
 
 def detect_fvg(df):
     fvg_bull, fvg_bear = [], []
@@ -3362,6 +3337,15 @@ def analyze_pair_smc(pair, timeframe="5m"):
         return None
 
     regime = detect_market_regime(pair)
+    
+    # ===== إضافة regime_penalty =====
+    regime_penalty = 0
+    if regime == "ranging":
+        regime_penalty = 10
+        logger.info(f"⚠️ SMC {pair}: سوق عرضي (خصم 10 نقاط)")
+    elif regime == "low_vol":
+        regime_penalty = 5
+        logger.info(f"⚠️ SMC {pair}: تقلب منخفض (خصم 5 نقاط)")
 
     htf = get_higher_tf_trend(pair)
     mtf = get_king_htf_trend(pair)
@@ -3430,7 +3414,9 @@ def analyze_pair_smc(pair, timeframe="5m"):
     if (bias == "CALL" and 30 <= rsi <= 50) or (bias == "PUT" and 50 <= rsi <= 70):
         score += 10; conf.append("RSI")
 
-    # NEW MINIMUM: 75
+    # ===== تطبيق regime_penalty =====
+    score = score - regime_penalty
+
     if score < 75:
         logger.info(f"🛑 SMC {pair}: Score={score} < 75")
         return None
@@ -3439,7 +3425,6 @@ def analyze_pair_smc(pair, timeframe="5m"):
         logger.info(f"🛑 SMC {pair}: لا يوجد Sweep/OB/Breaker/FVG")
         return None
 
-    # NEW LEVELS (75-120)
     if score >= 110:
         level, name = 4, "SMC Elite 🏆"
     elif score >= 100:
@@ -3537,7 +3522,8 @@ def analyze_pair_smc(pair, timeframe="5m"):
                 'score': score,
                 'conf': conf,
                 'htf': htf,
-                'mtf': mtf
+                'mtf': mtf,
+                'regime_penalty': regime_penalty
             },
             strategy='smart'
         )
@@ -3572,7 +3558,7 @@ def analyze_pair_wrapper_smc(pair):
         logger.error(f"خطأ SMC في {pair}: {e}")
         return pair, None
 
-# ========== PRO STRATEGY - 3-STAGE ARABIC ==========
+# ========== PRO STRATEGY ==========
 
 def analyze_pair_pro(pair, timeframe="5m"):
     tf_seconds, duration_text = 300, "5 دقائق"
@@ -3583,6 +3569,15 @@ def analyze_pair_pro(pair, timeframe="5m"):
         return None
 
     regime = detect_market_regime(pair)
+    
+    # ===== إضافة regime_penalty =====
+    regime_penalty = 0
+    if regime == "ranging":
+        regime_penalty = 5
+        logger.info(f"⚠️ Pro {pair}: سوق عرضي (خصم 5 نقاط)")
+    elif regime == "low_vol":
+        regime_penalty = 10
+        logger.info(f"⚠️ Pro {pair}: تقلب منخفض (خصم 10 نقاط)")
     
     df = detect_swings(df, window=2)
     structure, _, _ = get_market_structure(df, lookback=30)
@@ -3666,12 +3661,13 @@ def analyze_pair_pro(pair, timeframe="5m"):
                 score += 5
                 factors.append("Sweep")
     
-    # NEW MINIMUM: 75
+    # ===== تطبيق regime_penalty =====
+    score = score - regime_penalty
+    
     if direction is None or score < 75:
         logger.info(f"🛑 Pro {pair}: Score={score} < 75 أو لا يوجد اتجاه")
         return None
     
-    # NEW LEVELS (75-120)
     if score >= 110:
         level = 4
     elif score >= 100:
@@ -3766,7 +3762,8 @@ def analyze_pair_pro(pair, timeframe="5m"):
                 'lower_wick': float(lower_wick),
                 'body': float(body),
                 'volume': float(curr['Volume']),
-                'vol_ma': float(vol_ma)
+                'vol_ma': float(vol_ma),
+                'regime_penalty': regime_penalty
             },
             strategy='pro'
         )
@@ -4167,7 +4164,6 @@ def get_fractal_levels(df, lookback=20):
     return last_res, last_sup
 
 def calculate_supertrend(df, period=10, multiplier=3):
-    """حساب Supertrend — أقوى مؤشر لتحديد الاتجاه"""
     hl2 = (df['High'] + df['Low']) / 2
     atr = calculate_atr_series(df, period)
     upper_band = hl2 + (multiplier * atr)
@@ -4192,7 +4188,6 @@ def calculate_supertrend(df, period=10, multiplier=3):
     return st, st_dir
 
 def calculate_macd(series, fast=12, slow=26, signal=9):
-    """حساب MACD"""
     ema_fast = series.ewm(span=fast).mean()
     ema_slow = series.ewm(span=slow).mean()
     macd_line = ema_fast - ema_slow
@@ -4201,7 +4196,6 @@ def calculate_macd(series, fast=12, slow=26, signal=9):
     return macd_line, signal_line, histogram
 
 def get_ema_alignment(df):
-    """تكديس EMAs — أقوى تأكيد للترند"""
     ema9 = df['Close'].ewm(span=9).mean()
     ema21 = df['Close'].ewm(span=21).mean()
     ema50 = df['Close'].ewm(span=50).mean()
@@ -4226,12 +4220,10 @@ def get_ema_alignment(df):
         return None, 0.0
 
 def calculate_indicator_votes_for_df(df):
-    """حساب أصوات المؤشرات الأربعة: Supertrend, MACD, EMA, ALMA"""
     votes = {"CALL": 0, "PUT": 0, "NEUTRAL": 0}
     if df is None or len(df) < 10:
         return votes
 
-    # 1. Supertrend
     try:
         st_line, st_dir = calculate_supertrend(df, period=10, multiplier=3)
         if st_dir.iloc[-1] == 1:
@@ -4243,7 +4235,6 @@ def calculate_indicator_votes_for_df(df):
     except Exception:
         votes["NEUTRAL"] += 1
 
-    # 2. MACD
     try:
         macd_line, signal_line, histogram = calculate_macd(df['Close'])
         if macd_line.iloc[-1] > signal_line.iloc[-1]:
@@ -4253,7 +4244,6 @@ def calculate_indicator_votes_for_df(df):
     except Exception:
         votes["NEUTRAL"] += 1
 
-    # 3. EMA Alignment
     try:
         ema_trend, _ = get_ema_alignment(df)
         if ema_trend == "CALL":
@@ -4265,7 +4255,6 @@ def calculate_indicator_votes_for_df(df):
     except Exception:
         votes["NEUTRAL"] += 1
 
-    # 4. ALMA Trend
     try:
         if 'ALMA_9' not in df.columns:
             df['ALMA_9'] = calculate_alma(df['Close'], 9, 0.85, 6)
@@ -4288,10 +4277,8 @@ def calculate_indicator_votes_for_df(df):
     return votes
 
 def get_indicator_counts(pair, df_5m=None):
-    """جمع أصوات المؤشرات من 1H و 5m"""
     counts = {"1H": {"CALL": 0, "PUT": 0, "NEUTRAL": 0}, "5m": {"CALL": 0, "PUT": 0, "NEUTRAL": 0}}
 
-    # 1H
     try:
         candles_1h = get_cached_candles(pair, TIMEFRAME_1H, 80, max_age=300)
         if candles_1h and len(candles_1h) >= 50:
@@ -4301,7 +4288,6 @@ def get_indicator_counts(pair, df_5m=None):
     except Exception:
         pass
 
-    # 5m
     try:
         if df_5m is not None and len(df_5m) >= 10:
             counts["5m"] = calculate_indicator_votes_for_df(df_5m.copy())
@@ -4565,7 +4551,6 @@ def get_king_htf_trend(pair):
 # ========== TRADE RESULTS CHECK ==========
 
 def check_tie(ep, fp):
-    """التعادل: سعر الدخول يساوي سعر الخروج بالضبط"""
     return float(ep) == float(fp)
 
 def check_trade_results():
@@ -4595,46 +4580,72 @@ def check_trade_results():
                         trade['warned_loss'] = True
 
             if time_left <= 0:
-                candles = get_cached_candles(pair, 300, 5, max_age=0, force_refresh=True)
+                candles = get_cached_candles(pair, 300, 10, max_age=0, force_refresh=True)
 
-                if not candles or len(candles) < 2:
-                    logger.warning("⏳ " + pair + ": شموع غير كافية للتقييم، هيتم المحاولة في الدورة الجاية")
+                if not candles or len(candles) < 3:
+                    logger.warning(f"⏳ {pair}: شموع غير كافية للتقييم")
                     continue
 
                 target_candle = None
+                expire_timestamp = trade['expire_time']
+                
                 for c in reversed(candles):
                     candle_to = c.get('to', 0)
-                    if candle_to <= trade['expire_time'] + 5:
+                    candle_from = c.get('from', 0)
+                    
+                    if candle_from <= expire_timestamp <= candle_to:
                         target_candle = c
+                        logger.info(f"✅ {pair}: شمعة دقيقة | from={candle_from} | to={candle_to}")
                         break
-
+                
                 if target_candle is None:
-                    target_candle = candles[-2] if len(candles) >= 2 else candles[-1]
-                    logger.warning("⚠️ " + pair + ": استخدام fallback للشمعة (مش متطابقة بالـ timestamp)")
+                    min_diff = float('inf')
+                    for c in candles:
+                        candle_to = c.get('to', 0)
+                        diff = abs(candle_to - expire_timestamp)
+                        if diff < min_diff:
+                            min_diff = diff
+                            target_candle = c
+                    
+                    if target_candle and min_diff > 10:
+                        logger.warning(f"⚠️ {pair}: فارق {min_diff}ث في الشمعة")
+                
+                if target_candle is None:
+                    for c in reversed(candles):
+                        if c.get('to', 0) < current_time:
+                            target_candle = c
+                            logger.warning(f"⚠️ {pair}: استخدام fallback")
+                            break
+                
+                if target_candle is None:
+                    logger.error(f"❌ {pair}: لا توجد شمعة صحيحة")
+                    continue
 
                 fp = target_candle['close']
                 candle_to = target_candle.get('to', 0)
                 candle_from = target_candle.get('from', 0)
-
+                
+                if fp == 0 or ep == 0:
+                    logger.error(f"❌ {pair}: سعر غير صحيح | EP={ep} | FP={fp}")
+                    continue
+                
+                diff_pct = abs(fp - ep) / ep * 100 if ep != 0 else 0
+                
                 logger.info(
-                    "📊 RESULT DEBUG | " + str(pair) + " | Dir:" + str(direction) + " | "
-                    "EP:" + "{:.5f}".format(ep) + " | FP:" + "{:.5f}".format(fp) + " | "
-                    "Expire:" + str(trade['expire_time']) + " | "
-                    "CandleFrom:" + str(candle_from) + " | CandleTo:" + str(candle_to) + " | "
-                    "CurrentTime:" + str(current_time)
+                    f"📊 RESULT | {pair} | Dir:{direction} | "
+                    f"EP:{ep:.5f} | FP:{fp:.5f} | Diff:{diff_pct:.4f}%"
                 )
-
+                
                 is_tie = check_tie(ep, fp)
+                
                 if direction == "CALL":
                     is_win = fp > ep and not is_tie
                 else:
                     is_win = fp < ep and not is_tie
-
-                diff_pct = abs(fp - ep) / ep * 100 if ep != 0 else 0
-                logger.info(
-                    "📊 RESULT | " + str(pair) + " | Win:" + str(is_win) + " | Tie:" + str(is_tie) + " | "
-                    "Diff:" + "{:.4f}".format(diff_pct) + "% | Strategy:" + str(strategy)
-                )
+                
+                trade['exit_price'] = fp
+                trade['exit_timestamp'] = candle_to
+                trade['price_diff_pct'] = diff_pct
 
                 ts = get_cairo_time().strftime('%I:%M %p')
 
@@ -4693,7 +4704,8 @@ def check_trade_results():
                         "is_king": is_king,
                         "candle_to": candle_to,
                         "candle_from": candle_from,
-                        "expire_time": trade['expire_time']
+                        "expire_time": trade['expire_time'],
+                        "price_diff_pct": diff_pct
                     })
                 except Exception as e:
                     logger.error("خطأ في تسجيل الصفقة: " + str(e))
