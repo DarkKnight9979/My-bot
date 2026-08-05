@@ -301,12 +301,21 @@ def get_cairo_time():
 
 def get_iq_time():
     with data_lock:
-        return time.time() + state.server_time_offset
+        offset = state.server_time_offset
+        # Sanity check: if offset is absurdly large (more than 1 day), reset it
+        if abs(offset) > 86400:
+            logger.warning(f"⚠️ server_time_offset غير طبيعي ({offset:.0f}s), إعادة ضبط...")
+            state.server_time_offset = 0
+            offset = 0
+        return time.time() + offset
 
 def sync_server_time(api_instance):
     try:
         iq_timestamp = api_instance.get_server_timestamp()
         if iq_timestamp:
+            # IQ Option API sometimes returns milliseconds instead of seconds
+            if iq_timestamp > 2000000000000:
+                iq_timestamp = iq_timestamp / 1000.0
             with data_lock:
                 state.server_time_offset = iq_timestamp - time.time()
             logger.info(f"⏱️ تم المزامنة: {state.server_time_offset:.2f} ثانية")
