@@ -110,8 +110,8 @@ def get_pair_thresholds(pair):
 
 # ========== QUANTUM CONFIGURATION ==========
 QUANTUM_CONFIG = {
-    "min_score_live": 70,
-    "min_score_otc": 65,
+    "min_score_live": 60,
+    "min_score_otc": 55,
     "cooldown": 300,
     "weights": {
         "structure": 20,
@@ -2169,9 +2169,15 @@ def calculate_confidence_score_quantum(structure, liquidity, order_block, fvg, v
         put += weights["order_block"]; reasons.append("📦 Order Block هابط")
 
     if fvg and fvg["type"] == "BULLISH":
-        call += weights["fvg"]; reasons.append("🔲 FVG صاعد")
+        if fvg_retest_ok:
+            call += weights["fvg"]; reasons.append("🔲 FVG صاعد (معاد اختباره)")
+        else:
+            call += weights["fvg"] * 0.5; reasons.append("🔲 FVG صاعد (بدون retest)")
     elif fvg and fvg["type"] == "BEARISH":
-        put += weights["fvg"]; reasons.append("🔲 FVG هابط")
+        if fvg_retest_ok:
+            put += weights["fvg"]; reasons.append("🔲 FVG هابط (معاد اختباره)")
+        else:
+            put += weights["fvg"] * 0.5; reasons.append("🔲 FVG هابط (بدون retest)")
 
     if volume:
         if structure == "BULLISH" or liquidity == "BULLISH":
@@ -2498,13 +2504,14 @@ def analyze_pair_quantum(pair, timeframe="5m"):
     order_block = detect_order_block_quantum(df, curr)
     fvg = detect_fvg_quantum(df, curr)
 
+    # ===== FIX: FVG retest optional (تحذير مش رفض) =====
+    fvg_retest_ok = False
     if fvg:
-        if not fvg_retest_quantum(df, fvg):
-            logger.info(f"🛑 Quantum {pair}: FVG لم يُعاد اختباره - تم الإلغاء")
-            return None
+        fvg_retest_ok = fvg_retest_quantum(df, fvg)
+        if not fvg_retest_ok:
+            logger.info(f"⚠️ Quantum {pair}: FVG لم يُعاد اختباره — مستمر بس بدون FVG نقاط")
     else:
-        logger.info(f"🛑 Quantum {pair}: لا يوجد FVG - تم الإلغاء")
-        return None
+        logger.info(f"ℹ️ Quantum {pair}: لا يوجد FVG — مستمر بدونه")
 
     volume = volume_confirmation_quantum(df, curr)
     momentum = momentum_confirmation_quantum(df, curr)
@@ -3424,49 +3431,52 @@ def analyze_pair_smc(pair, timeframe="5m"):
     score = 0
     conf = []
 
+    # ===== FIX: weights أعلى =====
     if (bias == "CALL" and structure == "BULLISH") or (bias == "PUT" and structure == "BEARISH"):
-        score += 25; conf.append("Structure")
+        score += 30; conf.append("Structure")
 
     sweep_ok, _ = detect_liquidity_sweep(df, bias, 0.0003)
-    if sweep_ok: score += 25; conf.append("Sweep")
+    if sweep_ok: score += 30; conf.append("Sweep")
 
     ob_hit = False
     target_obs = obs['bull'][-3:] if bias == "CALL" else obs['bear'][-3:]
     for ob in reversed(target_obs):
         if (bias == "CALL" and ob['low'] <= price <= ob['high']*1.001) or (bias == "PUT" and ob['high']*0.999 <= price <= ob['low']):
-            ob_hit = True; score += 20; conf.append("OB"); break
+            ob_hit = True; score += 25; conf.append("OB"); break
 
     bb_hit = False
     target_bb = breakers['bull'][-2:] if bias == "CALL" else breakers['bear'][-2:]
     for bb in reversed(target_bb):
         if bb['low'] <= price <= bb['high']:
-            bb_hit = True; score += 15; conf.append("Breaker"); break
+            bb_hit = True; score += 20; conf.append("Breaker"); break
 
     fvg_hit = False
     target_fvg = fvg_bull[-3:] if bias == "CALL" else fvg_bear[-3:]
     for fvg in reversed(target_fvg):
         if fvg['bottom'] <= price <= fvg['top']:
-            fvg_hit = True; score += 15; conf.append("FVG"); break
+            fvg_hit = True; score += 20; conf.append("FVG"); break
 
     if (bias == "CALL" and curr['ALMA_20'] > curr['ALMA_50']) or (bias == "PUT" and curr['ALMA_20'] < curr['ALMA_50']):
-        score += 10; conf.append("Trend")
+        score += 15; conf.append("Trend")
 
-    if (bias == "CALL" and 30 <= rsi <= 50) or (bias == "PUT" and 50 <= rsi <= 70):
-        score += 10; conf.append("RSI")
+    if (bias == "CALL" and 25 <= rsi <= 55) or (bias == "PUT" and 45 <= rsi <= 75):
+        score += 15; conf.append("RSI")
 
+    # ===== FIX: min_score = 70 (بدل 80) =====
     if score < 70:
-        logger.info(f"🛑 SMC {pair}: Score={score} < 80")
+        logger.info(f"🛑 SMC {pair}: Score={score} < 70")
         return None
 
     if not (sweep_ok or ob_hit or bb_hit or fvg_hit):
         logger.info(f"🛑 SMC {pair}: لا يوجد Sweep/OB/Breaker/FVG")
         return None
 
-    if score >= 95:
+    # ===== FIX: thresholds أقل =====
+    if score >= 90:
         level, name = 4, "SMC Elite 🏆"
-    elif score >= 85:
-        level, name = 3, "SMC Gold 🥇"
     elif score >= 80:
+        level, name = 3, "SMC Gold 🥇"
+    elif score >= 75:
         level, name = 2, "SMC Silver 🥈"
     else:
         level, name = 1, "SMC Bronze 🥉"
@@ -3688,13 +3698,15 @@ def analyze_pair_pro(pair, timeframe="5m"):
                 score += 5
                 factors.append("Sweep")
     
-    if direction is None or score < 65:
-        logger.info(f"🛑 Pro {pair}: Score={score} < 75 أو لا يوجد اتجاه")
+    # ===== FIX: min_score = 60 (بدل 65) =====
+    if direction is None or score < 60:
+        logger.info(f"🛑 Pro {pair}: Score={score} < 60 أو لا يوجد اتجاه")
         return None
     
-    if score >= 95: level = 4
-    elif score >= 85: level = 3
-    elif score >= 80: level = 2
+    # ===== FIX: thresholds أقل =====
+    if score >= 90: level = 4
+    elif score >= 80: level = 3
+    elif score >= 70: level = 2
     else: level = 1
     
     iq_now = get_iq_time()
@@ -4104,7 +4116,10 @@ def calculate_alma(series, window=9, offset=0.85, sigma=6):
     s = window / sigma
     w = np.exp(-((np.arange(window) - m) ** 2) / (2 * s * s))
     w /= w.sum()
-    return series.rolling(window).apply(lambda x: np.dot(x, w), raw=True)
+    result = series.rolling(window).apply(lambda x: np.dot(x, w), raw=True)
+    # ===== FIX: نملأ NaN بآخر قيمة صحيحة =====
+    result = result.ffill().bfill()
+    return result
 
 def wilder_rsi(series, period=14):
     delta = series.diff()
