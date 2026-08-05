@@ -3960,15 +3960,10 @@ def calculate_adaptive_threshold(trades, market_type="live"):
     return threshold
 
 def get_adaptive_king_level(score, market_type="live"):
-    threshold = state.adaptive_thresholds.get(market_type, 80)
-    if score >= threshold + 15:
-        return 4
-    elif score >= threshold + 10:
-        return 3
-    elif score >= threshold + 5:
-        return 2
-    elif score >= threshold:
-        return 1
+    if score >= 95: return 4
+    elif score >= 90: return 3
+    elif score >= 85: return 2
+    elif score >= 80: return 1
     return 0
 
 # ========== NEWS FUNCTIONS ==========
