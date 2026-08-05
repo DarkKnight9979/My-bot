@@ -20,7 +20,7 @@ from collections import defaultdict, deque
 # VERSION FINAL - 3-STAGE ALERT SYSTEM (ARABIC) + HTF ENHANCED
 # ============================================================
 
-VERSION = "7.7-FINAL-OPTIMIZED-THRESHOLDS"
+VERSION = "7.8-FINAL-PRICE-FIXED"
 
 # ========== CONSTANTS ==========
 CAIRO_TZ = pytz.timezone('Africa/Cairo')
@@ -312,6 +312,61 @@ def sync_server_time(api_instance):
             logger.info(f"⏱️ تم المزامنة: {state.server_time_offset:.2f} ثانية")
     except Exception as e:
         logger.warning(f"⚠️ فشلت المزامنة: {e}")
+
+# ========== CORRECT PRICE FUNCTIONS - NEW ==========
+def get_spread_for_pair(pair):
+    """تحديد الـ Spread المناسب لكل زوج"""
+    if "JPY" in pair:
+        return 0.01
+    elif "OTC" in pair:
+        return 0.0002
+    else:
+        return 0.0001
+
+def get_correct_entry_price(pair, direction):
+    """جلب سعر الدخول الصحيح من المنصة"""
+    try:
+        with api_lock:
+            candles = get_cached_candles(pair, 300, 1, max_age=5, force_refresh=True)
+            if not candles:
+                return None
+            
+            last_candle = candles[-1]
+            close_price = last_candle['close']
+            
+            spread = get_spread_for_pair(pair)
+            
+            if direction == "CALL":
+                return close_price + spread
+            else:
+                return close_price - spread
+    except Exception as e:
+        logger.error(f"خطأ في جلب سعر الدخول {pair}: {e}")
+        return None
+
+def get_correct_exit_price(pair, direction, expire_timestamp):
+    """جلب سعر الخروج الصحيح من المنصة"""
+    try:
+        with api_lock:
+            candles = get_cached_candles(pair, 300, 10, max_age=0, force_refresh=True)
+            
+            for c in reversed(candles):
+                candle_to = c.get('to', 0)
+                candle_from = c.get('from', 0)
+                
+                if candle_from <= expire_timestamp <= candle_to:
+                    close_price = c['close']
+                    spread = get_spread_for_pair(pair)
+                    
+                    if direction == "CALL":
+                        return close_price + spread
+                    else:
+                        return close_price - spread
+            
+            return None
+    except Exception as e:
+        logger.error(f"خطأ في جلب سعر الخروج {pair}: {e}")
+        return None
 
 # ========== INIT FILES ==========
 FILES = {
@@ -2412,7 +2467,6 @@ def analyze_pair_quantum(pair, timeframe="5m"):
 
     regime = analyze_market_condition_quantum(df, pair=pair)
     
-    # ===== إضافة regime_penalty =====
     regime_penalty = 0
     if regime == "ranging":
         logger.info(f"🛑 Quantum {pair}: سوق عرضي (RANGE) - تم الإلغاء")
@@ -2769,7 +2823,6 @@ def analyze_pair(pair, timeframe="5m"):
         logger.warning(f"⛔ {pair}: لا يوجد بيانات")
         return None
 
-    # ===== Regime Detection مع penalty =====
     regime = detect_market_regime(pair)
     
     regime_penalty = 0
@@ -2782,7 +2835,6 @@ def analyze_pair(pair, timeframe="5m"):
         regime_penalty = 5
         logger.info(f"⚠️ {pair}: Original — تقلب منخفض (خصم 5 نقاط)")
     
-    # ===== HTF Analysis =====
     htf = get_htf_market_regime(pair)
     htf_trend = htf.get("trend") if htf else None
     htf_structure = htf.get("structure") if htf else None
@@ -2824,7 +2876,6 @@ def analyze_pair(pair, timeframe="5m"):
     if potential_direction is None:
         return None
 
-    # ===== HTF Penalty =====
     if htf_trend is not None and htf_trend != potential_direction:
         htf_penalty = 15
         logger.info(f"⚠️ {pair}: HTF Trend عكسي (خصم 15 نقطة)")
@@ -2856,7 +2907,6 @@ def analyze_pair(pair, timeframe="5m"):
         near_sup, near_res, structure=structure, htf_regime=htf
     )
 
-    # ===== تطبيق العقوبات =====
     total_penalty = regime_penalty + htf_penalty
     if total_penalty > 0 and strength > 0:
         score_map = {1: 75, 2: 80, 3: 90, 4: 100, 5: 110}
@@ -3051,7 +3101,6 @@ def analyze_pair_king(pair, timeframe="5m"):
 
     regime = detect_market_regime(pair)
     
-    # ===== إضافة regime_penalty =====
     regime_penalty = 0
     if regime == "ranging":
         regime_penalty = 10
@@ -3149,7 +3198,6 @@ def analyze_pair_king(pair, timeframe="5m"):
         stoch_ok=stoch_ok, candle_ok=candle_ok
     )
 
-    # ===== تطبيق regime_penalty =====
     score = score - regime_penalty
 
     if score < 75:
@@ -3338,7 +3386,6 @@ def analyze_pair_smc(pair, timeframe="5m"):
 
     regime = detect_market_regime(pair)
     
-    # ===== إضافة regime_penalty =====
     regime_penalty = 0
     if regime == "ranging":
         regime_penalty = 10
@@ -3414,7 +3461,6 @@ def analyze_pair_smc(pair, timeframe="5m"):
     if (bias == "CALL" and 30 <= rsi <= 50) or (bias == "PUT" and 50 <= rsi <= 70):
         score += 10; conf.append("RSI")
 
-    # ===== تطبيق regime_penalty =====
     score = score - regime_penalty
 
     if score < 75:
@@ -3570,7 +3616,6 @@ def analyze_pair_pro(pair, timeframe="5m"):
 
     regime = detect_market_regime(pair)
     
-    # ===== إضافة regime_penalty =====
     regime_penalty = 0
     if regime == "ranging":
         regime_penalty = 5
@@ -3661,7 +3706,6 @@ def analyze_pair_pro(pair, timeframe="5m"):
                 score += 5
                 factors.append("Sweep")
     
-    # ===== تطبيق regime_penalty =====
     score = score - regime_penalty
     
     if direction is None or score < 75:
@@ -3811,6 +3855,12 @@ def _build_trade_dict(pair, direction, entry_price, expire_offset, is_king, is_m
             return int(obj)
         else:
             return obj
+
+    # ===== تصحيح سعر الدخول =====
+    correct_entry = get_correct_entry_price(pair, direction)
+    if correct_entry:
+        entry_price = correct_entry
+        logger.info(f"✅ {pair}: تم تصحيح سعر الدخول إلى {entry_price:.5f}")
 
     filters_clean = convert_bool_to_int(filters)
     indicators_clean = convert_bool_to_int(indicators)
@@ -4580,7 +4630,7 @@ def check_trade_results():
                         trade['warned_loss'] = True
 
             if time_left <= 0:
-                candles = get_cached_candles(pair, 300, 10, max_age=0, force_refresh=True)
+                candles = get_cached_candles(pair, 300, 15, max_age=0, force_refresh=True)
 
                 if not candles or len(candles) < 3:
                     logger.warning(f"⏳ {pair}: شموع غير كافية للتقييم")
@@ -4589,27 +4639,32 @@ def check_trade_results():
                 target_candle = None
                 expire_timestamp = trade['expire_time']
                 
+                # ===== محاولة 1: البحث الدقيق مع تسامح 5 ثواني =====
                 for c in reversed(candles):
                     candle_to = c.get('to', 0)
                     candle_from = c.get('from', 0)
                     
-                    if candle_from <= expire_timestamp <= candle_to:
+                    if candle_from - 5 <= expire_timestamp <= candle_to + 5:
                         target_candle = c
-                        logger.info(f"✅ {pair}: شمعة دقيقة | from={candle_from} | to={candle_to}")
+                        logger.info(f"✅ {pair}: شمعة دقيقة | from={candle_from} | to={candle_to} | expire={expire_timestamp}")
                         break
                 
+                # ===== محاولة 2: البحث عن أقرب شمعة =====
                 if target_candle is None:
                     min_diff = float('inf')
+                    best_candle = None
                     for c in candles:
                         candle_to = c.get('to', 0)
                         diff = abs(candle_to - expire_timestamp)
                         if diff < min_diff:
                             min_diff = diff
-                            target_candle = c
+                            best_candle = c
                     
-                    if target_candle and min_diff > 10:
-                        logger.warning(f"⚠️ {pair}: فارق {min_diff}ث في الشمعة")
+                    if best_candle and min_diff <= 30:
+                        target_candle = best_candle
+                        logger.warning(f"⚠️ {pair}: فارق {min_diff}ث في الشمعة المستخدمة")
                 
+                # ===== محاولة 3: آخر شمعة مكتملة =====
                 if target_candle is None:
                     for c in reversed(candles):
                         if c.get('to', 0) < current_time:
@@ -4618,12 +4673,18 @@ def check_trade_results():
                             break
                 
                 if target_candle is None:
-                    logger.error(f"❌ {pair}: لا توجد شمعة صحيحة")
+                    logger.error(f"❌ {pair}: لم يتم العثور على شمعة صحيحة")
                     continue
 
                 fp = target_candle['close']
                 candle_to = target_candle.get('to', 0)
                 candle_from = target_candle.get('from', 0)
+                
+                # ===== تصحيح سعر الخروج =====
+                correct_exit = get_correct_exit_price(pair, direction, expire_timestamp)
+                if correct_exit:
+                    fp = correct_exit
+                    logger.info(f"✅ {pair}: تم تصحيح سعر الخروج إلى {fp:.5f}")
                 
                 if fp == 0 or ep == 0:
                     logger.error(f"❌ {pair}: سعر غير صحيح | EP={ep} | FP={fp}")
@@ -4632,8 +4693,11 @@ def check_trade_results():
                 diff_pct = abs(fp - ep) / ep * 100 if ep != 0 else 0
                 
                 logger.info(
-                    f"📊 RESULT | {pair} | Dir:{direction} | "
-                    f"EP:{ep:.5f} | FP:{fp:.5f} | Diff:{diff_pct:.4f}%"
+                    f"📊 RESULT DEBUG | {pair} | Dir:{direction} | "
+                    f"EP:{ep:.5f} | FP:{fp:.5f} | "
+                    f"Diff:{diff_pct:.4f}% | "
+                    f"Expire:{expire_timestamp} | "
+                    f"CandleFrom:{candle_from} | CandleTo:{candle_to}"
                 )
                 
                 is_tie = check_tie(ep, fp)
@@ -4642,6 +4706,11 @@ def check_trade_results():
                     is_win = fp > ep and not is_tie
                 else:
                     is_win = fp < ep and not is_tie
+                
+                logger.info(
+                    f"📊 RESULT | {pair} | Win:{is_win} | Tie:{is_tie} | "
+                    f"Diff:{diff_pct:.4f}% | Strategy:{strategy}"
+                )
                 
                 trade['exit_price'] = fp
                 trade['exit_timestamp'] = candle_to
@@ -4705,7 +4774,9 @@ def check_trade_results():
                         "candle_to": candle_to,
                         "candle_from": candle_from,
                         "expire_time": trade['expire_time'],
-                        "price_diff_pct": diff_pct
+                        "price_diff_pct": diff_pct,
+                        "entry_price_corrected": True,
+                        "exit_price_corrected": True
                     })
                 except Exception as e:
                     logger.error("خطأ في تسجيل الصفقة: " + str(e))
@@ -5031,7 +5102,8 @@ def run_bot():
         f"📊 *الاستراتيجيات:* الأصلية | King | SMC | Pro | 🧠 Quantum\n"
         f"⏱️ *نظام التنبيهات:* 3 مراحل (تنبيه → تأكيد → إشارة)\n"
         f"🎯 *العتبات الجديدة:* 75-120 نقطة\n"
-        f"🧠 *Quantum Features:* Kalman Filter + Volatility Filter + Self-Learning"
+        f"🧠 *Quantum Features:* Kalman Filter + Volatility Filter + Self-Learning\n"
+        f"💰 *تصحيح الأسعار:* تم إضافة تصحيح الـ Spread للدخول والخروج"
     )
 
     threading.Thread(target=telegram_worker, daemon=True).start()
