@@ -4602,9 +4602,9 @@ def get_king_htf_trend(pair):
 # ========== TRADE RESULTS CHECK ==========
 
 def check_tie(ep, fp):
-    """التعادل: سعر الدخول قريب جداً من سعر الخروج (±0.001%)"""
+    """التعادل: سعر الدخول قريب جداً من سعر الخروج (±0.01%)"""
     diff_pct = abs(float(ep) - float(fp)) / float(ep) if float(ep) != 0 else 0
-    return diff_pct < 0.00001  # ===== FIX: tolerance بدل equality بالضبط =====
+    return diff_pct < 0.0001  # ===== FIX: tolerance 0.01% =====
 
 def check_trade_results():
     current_time = get_iq_time()
@@ -4640,30 +4640,29 @@ def check_trade_results():
                     continue
 
                 target_candle = None
-                # ===== FIX: ندور على الشمعة اللي expire_time جواها (from <= expire <= to) =====
+                # ===== FIX: ندور على الشمعة المقفولة اللي expire_time جواها =====
                 for c in reversed(candles):
                     candle_from = c.get('from', 0)
                     candle_to = c.get('to', 0)
-                    if candle_from <= trade['expire_time'] <= candle_to + 5:
+                    # expire_time لازم يكون جوا الشمعة أو بعدها بـ 5 ثواني
+                    # والشمعة لازم تكون مقفولة (to <= current_time)
+                    if candle_from <= trade['expire_time'] <= candle_to + 5 and candle_to <= current_time + 5:
                         target_candle = c
                         break
 
-                # ===== FIX: fallback = الشمعة الأخيرة [-1] مش [-2] =====
+                # ===== FIX: لو مالقناش، ندور على آخر شمعة مقفولة =====
                 if target_candle is None:
-                    target_candle = candles[-1]
-                    logger.warning("⚠️ " + pair + ": استخدام fallback [-1] (آخر شمعة متاحة)")
+                    for c in reversed(candles):
+                        if c.get('to', 0) <= current_time + 5:
+                            target_candle = c
+                            break
+                    if target_candle is None:
+                        target_candle = candles[-1]
+                    logger.warning("⚠️ " + pair + f": fallback — expire={trade['expire_time']} | candle_to={target_candle.get('to',0)} | now={current_time}")
 
                 fp = target_candle['close']
                 candle_to = target_candle.get('to', 0)
                 candle_from = target_candle.get('from', 0)
-
-                # ===== FIX: لو الشمعة اللي اخترناها انتهت قبل expire_time بكتير، نستخدم [-1] =====
-                if candle_to < trade['expire_time'] - 60 and len(candles) >= 1:
-                    target_candle = candles[-1]
-                    fp = target_candle['close']
-                    candle_to = target_candle.get('to', 0)
-                    candle_from = target_candle.get('from', 0)
-                    logger.warning("⚠️ " + pair + f": الشمعة القديمة (to={candle_to}) < expire ({trade['expire_time']}) — استخدام [-1]")
 
                 logger.info(
                     "📊 RESULT DEBUG | " + str(pair) + " | Dir:" + str(direction) + " | "
