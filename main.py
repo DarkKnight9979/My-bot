@@ -4138,13 +4138,15 @@ def update_news():
     """تحديث الأخبار الاقتصادية من مصادر متعددة مع retry وfallback"""
     now = get_iq_time()
     
-    # لو البيانات لسه fresh (أقل من ساعة)، متعملش حاجة
-    if now - state.last_news_update < 3600 and not state.news_fetch_failed:
-        return
-    
-    # لو فشل قبل كده، استنى 5 دقايق قبل ما تحاول تاني (rate limiting protection)
-    if state.news_fetch_failed and now - state.last_news_update < 900:
-        return
+    with data_lock:
+        # لو البيانات لسه fresh (أقل من ساعة)، متعملش حاجة
+        if now - state.last_news_update < 3600 and not state.news_fetch_failed:
+            return
+        # لو فشل قبل كده، استنى 15 دقيقة قبل ما تحاول تاني
+        if state.news_fetch_failed and now - state.last_news_update < 900:
+            return
+        # FIX: حدّث الوقت فوراً عشان أي thread تاني يستنى
+        state.last_news_update = now
     
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
@@ -4153,16 +4155,15 @@ def update_news():
         'Connection': 'keep-alive',
     }
     
-    # مصادر شغالة
+    # مصادر شغالة (مصدر واحد بس عشان DNS failure)
     sources = [
         "https://nfs.faireconomy.media/ff_calendar_thisweek.json",
-        "https://nfs.faireconomy.media/ff_calendar_thisweek.json?version=latest",
-        "https://cdn.faireconomy.media/ff_calendar_thisweek.json",
     ]
     
     last_error = None
     
     for url in sources:
+        for attempt in range(1):
         for attempt in range(3):
             try:
                 r = requests.get(url, headers=headers, timeout=15)
@@ -4191,7 +4192,7 @@ def update_news():
     # كل المصادر فشلت
     with data_lock:
         state.news_fetch_failed = True
-        state.last_news_update = now  # FIX: update timestamp on failure to respect cooldown
+
     
     # لو عندنا بيانات قديمة، استخدمها بدل ما تقول "مفيش"
     if state.news_data and len(state.news_data) > 0:
