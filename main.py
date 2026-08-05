@@ -3408,18 +3408,17 @@ def analyze_pair_smc(pair, timeframe="5m"):
         regime_penalty = 5
         logger.info(f"⚠️ SMC {pair}: تقلب منخفض (خصم 5 نقاط)")
 
-    htf = get_higher_tf_trend(pair)
+        htf = get_higher_tf_trend(pair)
     mtf = get_king_htf_trend(pair)
     
     if htf is None and mtf is None:
-    last20 = df.tail(20)
-    avg_close = last20['Close'].mean()
-    last_close = last20['Close'].iloc[-1]
-    bias = "CALL" if last_close > avg_close else "PUT"
-    logger.info(f"ℹ️ SMC {pair}: HTF/MTF None, باستخدام 20 شمعة: {bias}")
-elif htf == mtf and htf is not None:
-    bias = htf
-
+        last20 = df.tail(20)
+        avg_close = last20['Close'].mean()
+        last_close = last20['Close'].iloc[-1]
+        bias = "CALL" if last_close > avg_close else "PUT"
+        logger.info(f"ℹ️ SMC {pair}: HTF/MTF None, باستخدام 20 شمعة: {bias}")
+    elif htf == mtf and htf is not None:
+        bias = htf
     else:
         if htf is not None:
             bias = htf
@@ -3428,6 +3427,7 @@ elif htf == mtf and htf is not None:
         else:
             logger.info(f"🛑 SMC {pair}: لا يوجد Bias")
             return None
+
 
     df = detect_swings(df, window=2)
     df['ALMA_20'] = calculate_alma(df['Close'], 20, 0.85, 6)
