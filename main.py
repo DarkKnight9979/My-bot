@@ -3412,13 +3412,14 @@ def analyze_pair_smc(pair, timeframe="5m"):
     mtf = get_king_htf_trend(pair)
     
     if htf is None and mtf is None:
-        last10 = df.tail(10)
-        avg_close = last10['Close'].mean()
-        last_close = last10['Close'].iloc[-1]
-        bias = "CALL" if last_close > avg_close else "PUT"
-        logger.info(f"ℹ️ SMC {pair}: HTF/MTF None, باستخدام 10 شموع: {bias}")
-    elif htf == mtf and htf is not None:
-        bias = htf
+    last20 = df.tail(20)
+    avg_close = last20['Close'].mean()
+    last_close = last20['Close'].iloc[-1]
+    bias = "CALL" if last_close > avg_close else "PUT"
+    logger.info(f"ℹ️ SMC {pair}: HTF/MTF None, باستخدام 20 شمعة: {bias}")
+elif htf == mtf and htf is not None:
+    bias = htf
+
     else:
         if htf is not None:
             bias = htf
