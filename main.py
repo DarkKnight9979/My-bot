@@ -2906,9 +2906,9 @@ def analyze_pair(pair, timeframe="5m"):
     if atr > atr_avg * 3.5:
         logger.info(f"⚠️ {pair}: تقلب عالي (ATR > avg*3.5) — مستمر بحذر")
 
-    # ===== FIX: حجم >= MA*1.0 مقبول (بدل 1.2) =====
-    if curr['Volume'] <= vol_ma * 1.0:
-        logger.info(f"🛑 {pair}: حجم ضعيف (Vol < MA*1.0)")
+    # ===== FIX: حجم >= MA*0.8 مقبول =====
+    if curr['Volume'] <= vol_ma * 0.8:
+        logger.info(f"🛑 {pair}: حجم ضعيف (Vol < MA*0.8)")
         return None
 
     # ========== تحسين 7: تقييم محسّن ==========
@@ -2923,7 +2923,7 @@ def analyze_pair(pair, timeframe="5m"):
 
     # ===== الحد الأدنى للدخول هو LEVEL 5 (Score >= 80) =====
     if strength < 5:
-        logger.info(f"🛑 {pair}: مرفوضة — القوة={strength} < 5 (Score < 80)")
+        logger.info(f"🛑 {pair}: مرفوضة — Level={strength} (Score={strength*16}/100 < 80)")
         return None
 
     signal_name_ar, signal_name_en = SIGNAL_NAMES[strength]
@@ -3171,8 +3171,8 @@ def analyze_pair_king(pair, timeframe="5m"):
     volatility_ok = (atr_avg * 0.8 <= atr <= atr_avg * 2.0) if atr_avg > 0 else False
     
     # ===== FIX: نستخدم atr_avg بدل price-based عشان أزواج JPY =====
-    if atr_avg > 0 and atr < atr_avg * 0.5:
-        logger.info(f"🛑 King {pair}: ATR={atr:.5f} < avg*0.5={atr_avg*0.5:.5f}")
+    if atr_avg > 0 and atr < atr_avg * 0.3:
+        logger.info(f"🛑 King {pair}: ATR={atr:.5f} < avg*0.3={atr_avg*0.3:.5f}")
         return None
 
     adx_ok = adx >= adx_threshold
@@ -3188,9 +3188,9 @@ def analyze_pair_king(pair, timeframe="5m"):
         stoch_ok = stoch_k < stoch_d
 
     candle_ok, body_pct = check_king_candle_quality(curr)
-    # ===== تعديل: body_pct >= 0.40 مقبول (بدل 0.45) =====
-    if body_pct < 0.40:
-        logger.info(f"🛑 King {pair}: body_pct < 0.40")
+    # ===== تعديل: body_pct >= 0.35 مقبول =====
+    if body_pct < 0.35:
+        logger.info(f"🛑 King {pair}: body_pct < 0.35")
         return None
 
     near_sr = False
@@ -3216,7 +3216,7 @@ def analyze_pair_king(pair, timeframe="5m"):
 
     level = get_adaptive_king_level(score, market_type=market_type)
     if level == 0:
-        logger.info(f"🛑 King {pair}: Score={score} < 65")
+        logger.info(f"🛑 King {pair}: Score={score} < 80")
         return None
 
     htf_trend = get_king_htf_trend(pair)
@@ -4457,8 +4457,8 @@ def check_king_candle_quality(candle):
     upper_shadow = candle['High'] - max(candle['Close'], candle['Open'])
     lower_shadow = min(candle['Close'], candle['Open']) - candle['Low']
     shadow_pct = (upper_shadow + lower_shadow) / rng
-    # ===== تعديل: body >= 55% و shadow <= 35% (بدل 60%/30%) =====
-    return body_pct >= 0.55 and shadow_pct <= 0.35, body_pct
+    # ===== تعديل: body >= 50% و shadow <= 40% =====
+    return body_pct >= 0.50 and shadow_pct <= 0.40, body_pct
 
 def calculate_king_score(structure_ok, sweep_ok, trend_ok, momentum_ok,
                          volatility_ok, adx_ok, rsi_ok, stoch_ok, candle_ok, ob_ok=False, is_neutral=False):
