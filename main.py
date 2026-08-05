@@ -2634,10 +2634,13 @@ def analyze_pair_quantum(pair, timeframe="5m"):
         indicators_str = f"Score={final_score}/100 | " + " | ".join(result['reasons'][:3])
         indicators_str += f" | {kalman_info} | {volatility_info}"
 
+        # ===== FIX: entry_price = open الشمعة الجديدة =====
+        next_open = df.iloc[-1]['Open'] if len(df) > 1 else price
+
         new_trade = _build_trade_dict(
             pair=pair,
             direction=result['direction'],
-            entry_price=price,
+            entry_price=next_open,
             expire_offset=300,
             is_king=False,
             is_martingale=False,
@@ -3005,6 +3008,9 @@ def analyze_pair(pair, timeframe="5m"):
                 if pair in state.pending_alerts:
                     del state.pending_alerts[pair]
 
+            # ===== FIX: entry_price = open الشمعة الجديدة (الدخول الفعلي) =====
+            next_open = df.iloc[-1]['Open'] if len(df) > 1 else curr['Close']
+
             indicators_str = f"ADX={adx:.1f} | BBW={bbw:.4f} | RSI={rsi:.1f} | Reasons: {', '.join(reasons[:3])}"
             indicator_counts = get_indicator_counts(pair, df)
             htf_data = get_htf_market_regime(pair)
@@ -3021,7 +3027,7 @@ def analyze_pair(pair, timeframe="5m"):
                 state.recent_signals[pair] = (get_iq_time(), potential_direction)
 
             new_trade = _build_trade_dict(
-                pair=pair, direction=potential_direction, entry_price=curr['Close'],
+                pair=pair, direction=potential_direction, entry_price=next_open,
                 expire_offset=300, is_king=False, is_martingale=False,
                 signal_level=strength, signal_name=signal_name_ar, score=strength * 16,
                 filters={
@@ -3281,8 +3287,11 @@ def analyze_pair_king(pair, timeframe="5m"):
                 if f"king_{pair}" in state.pending_alerts:
                     del state.pending_alerts[f"king_{pair}"]
 
+            # ===== FIX: entry_price = open الشمعة الجديدة =====
+            next_open = df.iloc[-1]['Open'] if len(df) > 1 else curr['Close']
+
             new_trade = _build_trade_dict(
-                pair=pair, direction=potential_direction, entry_price=curr['Close'],
+                pair=pair, direction=potential_direction, entry_price=next_open,
                 expire_offset=300, is_king=True, is_martingale=False,
                 signal_level=level, signal_name=signal_name_ar, score=score,
                 filters={
@@ -3524,10 +3533,13 @@ def analyze_pair_smc(pair, timeframe="5m"):
 
         da = "صعود (CALL)" if bias == "CALL" else "هبوط (PUT)"
         
+        # ===== FIX: entry_price = open الشمعة الجديدة =====
+        next_open = df.iloc[-1]['Open'] if len(df) > 1 else price
+
         new_trade = _build_trade_dict(
             pair=pair,
             direction=bias,
-            entry_price=price,
+            entry_price=next_open,
             expire_offset=300,
             is_king=False,
             is_martingale=False,
@@ -3748,8 +3760,11 @@ def analyze_pair_pro(pair, timeframe="5m"):
         with data_lock:
             state.recent_signals[pair] = (get_iq_time(), direction)
     
+        # ===== FIX: entry_price = open الشمعة الجديدة =====
+        next_open = df.iloc[-1]['Open'] if len(df) > 1 else curr['Close']
+
         new_trade = _build_trade_dict(
-            pair=pair, direction=direction, entry_price=curr['Close'],
+            pair=pair, direction=direction, entry_price=next_open,
             expire_offset=300, is_king=False, is_martingale=False,
             signal_level=level, signal_name=name_ar, score=score,
             filters={
