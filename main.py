@@ -853,7 +853,7 @@ def send_final_signal(pair, direction, signal_name, score, duration_text, indica
     with data_lock:
         if msg_hash in state.sent_final_signals:
             return None
-        state.sent_final_signals[msg_hash] = time.time()
+        state.sent_final_signals[msg_hash] = get_iq_time()
     
     if strategy_name == 'quantum':
         emoji = QUANTUM_EMOJIS.get(signal_level, "🧠")
@@ -2693,6 +2693,7 @@ def analyze_pair_quantum(pair, timeframe="5m"):
             logger.info(f"⛔ Quantum {pair}: تم إرسالها مسبقاً (منع التكرار)")
             return None
 
+        mark_candle_sent_quantum(pair)
         logger.info(f"🧠 Quantum {pair}: {signal_name_ar} تم الإرسال (Score={adjusted_score} | Vol={volatility:.4f})")
         return final_signal
 
@@ -3070,6 +3071,7 @@ def analyze_pair(pair, timeframe="5m"):
             )
 
             if add_trade_atomic(new_trade):
+                mark_candle_sent(pair)
                 logger.info(f"✅ {pair}: {signal_name_ar} تم الإرسال (قوة={strength} | Score={score})")
                 return final_signal
             else:
@@ -3339,6 +3341,7 @@ def analyze_pair_king(pair, timeframe="5m"):
                 logger.info(f"⛔ King {pair}: تم إرسالها مسبقاً (منع التكرار)")
                 return None
                 
+            mark_candle_sent_king(pair)
             logger.info(f"👑 King {pair}: {signal_name_ar} تم الإرسال")
             return final_signal
         else:
@@ -3619,6 +3622,7 @@ def analyze_pair_smc(pair, timeframe="5m"):
             logger.info(f"⛔ SMC {pair}: تم إرسالها مسبقاً (منع التكرار)")
             return None
             
+        mark_candle_sent_smart(pair)
         logger.info(f"🏆 SMC {pair}: {name} تم الإرسال")
         return final_signal
     else:
@@ -3860,6 +3864,7 @@ def analyze_pair_pro(pair, timeframe="5m"):
             logger.info(f"⛔ Pro {pair}: تم إرسالها مسبقاً (منع التكرار)")
             return None
         
+        mark_candle_sent_pro(pair)
         logger.info(f"🔥 Pro {pair}: {name_ar} تم الإرسال")
         return final_signal
     else:
@@ -3946,40 +3951,60 @@ def already_sent_this_candle(pair):
     with data_lock:
         if key in state.sent_signals:
             return True
-        state.sent_signals[key] = get_iq_time()
     return False
+
+def mark_candle_sent(pair):
+    key = f"{pair}_{(int(get_iq_time()) // 300) * 300}"
+    with data_lock:
+        state.sent_signals[key] = get_iq_time()
 
 def already_sent_this_candle_king(pair):
     key = f"king_{pair}_{(int(get_iq_time()) // 300) * 300}"
     with data_lock:
         if key in state.king_sent_signals:
             return True
-        state.king_sent_signals[key] = get_iq_time()
     return False
+
+def mark_candle_sent_king(pair):
+    key = f"king_{pair}_{(int(get_iq_time()) // 300) * 300}"
+    with data_lock:
+        state.king_sent_signals[key] = get_iq_time()
 
 def already_sent_this_candle_smart(pair):
     key = f"smart_{pair}_{(int(get_iq_time()) // 300) * 300}"
     with data_lock:
         if key in state.smart_sent_signals:
             return True
-        state.smart_sent_signals[key] = get_iq_time()
     return False
+
+def mark_candle_sent_smart(pair):
+    key = f"smart_{pair}_{(int(get_iq_time()) // 300) * 300}"
+    with data_lock:
+        state.smart_sent_signals[key] = get_iq_time()
 
 def already_sent_this_candle_pro(pair):
     key = f"pro_{pair}_{(int(get_iq_time()) // 300) * 300}"
     with data_lock:
         if key in state.pa_sent_signals:
             return True
-        state.pa_sent_signals[key] = get_iq_time()
     return False
+
+def mark_candle_sent_pro(pair):
+    key = f"pro_{pair}_{(int(get_iq_time()) // 300) * 300}"
+    with data_lock:
+        state.pa_sent_signals[key] = get_iq_time()
 
 def already_sent_this_candle_quantum(pair):
     key = f"quantum_{pair}_{(int(get_iq_time()) // 300) * 300}"
     with data_lock:
         if key in state.quantum_sent_signals:
             return True
-        state.quantum_sent_signals[key] = get_iq_time()
     return False
+
+def mark_candle_sent_quantum(pair):
+    key = f"quantum_{pair}_{(int(get_iq_time()) // 300) * 300}"
+    with data_lock:
+        state.quantum_sent_signals[key] = get_iq_time()
 
 # ========== CHECK PAIR DISABLED ==========
 
@@ -5127,7 +5152,7 @@ def stats_engine_worker():
 # ========== CLEANUP MEMORY ==========
 
 def cleanup_memory():
-    now = time.time()
+    now = get_iq_time()
     candles_cache.cleanup()
     df_cache.cleanup()
     king_df_cache.cleanup()
