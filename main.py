@@ -324,8 +324,8 @@ FILES = {
     "settings_live.json": {},
     "settings_otc.json": {},
     "king_weights.json": {
-        "structure": 25, "sweep": 25, "trend": 15,
-        "momentum": 10, "volatility": 10, "adx": 10,
+        "structure": 25, "sweep": 15, "trend": 20,
+        "momentum": 15, "volatility": 10, "adx": 10,
         "rsi": 0, "stochastic": 0, "candle": 5
     },
     "optimization_proposal.json": {},
@@ -370,8 +370,8 @@ def init_log_files():
 
 # ========== KING WEIGHTS ==========
 DEFAULT_KING_WEIGHTS = {
-    "structure": 25, "sweep": 25, "trend": 15,
-    "momentum": 10, "volatility": 10, "adx": 10,
+    "structure": 25, "sweep": 15, "trend": 20,
+    "momentum": 15, "volatility": 10, "adx": 10,
     "rsi": 0, "stochastic": 0, "candle": 5
 }
 
@@ -403,13 +403,13 @@ SETTINGS_OTC_FILE = "settings_otc.json"
 def load_settings(market_type="live"):
     file_path = SETTINGS_LIVE_FILE if market_type == "live" else SETTINGS_OTC_FILE
     default = {
-        "adx_threshold": 22,
-        "rsi_low_call": 30,
-        "rsi_high_call": 50,
-        "rsi_low_put": 50,
-        "rsi_high_put": 70,
-        "sweep_threshold": 0.0003,
-        "body_pct_min": 0.60,
+        "adx_threshold": 18 if market_type == "otc" else 22,
+        "rsi_low_call": 25,
+        "rsi_high_call": 55,
+        "rsi_low_put": 45,
+        "rsi_high_put": 75,
+        "sweep_threshold": 0.0005 if market_type == "otc" else 0.0003,
+        "body_pct_min": 0.55,
         "last_updated": 0,
         "market_type": market_type,
         "approved": False,
@@ -3080,18 +3080,33 @@ def analyze_pair_king(pair, timeframe="5m"):
     df = detect_swings(df, window=2)
     structure, last_sh_idx, last_sl_idx = get_market_structure(df, lookback=30)
     
+    # ===== تعديل: NEUTRAL مش بيقتل الإشارة، بس بيقلل الـ score =====
     if structure == "NEUTRAL":
         adx_check, _, _ = calculate_adx(df, 14)
-        if adx_check < 15:
-            logger.info(f"🛑 King {pair}: NEUTRAL و ADX={adx_check:.1f} < 20")
+        if adx_check < 12:
+            logger.info(f"🛑 King {pair}: NEUTRAL و ADX={adx_check:.1f} < 12 — ضعيف جداً")
             return None
         else:
-            logger.info(f"ℹ️ King {pair}: NEUTRAL لكن ADX={adx_check:.1f} >= 20")
+            logger.info(f"ℹ️ King {pair}: NEUTRAL لكن ADX={adx_check:.1f} >= 12 — مستمر بس بدون Structure نقاط")
 
-    potential_direction = "CALL" if structure == "BULLISH" else "PUT"
+    potential_direction = "CALL" if structure == "BULLISH" else "PUT" if structure == "BEARISH" else None
 
     df['ALMA_20'] = calculate_alma(df['Close'], 20, 0.85, 6)
     df['ALMA_80'] = calculate_alma(df['Close'], 80, 0.85, 6)
+
+    # ===== تعديل: لو Structure NEUTRAL، نحدد الاتجاه من ALMA =====
+    if potential_direction is None:
+        curr_tmp = df.iloc[-2]
+        if curr_tmp['ALMA_20'] > curr_tmp['ALMA_80']:
+            potential_direction = "CALL"
+            logger.info(f"ℹ️ King {pair}: اتجاه من ALMA = CALL")
+        elif curr_tmp['ALMA_20'] < curr_tmp['ALMA_80']:
+            potential_direction = "PUT"
+            logger.info(f"ℹ️ King {pair}: اتجاه من ALMA = PUT")
+        else:
+            logger.info(f"🛑 King {pair}: لا يوجد اتجاه واضح")
+            return None
+
     df['RSI'] = wilder_rsi(df['Close'], 14)
     df['Stoch_K'], df['Stoch_D'] = calculate_stoch(df, 14, 3)
     df['ROC'] = calculate_roc(df['Close'], 5)
@@ -3114,12 +3129,29 @@ def analyze_pair_king(pair, timeframe="5m"):
     sup_levels, res_levels = get_smart_sr_levels(df, lookback=30)
 
     sweep_ok, sweep_level = detect_liquidity_sweep(df, potential_direction, sweep_threshold=sweep_threshold)
+
+    # ===== تعديل: Order Block كـ fallback لو مفيش Sweep =====
+    ob_ok = False
     if not sweep_ok:
-        if adx < 12:
-            logger.info(f"🛑 King {pair}: لا يوجد Sweep و ADX={adx:.1f} < 20")
+        obs = detect_order_blocks(df, lookback=30)
+        target_obs = obs['bull'][-3:] if potential_direction == "CALL" else obs['bear'][-3:]
+        for ob in reversed(target_obs):
+            if potential_direction == "CALL":
+                if ob['low'] <= price <= ob['high'] * 1.001:
+                    ob_ok = True
+                    logger.info(f"✅ King {pair}: Order Block صاعد كـ fallback")
+                    break
+            else:
+                if ob['high'] * 0.999 <= price <= ob['low']:
+                    ob_ok = True
+                    logger.info(f"✅ King {pair}: Order Block هابط كـ fallback")
+                    break
+
+        if not sweep_ok and not ob_ok and adx < 12:
+            logger.info(f"🛑 King {pair}: لا يوجد Sweep/OB و ADX={adx:.1f} < 12")
             return None
-        else:
-            logger.info(f"ℹ️ King {pair}: لا يوجد Sweep لكن ADX={adx:.1f} >= 20")
+        elif not sweep_ok and not ob_ok:
+            logger.info(f"ℹ️ King {pair}: لا يوجد Sweep/OB لكن ADX={adx:.1f} >= 12 — مستمر")
 
     trend_ok = (potential_direction == "CALL" and alma20 > alma80) or (potential_direction == "PUT" and alma20 < alma80)
     momentum_ok = (potential_direction == "CALL" and roc > 0) or (potential_direction == "PUT" and roc < 0)
@@ -3143,8 +3175,9 @@ def analyze_pair_king(pair, timeframe="5m"):
         stoch_ok = stoch_k < stoch_d
 
     candle_ok, body_pct = check_king_candle_quality(curr)
-    if body_pct < 0.45:
-        logger.info(f"🛑 King {pair}: body_pct < 0.45")
+    # ===== تعديل: body_pct >= 0.40 مقبول (بدل 0.45) =====
+    if body_pct < 0.40:
+        logger.info(f"🛑 King {pair}: body_pct < 0.40")
         return None
 
     near_sr = False
@@ -3163,7 +3196,7 @@ def analyze_pair_king(pair, timeframe="5m"):
         structure_ok=(structure in ["BULLISH", "BEARISH"]),
         sweep_ok=sweep_ok, trend_ok=trend_ok, momentum_ok=momentum_ok,
         volatility_ok=volatility_ok, adx_ok=adx_ok, rsi_ok=rsi_ok,
-        stoch_ok=stoch_ok, candle_ok=candle_ok
+        stoch_ok=stoch_ok, candle_ok=candle_ok, ob_ok=ob_ok
     )
 
     level = get_adaptive_king_level(score, market_type=market_type)
@@ -3245,7 +3278,7 @@ def analyze_pair_king(pair, timeframe="5m"):
                 signal_level=level, signal_name=signal_name_ar, score=score,
                 filters={
                     'structure_ok': structure in ["BULLISH", "BEARISH"],
-                    'sweep_ok': sweep_ok, 'trend_ok': trend_ok,
+                    'sweep_ok': sweep_ok, 'ob_ok': ob_ok, 'trend_ok': trend_ok,
                     'momentum_ok': momentum_ok, 'volatility_ok': volatility_ok,
                     'adx_ok': adx_ok, 'rsi_ok': rsi_ok, 'stoch_ok': stoch_ok,
                     'candle_ok': candle_ok
@@ -4339,28 +4372,39 @@ def detect_liquidity_sweep(df, direction, sweep_threshold=0.0003):
     if len(df) < 10:
         return False, None
     if direction == "CALL":
-        swing_lows = df[df['is_swing_low']].tail(3)
+        # ===== تعديل: نوسع لـ 5 swings بدل 3 =====
+        swing_lows = df[df['is_swing_low']].tail(5)
         if swing_lows.empty:
             return False, None
         for idx, row in swing_lows.iterrows():
             sl_price = row['Low']
-            for i in range(max(-3, -len(df)), 0):
+            # ===== تعديل: نفحص 5 شموع أخيرة بدل 3 =====
+            for i in range(max(-5, -len(df)), 0):
                 candle = df.iloc[i]
                 if candle['Low'] < sl_price * (1 - sweep_threshold):
                     if candle['Close'] > sl_price:
                         return True, sl_price
+            # ===== تعديل: نضيف check لو السعر قريب من Swing Low =====
+            curr_price = df.iloc[-1]['Close']
+            if abs(curr_price - sl_price) / sl_price <= sweep_threshold * 1.5:
+                if curr_price > sl_price:
+                    return True, sl_price
         return False, None
     else:
-        swing_highs = df[df['is_swing_high']].tail(3)
+        swing_highs = df[df['is_swing_high']].tail(5)
         if swing_highs.empty:
             return False, None
         for idx, row in swing_highs.iterrows():
             sh_price = row['High']
-            for i in range(max(-3, -len(df)), 0):
+            for i in range(max(-5, -len(df)), 0):
                 candle = df.iloc[i]
                 if candle['High'] > sh_price * (1 + sweep_threshold):
                     if candle['Close'] < sh_price:
                         return True, sh_price
+            curr_price = df.iloc[-1]['Close']
+            if abs(curr_price - sh_price) / sh_price <= sweep_threshold * 1.5:
+                if curr_price < sh_price:
+                    return True, sh_price
         return False, None
 
 def get_smart_sr_levels(df, lookback=30, tolerance=0.0002):
@@ -4389,17 +4433,19 @@ def check_king_candle_quality(candle):
     upper_shadow = candle['High'] - max(candle['Close'], candle['Open'])
     lower_shadow = min(candle['Close'], candle['Open']) - candle['Low']
     shadow_pct = (upper_shadow + lower_shadow) / rng
-    return body_pct >= 0.60 and shadow_pct <= 0.30, body_pct
+    # ===== تعديل: body >= 55% و shadow <= 35% (بدل 60%/30%) =====
+    return body_pct >= 0.55 and shadow_pct <= 0.35, body_pct
 
 def calculate_king_score(structure_ok, sweep_ok, trend_ok, momentum_ok,
-                         volatility_ok, adx_ok, rsi_ok, stoch_ok, candle_ok):
+                         volatility_ok, adx_ok, rsi_ok, stoch_ok, candle_ok, ob_ok=False):
     with data_lock:
         w = dict(KING_WEIGHTS)
     score = 0
     if structure_ok: score += w.get('structure', 25)
-    if sweep_ok: score += w.get('sweep', 25)
-    if trend_ok: score += w.get('trend', 15)
-    if momentum_ok: score += w.get('momentum', 10)
+    # ===== تعديل: Sweep أو OB بياخدو نفس الـ weight =====
+    if sweep_ok or ob_ok: score += w.get('sweep', 15)
+    if trend_ok: score += w.get('trend', 20)
+    if momentum_ok: score += w.get('momentum', 15)
     if volatility_ok: score += w.get('volatility', 10)
     if adx_ok: score += w.get('adx', 10)
     if rsi_ok: score += w.get('rsi', 0)
