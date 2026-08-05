@@ -4617,9 +4617,8 @@ def get_king_htf_trend(pair):
 # ========== TRADE RESULTS CHECK ==========
 
 def check_tie(ep, fp):
-    """التعادل: سعر الدخول قريب جداً من سعر الخروج (±0.01%)"""
-    diff_pct = abs(float(ep) - float(fp)) / float(ep) if float(ep) != 0 else 0
-    return diff_pct < 0.0001  # ===== FIX: tolerance 0.01% =====
+    """التعادل: سعر الدخول يساوي سعر الخروج بالضبط (5 منازل عشرية)"""
+    return round(float(ep), 5) == round(float(fp), 5)
 
 def check_trade_results():
     current_time = get_iq_time()
@@ -4648,6 +4647,7 @@ def check_trade_results():
                         trade['warned_loss'] = True
 
             if time_left <= 0:
+                # ===== FIX: نجيب الشمعة اللي expire_time جواها بالضبط =====
                 candles = get_cached_candles(pair, 300, 5, max_age=0, force_refresh=True)
 
                 if not candles or len(candles) < 2:
@@ -4655,25 +4655,36 @@ def check_trade_results():
                     continue
 
                 target_candle = None
-                # ===== FIX: ندور على الشمعة المقفولة اللي expire_time جواها =====
+                # ندور على الشمعة اللي expire_time جواها (from <= expire <= to)
                 for c in reversed(candles):
                     candle_from = c.get('from', 0)
                     candle_to = c.get('to', 0)
-                    # expire_time لازم يكون جوا الشمعة أو بعدها بـ 5 ثواني
-                    # والشمعة لازم تكون مقفولة (to <= current_time)
-                    if candle_from <= trade['expire_time'] <= candle_to + 5 and candle_to <= current_time + 5:
+                    if candle_from <= trade['expire_time'] <= candle_to:
                         target_candle = c
                         break
 
-                # ===== FIX: لو مالقناش، ندور على آخر شمعة مقفولة =====
+                # لو مالقناش، ندور على الشمعة المقفولة قبل expire_time
                 if target_candle is None:
                     for c in reversed(candles):
-                        if c.get('to', 0) <= current_time + 5:
+                        if c.get('to', 0) <= trade['expire_time']:
+                            target_candle = c
+                            break
+
+                # ===== FIX: لو الشمعة لسه مفتوحة، نستنى الدورة الجاية =====
+                if target_candle and target_candle.get('to', 0) > current_time:
+                    logger.info(f"⏳ {pair}: الشمعة لسه مفتوحة (to={target_candle['to']} > now={int(current_time)}) — مستنى التقييم")
+                    continue
+
+                # ===== FIX: fallback = آخر شمعة مقفولة =====
+                if target_candle is None:
+                    for c in reversed(candles):
+                        if c.get('to', 0) <= current_time:
                             target_candle = c
                             break
                     if target_candle is None:
-                        target_candle = candles[-1]
-                    logger.warning("⚠️ " + pair + f": fallback — expire={trade['expire_time']} | candle_to={target_candle.get('to',0)} | now={current_time}")
+                        logger.warning("⏳ " + pair + ": مفيش شمعة مقفولة متاحة — مستنى")
+                        continue
+                    logger.warning("⚠️ " + pair + f": fallback — expire={trade['expire_time']} | candle_to={target_candle.get('to',0)} | now={int(current_time)}")
 
                 fp = target_candle['close']
                 candle_to = target_candle.get('to', 0)
@@ -4693,10 +4704,13 @@ def check_trade_results():
                 else:
                     is_win = fp < ep and not is_tie
 
-                diff_pct = abs(fp - ep) / ep * 100 if ep != 0 else 0
+                diff = fp - ep
+                diff_pct = abs(diff) / ep * 100 if ep != 0 else 0
+                # ===== FIX: debug أكتر عشان نعرف إيه اللي بيحصل =====
                 logger.info(
-                    "📊 RESULT | " + str(pair) + " | Win:" + str(is_win) + " | Tie:" + str(is_tie) + " | "
-                    "Diff:" + "{:.4f}".format(diff_pct) + "% | Strategy:" + str(strategy)
+                    f"📊 RESULT | {pair} | Dir:{direction} | EP:{ep:.5f} | FP:{fp:.5f} | "
+                    f"Diff:{diff:+.5f} ({diff_pct:.4f}%) | Tie:{is_tie} | Win:{is_win} | "
+                    f"Candle:[{target_candle.get('from',0)}-{target_candle.get('to',0)}] | Strategy:{strategy}"
                 )
 
                 ts = get_cairo_time().strftime('%I:%M %p')
