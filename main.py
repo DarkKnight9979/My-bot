@@ -4164,7 +4164,6 @@ def update_news():
     
     for url in sources:
         for attempt in range(1):
-        for attempt in range(3):
             try:
                 r = requests.get(url, headers=headers, timeout=15)
                 if r.status_code == 200:
