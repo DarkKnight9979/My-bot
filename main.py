@@ -1855,7 +1855,8 @@ def confirm_regime_with_htf(pair, ltf_regime):
     htf_regime = htf.get("regime", "unknown")
     htf_confidence = htf.get("confidence", 0)
 
-    # If HTF confidence is low, trust LTF    if htf_confidence < 40:
+    # If HTF confidence is low, trust LTF
+    if htf_confidence < 40:
         return ltf_regime, htf_confidence, "ltf_dominant"
 
     # If both agree, boost confidence
