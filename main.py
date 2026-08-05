@@ -2525,7 +2525,7 @@ def analyze_pair_quantum(pair, timeframe="5m"):
 
     # ===== العتبة ثابتة 75 =====
     if result['direction'] is None or adjusted_score < 45:
-        logger.info(f"🛑 Quantum {pair}: النتيجة {adjusted_score} < 60")
+        logger.info(f"🛑 Quantum {pair}: النتيجة {adjusted_score} < 45")
         return None
 
     if duplicate_signal_quantum(pair, result['direction']):
@@ -2938,7 +2938,7 @@ def analyze_pair(pair, timeframe="5m"):
         logger.info(f"📊 {pair}: Strength بعد خصم {total_penalty} (regime={regime_penalty}, htf={htf_penalty}) → {strength}")
 
     if strength < 1:
-        logger.info(f"🛑 {pair}: مرفوضة — القوة={strength} < 1 (Score < 60)")
+        logger.info(f"🛑 {pair}: مرفوضة — القوة={strength} < 1 (Score < 45)")
         return None
 
     signal_name_ar, signal_name_en = SIGNAL_NAMES[strength]
@@ -3105,7 +3105,7 @@ def analyze_pair_king(pair, timeframe="5m"):
     market_type = "otc" if is_otc_pair(pair) else "live"
 
     df = get_cached_df_king(pair, tf_seconds, 80)
-    if df is None or len(df) < 60:
+    if df is None or len(df) < 45:
         logger.info(f"🛑 King {pair}: لا يوجد بيانات")
         return None
 
@@ -3956,7 +3956,7 @@ def can_take_signal(pair, direction):
     with data_lock:
         if pair in state.recent_signals:
             lt, ld = state.recent_signals[pair]
-            if get_iq_time() - lt < 600 and ld != direction:
+            if get_iq_time() - lt < 450 and ld != direction:
                 return False
     return True
 
@@ -4676,7 +4676,7 @@ def get_cached_df_king(pair, tf, count):
     if data is not None:
         return data
     raw = get_cached_candles(pair, tf, count, max_age=15)
-    if not raw or len(raw) < 60:
+    if not raw or len(raw) < 45:
         return None
     df = pd.DataFrame(raw)
     df.rename(columns={'open':'Open','max':'High','min':'Low','close':'Close','volume':'Volume'}, inplace=True)
@@ -5010,7 +5010,8 @@ def connect_iqoption():
             time.sleep(delay)
             delay = min(delay * 2, 30)
     send_telegram_message(f"❌ *فشل الاتصال نهائياً:* `{reason}`")
-    raise ConnectionError("فشل الاتصال")
+    logger.error("فشل الاتصال — سيتم إعادة المحاولة")
+    return None
 
 def _reconnect_worker():
     global API
@@ -5173,17 +5174,17 @@ def cleanup_memory():
     king_df_cache.cleanup()
     smart_df_cache.cleanup()
     with data_lock:
-        state.sent_signals = {k:v for k,v in state.sent_signals.items() if now - v < 600}
+        state.sent_signals = {k:v for k,v in state.sent_signals.items() if now - v < 450}
         state.recent_signals = {k:v for k,v in state.recent_signals.items() if now - v[0] < 1200}
-        state.king_sent_signals = {k:v for k,v in state.king_sent_signals.items() if now - v < 600}
+        state.king_sent_signals = {k:v for k,v in state.king_sent_signals.items() if now - v < 450}
         state.king_recent_signals = {k:v for k,v in state.king_recent_signals.items() if now - v[0] < 1200}
-        state.smart_sent_signals = {k:v for k,v in state.smart_sent_signals.items() if now - v < 600}
-        state.pa_sent_signals = {k:v for k,v in state.pa_sent_signals.items() if now - v < 600}
-        state.quantum_sent_signals = {k:v for k,v in state.quantum_sent_signals.items() if now - v < 600}
+        state.smart_sent_signals = {k:v for k,v in state.smart_sent_signals.items() if now - v < 450}
+        state.pa_sent_signals = {k:v for k,v in state.pa_sent_signals.items() if now - v < 450}
+        state.quantum_sent_signals = {k:v for k,v in state.quantum_sent_signals.items() if now - v < 450}
         state.quantum_alerted_pairs = {k:v for k,v in state.quantum_alerted_pairs.items() if isinstance(v, (int, float)) and now - v < 480}
-        state.sent_final_signals = {k:v for k,v in state.sent_final_signals.items() if now - v < 600}
-        state.pa_alerted_pairs = {k:v for k,v in state.pa_alerted_pairs.items() if isinstance(v, (int, float)) and now - v < 600}
-        state.pending_alerts = {k:v for k,v in state.pending_alerts.items() if isinstance(v, dict) and now - v.get('alert_time', 0) < 600}
+        state.sent_final_signals = {k:v for k,v in state.sent_final_signals.items() if now - v < 450}
+        state.pa_alerted_pairs = {k:v for k,v in state.pa_alerted_pairs.items() if isinstance(v, (int, float)) and now - v < 450}
+        state.pending_alerts = {k:v for k,v in state.pending_alerts.items() if isinstance(v, dict) and now - v.get('alert_time', 0) < 450}
         state.settings_cache = {k:v for k,v in state.settings_cache.items() if now - v[1] < SETTINGS_CACHE_TTL}
         for k in list(state.alerted_pairs.keys()):
             val = state.alerted_pairs[k]
@@ -5241,7 +5242,18 @@ def run_bot():
     global API
 
     init_log_files()
-    API = connect_iqoption()
+    
+    # FIX: retry connection forever instead of crashing
+    while API is None and not stop_event.is_set():
+        try:
+            API = connect_iqoption()
+        except Exception as e:
+            logger.error(f"❌ فشل الاتصال: {e} — إعادة المحاولة خلال 30 ثانية...")
+            send_telegram_message(f"🔴 *فشل الاتصال بـ IQ Option:* `{e}`\n⏳ إعادة المحاولة خلال 30 ثانية...")
+            stop_event.wait(30)
+    
+    if stop_event.is_set():
+        return
     
     init_quantum_system()
 
