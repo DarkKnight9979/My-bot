@@ -2474,12 +2474,23 @@ def analyze_pair_quantum(pair, timeframe="5m"):
     smoothed_price = kalman.update(price)
     volatility = kalman.get_volatility()
 
-    vol_filter = analyze_volatility_filter(volatility)
-    
+    # ===== FIX: لو Kalman لسه جديد (history < 10)، نتجاهل volatility filter =====
+    if len(kalman.history) < 10:
+        logger.info(f"ℹ️ Quantum {pair}: Kalman جديد — نتجاهل volatility filter")
+        vol_filter = {
+            'status': 'OK',
+            'reason': f'Kalman جديد (history={len(kalman.history)})',
+            'score_adjust': 0,
+            'can_enter': True,
+            'emoji': '📊'
+        }
+    else:
+        vol_filter = analyze_volatility_filter(volatility)
+
     if not vol_filter['can_enter']:
         logger.info(f"🛑 Quantum {pair}: {vol_filter['reason']}")
         return None
-    
+
     logger.info(f"📊 Quantum {pair}: {vol_filter['reason']}")
 
     structure = detect_market_structure_quantum(df)
@@ -2871,19 +2882,16 @@ def analyze_pair(pair, timeframe="5m"):
         potential_direction = "PUT"
 
     if potential_direction is None:
-        return None
-
-    # ========== تحسين 5: HTF Filter أقوى ==========
+        return No    # ========== تحسين 5: HTF Filter — تحذير مش رفض =====
     if htf_trend is not None and htf_trend != potential_direction:
-        logger.info(f"🛑 {pair}: HTF Trend عكسي")
-        return None
-    
-    # Structure عكسي = رفض
+        logger.info(f"⚠️ {pair}: HTF Trend عكسي — مستمر بحذر")
+        # ===== FIX: مش بنرفض، بنكمل بس بنخصم 10 نقاط =====
+
+    # Structure عكسي = تحذير مش رفض
     if htf_structure:
-        if (potential_direction == "CALL" and htf_structure == "BEARISH") or \
-           (potential_direction == "PUT" and htf_structure == "BULLISH"):
-            logger.info(f"🛑 {pair}: HTF Structure عكسي")
-            return None
+        if (potential_direction == "CALL" and htf_structure == "BEARISH") or            (potential_direction == "PUT" and htf_structure == "BULLISH"):
+            logger.info(f"⚠️ {pair}: HTF Structure عكسي — مستمر بحذر")
+            # ===== FIX: مش بنرفض =====
 
     # ========== تحسين 6: فلاتر صارمة ==========
     atr_avg = atr_series.tail(20).mean()
@@ -2895,8 +2903,9 @@ def analyze_pair(pair, timeframe="5m"):
     if atr > atr_avg * 3.5:
         logger.info(f"⚠️ {pair}: تقلب عالي (ATR > avg*3.5) — مستمر بحذر")
 
-    if curr['Volume'] <= vol_ma * 1.2:  # رفع من 1.5
-        logger.info(f"🛑 {pair}: حجم ضعيف (Vol < MA*1.8)")
+    # ===== FIX: حجم >= MA*1.0 مقبول (بدل 1.2) =====
+    if curr['Volume'] <= vol_ma * 1.0:
+        logger.info(f"🛑 {pair}: حجم ضعيف (Vol < MA*1.0)")
         return None
 
     # ========== تحسين 7: تقييم محسّن ==========
@@ -3097,15 +3106,13 @@ def analyze_pair_king(pair, timeframe="5m"):
     # ===== تعديل: لو Structure NEUTRAL، نحدد الاتجاه من ALMA =====
     if potential_direction is None:
         curr_tmp = df.iloc[-2]
-        if curr_tmp['ALMA_20'] > curr_tmp['ALMA_80']:
+        # ===== FIX: >= بدل > عشان ALMA_20 == ALMA_80 يعتبر CALL =====
+        if curr_tmp['ALMA_20'] >= curr_tmp['ALMA_80']:
             potential_direction = "CALL"
-            logger.info(f"ℹ️ King {pair}: اتجاه من ALMA = CALL")
-        elif curr_tmp['ALMA_20'] < curr_tmp['ALMA_80']:
-            potential_direction = "PUT"
-            logger.info(f"ℹ️ King {pair}: اتجاه من ALMA = PUT")
+            logger.info(f"ℹ️ King {pair}: اتجاه من ALMA = CALL (ALMA20={curr_tmp['ALMA_20']:.5f} >= ALMA80={curr_tmp['ALMA_80']:.5f})")
         else:
-            logger.info(f"🛑 King {pair}: لا يوجد اتجاه واضح")
-            return None
+            potential_direction = "PUT"
+            logger.info(f"ℹ️ King {pair}: اتجاه من ALMA = PUT (ALMA20={curr_tmp['ALMA_20']:.5f} < ALMA80={curr_tmp['ALMA_80']:.5f})")
 
     df['RSI'] = wilder_rsi(df['Close'], 14)
     df['Stoch_K'], df['Stoch_D'] = calculate_stoch(df, 14, 3)
@@ -3157,9 +3164,9 @@ def analyze_pair_king(pair, timeframe="5m"):
     momentum_ok = (potential_direction == "CALL" and roc > 0) or (potential_direction == "PUT" and roc < 0)
     volatility_ok = (atr_avg * 0.8 <= atr <= atr_avg * 2.0) if atr_avg > 0 else False
     
-    min_atr = price * 0.0002
-    if atr < min_atr:
-        logger.info(f"🛑 King {pair}: ATR={atr:.5f} < {min_atr:.5f}")
+    # ===== FIX: نستخدم atr_avg بدل price-based عشان أزواج JPY =====
+    if atr_avg > 0 and atr < atr_avg * 0.5:
+        logger.info(f"🛑 King {pair}: ATR={atr:.5f} < avg*0.5={atr_avg*0.5:.5f}")
         return None
 
     adx_ok = adx >= adx_threshold
@@ -3192,11 +3199,13 @@ def analyze_pair_king(pair, timeframe="5m"):
                 near_sr = True
                 break
 
+    # ===== FIX: نمرر is_neutral عشان ندي 15 نقاط =====
     score = calculate_king_score(
         structure_ok=(structure in ["BULLISH", "BEARISH"]),
         sweep_ok=sweep_ok, trend_ok=trend_ok, momentum_ok=momentum_ok,
         volatility_ok=volatility_ok, adx_ok=adx_ok, rsi_ok=rsi_ok,
-        stoch_ok=stoch_ok, candle_ok=candle_ok, ob_ok=ob_ok
+        stoch_ok=stoch_ok, candle_ok=candle_ok, ob_ok=ob_ok,
+        is_neutral=(structure == "NEUTRAL")
     )
 
     level = get_adaptive_king_level(score, market_type=market_type)
@@ -4437,11 +4446,16 @@ def check_king_candle_quality(candle):
     return body_pct >= 0.55 and shadow_pct <= 0.35, body_pct
 
 def calculate_king_score(structure_ok, sweep_ok, trend_ok, momentum_ok,
-                         volatility_ok, adx_ok, rsi_ok, stoch_ok, candle_ok, ob_ok=False):
+                         volatility_ok, adx_ok, rsi_ok, stoch_ok, candle_ok, ob_ok=False, is_neutral=False):
     with data_lock:
         w = dict(KING_WEIGHTS)
     score = 0
-    if structure_ok: score += w.get('structure', 25)
+    # ===== FIX: NEUTRAL مع ADX >= 12 بياخد 15 نقاط (بدل 0) =====
+    if structure_ok:
+        score += w.get('structure', 25)
+    elif is_neutral:
+        score += 15
+        logger.info(f"ℹ️ King: NEUTRAL structure +15 pts")
     # ===== تعديل: Sweep أو OB بياخدو نفس الـ weight =====
     if sweep_ok or ob_ok: score += w.get('sweep', 15)
     if trend_ok: score += w.get('trend', 20)
