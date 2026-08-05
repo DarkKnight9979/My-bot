@@ -2882,7 +2882,7 @@ def analyze_pair(pair, timeframe="5m"):
         potential_direction = "PUT"
 
     if potential_direction is None:
-        return No    # ========== تحسين 5: HTF Filter — تحذير مش رفض =====
+        return None
     if htf_trend is not None and htf_trend != potential_direction:
         logger.info(f"⚠️ {pair}: HTF Trend عكسي — مستمر بحذر")
         # ===== FIX: مش بنرفض، بنكمل بس بنخصم 10 نقاط =====
