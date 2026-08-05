@@ -53,7 +53,7 @@ ADAPTIVE_THRESHOLD_MAX = 100
 SETTINGS_CACHE_TTL = 300
 
 # ========== SCORE CONFIGURATION - NEW THRESHOLDS (75-120) ==========
-MIN_SCORE_ALL_STRATEGIES = 75
+MIN_SCORE_ALL_STRATEGIES = 60
 
 SCORE_LEVELS = {
     1: (75, 79),    # جيدة 🟢
@@ -129,13 +129,13 @@ QUANTUM_CONFIG = {
         "test_size": 0.3
     },
     "volatility_filter": {
-        "min_volatility": 0.0005,
+        "min_volatility": 0.0001,
         "max_volatility": 0.01,
         "ideal_low": 0.001,
         "ideal_high": 0.005,
         "score_bonus": 5,
         "score_penalty": 10,
-        "reject_low": 0.00005,
+        "reject_low": 0.00001,
         "reject_high": 0.012
     }
 }
@@ -301,21 +301,12 @@ def get_cairo_time():
 
 def get_iq_time():
     with data_lock:
-        offset = state.server_time_offset
-        # Sanity check: if offset is absurdly large (more than 1 day), reset it
-        if abs(offset) > 86400:
-            logger.warning(f"⚠️ server_time_offset غير طبيعي ({offset:.0f}s), إعادة ضبط...")
-            state.server_time_offset = 0
-            offset = 0
-        return time.time() + offset
+        return time.time() + state.server_time_offset
 
 def sync_server_time(api_instance):
     try:
         iq_timestamp = api_instance.get_server_timestamp()
         if iq_timestamp:
-            # IQ Option API sometimes returns milliseconds instead of seconds
-            if iq_timestamp > 2000000000000:
-                iq_timestamp = iq_timestamp / 1000.0
             with data_lock:
                 state.server_time_offset = iq_timestamp - time.time()
             logger.info(f"⏱️ تم المزامنة: {state.server_time_offset:.2f} ثانية")
@@ -2499,7 +2490,7 @@ def analyze_pair_quantum(pair, timeframe="5m"):
     vol_filter = analyze_volatility_filter(volatility)
     vol_penalty = 0
     if not vol_filter['can_enter']:
-        vol_penalty = 10  # خصم 10 نقاط بدلاً من الرفض
+        vol_penalty = 5  # خصم 5 نقاط بدلاً من الرفض
         logger.info(f"⚠️ Quantum {pair}: {vol_filter['reason']} (خصم 10 نقاط)")
     else:
         logger.info(f"📊 Quantum {pair}: {vol_filter['reason']}")
@@ -2514,7 +2505,7 @@ def analyze_pair_quantum(pair, timeframe="5m"):
     
     if fvg:
         if not fvg_retest_quantum(df, fvg):
-            fvg_penalty = 5
+            fvg_penalty = 2
             logger.info(f"⚠️ Quantum {pair}: FVG لم يُعاد اختباره (خصم 5 نقاط)")
     else:
         fvg_penalty = 10
@@ -2533,8 +2524,8 @@ def analyze_pair_quantum(pair, timeframe="5m"):
     logger.info(f"📊 Quantum {pair}: النتيجة الأصلية {result['score']} → معدلة {adjusted_score} (خصم {total_penalty})")
 
     # ===== العتبة ثابتة 75 =====
-    if result['direction'] is None or adjusted_score < 75:
-        logger.info(f"🛑 Quantum {pair}: النتيجة {adjusted_score} < 75")
+    if result['direction'] is None or adjusted_score < 60:
+        logger.info(f"🛑 Quantum {pair}: النتيجة {adjusted_score} < 60")
         return None
 
     if duplicate_signal_quantum(pair, result['direction']):
@@ -2810,12 +2801,12 @@ def evaluate_signal_strength_enhanced(direction, curr, prev, df, price, alma9, a
     elif adx >= 15:
         score += int(w["adx"] * 0.5)
         reasons.append("ADX OK +2")
-    elif adx < 8:
+    elif adx < 3:
         return 0, []
     
-    if atr < price * 0.00015:
+    if atr < price * 0.00008:
         return 0, []
-    if bbw < 0.0006:
+    if bbw < 0.0003:
         return 0, []
     
     if score >= 110:
@@ -2912,7 +2903,7 @@ def analyze_pair(pair, timeframe="5m"):
     if atr > atr_avg * 3.5:
         logger.info(f"⚠️ {pair}: تقلب عالي (ATR > avg*3.5) — مستمر بحذر")
 
-    if curr['Volume'] <= vol_ma * 0.7:
+    if curr['Volume'] <= vol_ma * 0.2:
         logger.info(f"🛑 {pair}: حجم ضعيف (Vol < MA*0.7)")
         return None
 
@@ -2947,7 +2938,7 @@ def analyze_pair(pair, timeframe="5m"):
         logger.info(f"📊 {pair}: Strength بعد خصم {total_penalty} (regime={regime_penalty}, htf={htf_penalty}) → {strength}")
 
     if strength < 1:
-        logger.info(f"🛑 {pair}: مرفوضة — القوة={strength} < 1 (Score < 75)")
+        logger.info(f"🛑 {pair}: مرفوضة — القوة={strength} < 1 (Score < 60)")
         return None
 
     signal_name_ar, signal_name_en = SIGNAL_NAMES[strength]
@@ -3008,7 +2999,7 @@ def analyze_pair(pair, timeframe="5m"):
         if rng == 0:
             return None
         body_pct = body / rng
-        if body_pct < 0.35:
+        if body_pct < 0.10:
             if pending:
                 send_cancelled_alert(pair, potential_direction, f"شمعة ضعيفة ({body_pct:.1%})", 'original')
             with data_lock:
@@ -3179,7 +3170,7 @@ def analyze_pair_king(pair, timeframe="5m"):
     volatility_ok = (atr_avg * 0.8 <= atr <= atr_avg * 2.0) if atr_avg > 0 else False
     
     # ===== تخفيف شرط ATR =====
-    min_atr = price * 0.00010  # من 0.0002 ← 0.00010
+    min_atr = price * 0.00005  # من 0.0002 ← 0.00010
     if atr < min_atr:
         logger.info(f"🛑 King {pair}: ATR={atr:.5f} < {min_atr:.5f}")
         return None
@@ -3198,7 +3189,7 @@ def analyze_pair_king(pair, timeframe="5m"):
 
     # ===== تخفيف شرط جودة الشمعة =====
     candle_ok, body_pct = check_king_candle_quality(curr)
-    if body_pct < 0.20:  # من 0.35 ← 0.20
+    if body_pct < 0.10:  # من 0.35 ← 0.20
         logger.info(f"🛑 King {pair}: body_pct < 0.20")
         return None
 
@@ -3224,8 +3215,8 @@ def analyze_pair_king(pair, timeframe="5m"):
     score = score - regime_penalty
 
     # ===== العتبة ثابتة 75 =====
-    if score < 75:
-        logger.info(f"🛑 King {pair}: Score={score} < 75")
+    if score < 60:
+        logger.info(f"🛑 King {pair}: Score={score} < 60")
         return None
     
     # ===== المستويات: 75-120 =====
@@ -3241,7 +3232,7 @@ def analyze_pair_king(pair, timeframe="5m"):
         level = 0
 
     if level == 0:
-        logger.info(f"🛑 King {pair}: Score={score} < 75")
+        logger.info(f"🛑 King {pair}: Score={score} < 60")
         return None
 
     htf_trend = get_king_htf_trend(pair)
@@ -3503,8 +3494,8 @@ def analyze_pair_smc(pair, timeframe="5m"):
 
     score = score - regime_penalty
 
-    if score < 75:
-        logger.info(f"🛑 SMC {pair}: Score={score} < 75")
+    if score < 60:
+        logger.info(f"🛑 SMC {pair}: Score={score} < 60")
         return None
 
     if not (sweep_ok or ob_hit or bb_hit or fvg_hit):
@@ -3707,9 +3698,9 @@ def analyze_pair_pro(pair, timeframe="5m"):
     factors = []
     
     if structure == "BULLISH":
-        at_sup = (abs(price - last_sup) <= price * 0.0007) or (curr['Low'] <= last_sup * 1.0005)
+        at_sup = (abs(price - last_sup) <= price * 0.0015) or (curr['Low'] <= last_sup * 1.0005)
         
-        if at_sup and lower_wick > body * 0.7 and curr['Close'] > curr['Open']:
+        if at_sup and lower_wick > body * 0.5 and curr['Close'] > curr['Open']:
             score = 60
             direction = "CALL"
             factors.append("رفض من الدعم")
@@ -3728,9 +3719,9 @@ def analyze_pair_pro(pair, timeframe="5m"):
                 factors.append("Sweep")
     
     elif structure == "BEARISH":
-        at_res = (abs(price - last_res) <= price * 0.0007) or (curr['High'] >= last_res * 0.9995)
+        at_res = (abs(price - last_res) <= price * 0.0015) or (curr['High'] >= last_res * 0.9995)
         
-        if at_res and upper_wick > body * 0.7 and curr['Close'] < curr['Open']:
+        if at_res and upper_wick > body * 0.5 and curr['Close'] < curr['Open']:
             score = 60
             direction = "PUT"
             factors.append("رفض من المقاومة")
@@ -3751,8 +3742,8 @@ def analyze_pair_pro(pair, timeframe="5m"):
     score = score - regime_penalty
     
     # ===== العتبة ثابتة 75 =====
-    if direction is None or score < 75:
-        logger.info(f"🛑 Pro {pair}: Score={score} < 75 أو لا يوجد اتجاه")
+    if direction is None or score < 60:
+        logger.info(f"🛑 Pro {pair}: Score={score} < 60 أو لا يوجد اتجاه")
         return None
     
     # ===== المستويات: 75-120 =====
@@ -4605,15 +4596,15 @@ def calculate_king_score(structure_ok, sweep_ok, trend_ok, momentum_ok,
     with data_lock:
         w = dict(KING_WEIGHTS)
     score = 0
-    if structure_ok: score += int(w.get('structure', 25) * 1.2)
-    if sweep_ok: score += int(w.get('sweep', 25) * 1.2)
-    if trend_ok: score += int(w.get('trend', 15) * 1.2)
-    if momentum_ok: score += int(w.get('momentum', 10) * 1.2)
-    if volatility_ok: score += int(w.get('volatility', 10) * 1.2)
-    if adx_ok: score += int(w.get('adx', 10) * 1.2)
-    if rsi_ok: score += int(w.get('rsi', 0) * 1.2)
-    if stoch_ok: score += int(w.get('stochastic', 0) * 1.2)
-    if candle_ok: score += int(w.get('candle', 5) * 1.2)
+    if structure_ok: score += int(w.get('structure', 25) * 1.35)
+    if sweep_ok: score += int(w.get('sweep', 25) * 1.35)
+    if trend_ok: score += int(w.get('trend', 15) * 1.35)
+    if momentum_ok: score += int(w.get('momentum', 10) * 1.35)
+    if volatility_ok: score += int(w.get('volatility', 10) * 1.35)
+    if adx_ok: score += int(w.get('adx', 10) * 1.35)
+    if rsi_ok: score += int(w.get('rsi', 0) * 1.35)
+    if stoch_ok: score += int(w.get('stochastic', 0) * 1.35)
+    if candle_ok: score += int(w.get('candle', 5) * 1.35)
     return score
 
 # ========== CACHE FUNCTIONS ==========
