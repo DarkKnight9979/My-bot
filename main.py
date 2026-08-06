@@ -1959,11 +1959,11 @@ def analyze_volatility_filter(volatility):
     
     if volatility < ideal_low:
         return {
-            'status': 'WARNING',
-            'reason': f'⚠️ تقلب منخفض ({volatility:.4f}) - خصم 5 نقاط',
-            'score_adjust': -5,
+            'status': 'OK',
+            'reason': f'✅ تقلب طبيعي ({volatility:.4f})',
+            'score_adjust': 0,
             'can_enter': True,
-            'emoji': '😴'
+            'emoji': '📊'
         }
     
     if ideal_low <= volatility <= ideal_high:
@@ -2167,42 +2167,42 @@ def calculate_confidence_score_quantum(structure, liquidity, order_block, fvg, v
 
         last = df.iloc[-2] if len(df) > 2 else df.iloc[-1]
 
-        # ALMA Trend: 15 pts
+        # ALMA Trend: 20 pts
         if last['ALMA_9'] > last['ALMA_50']:
-            call += 15; reasons.append("📈 ALMA صاعد")
+            call += 20; reasons.append("📈 ALMA صاعد")
         elif last['ALMA_9'] < last['ALMA_50']:
-            put += 15; reasons.append("📉 ALMA هابط")
+            put += 20; reasons.append("📉 ALMA هابط")
 
-        # RSI: 10 pts
+        # RSI: 12 pts
         if 'RSI' in last:
             if last['RSI'] > 55:
-                call += 10; reasons.append("📈 RSI قوي")
+                call += 12; reasons.append("📈 RSI قوي")
             elif last['RSI'] < 45:
-                put += 10; reasons.append("📉 RSI قوي")
+                put += 12; reasons.append("📉 RSI قوي")
             elif last['RSI'] >= 50:
-                call += 5
+                call += 6
             elif last['RSI'] < 50:
-                put += 5
+                put += 6
 
-        # Stochastic: 10 pts
+        # Stochastic: 12 pts
         if 'Stoch_K' in last and 'Stoch_D' in last:
             if last['Stoch_K'] > last['Stoch_D']:
-                call += 10; reasons.append("📈 Stoch صاعد")
+                call += 12; reasons.append("📈 Stoch صاعد")
             elif last['Stoch_K'] < last['Stoch_D']:
-                put += 10; reasons.append("📉 Stoch هابط")
+                put += 12; reasons.append("📉 Stoch هابط")
 
-        # ROC: 10 pts
+        # ROC: 12 pts
         if 'ROC' in last:
             if last['ROC'] > 0:
-                call += 10; reasons.append("📈 ROC صاعد")
+                call += 12; reasons.append("📈 ROC صاعد")
             elif last['ROC'] < 0:
-                put += 10; reasons.append("📉 ROC هابط")
+                put += 12; reasons.append("📉 ROC هابط")
 
-        # ADX: 5 pts
+        # ADX: 4 pts
         try:
             adx_val, _, _ = calculate_adx(df, 14)
-            if adx_val >= 15:
-                call += 5; put += 5; reasons.append("📊 ADX نشط")
+            if adx_val >= 12:
+                call += 4; put += 4; reasons.append("📊 ADX نشط")
         except:
             pass
 
