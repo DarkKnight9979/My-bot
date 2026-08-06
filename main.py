@@ -114,12 +114,12 @@ QUANTUM_CONFIG = {
     "min_score_otc": 65,
     "cooldown": 300,
     "weights": {
-        "structure": 20,
-        "liquidity": 20,
-        "order_block": 15,
-        "fvg": 15,
-        "volume": 5,
-        "momentum": 20
+        "structure": 35,
+        "liquidity": 25,
+        "order_block": 20,
+        "fvg": 10,
+        "volume": 0,
+        "momentum": 10
     },
     "learning": {
         "min_trades": 50,
@@ -324,9 +324,9 @@ FILES = {
     "settings_live.json": {},
     "settings_otc.json": {},
     "king_weights.json": {
-        "structure": 25, "sweep": 25, "trend": 15,
-        "momentum": 10, "volatility": 10, "adx": 10,
-        "rsi": 0, "stochastic": 0, "candle": 5
+        "structure": 40, "sweep": 30, "trend": 15,
+        "momentum": 15, "volatility": 0, "adx": 0,
+        "rsi": 0, "stochastic": 0, "candle": 0
     },
     "optimization_proposal.json": {},
     "walk_forward_state.json": {},
@@ -370,9 +370,15 @@ def init_log_files():
 
 # ========== KING WEIGHTS ==========
 DEFAULT_KING_WEIGHTS = {
-    "structure": 25, "sweep": 25, "trend": 15,
-    "momentum": 10, "volatility": 10, "adx": 10,
-    "rsi": 0, "stochastic": 0, "candle": 5
+    "structure": 40,   # زيادة وزن البنية والكسر الحقيقي
+    "sweep": 30,       # زيادة وزن حرق السيولة
+    "trend": 15,       # الاتجاه العام
+    "momentum": 15,    # الزخم
+    "volatility": 0,   # إلغاء الخصم المباشر
+    "adx": 0,          # تحويلها لبونص
+    "rsi": 0,
+    "stochastic": 0,
+    "candle": 0
 }
 
 WEIGHTS_FILE = "king_weights.json"
@@ -2144,13 +2150,31 @@ def momentum_confirmation_quantum(df, curr):
         logger.error(f"خطأ في تأكيد الزخم Quantum: {e}")
         return None
 
+# ========== NEW SCORE EVALUATION & WEIGHTS (OPTIMIZED FOR HIGH QUALITY) ==========
+
+def calculate_optimized_score(base_score, htf_alignment, indicator_alignment):
+    """
+    تحافظ على السكور العالي (90-95) للصفقات القوية وتمنع سحب النقاط بسبب تفاصيل فرعية
+    """
+    final_score = base_score
+    
+    # إضافة بونص توافق فريم الساعة بدلاً من الخصم المباشر
+    if htf_alignment:
+        final_score += 5
+        
+    # إذا كانت الصفقة ممتازة في البرايس أكشن والكسر، يضمن الكود وصولها للمستويات العالية
+    if base_score >= 85 and indicator_alignment:
+        final_score = min(100, final_score + 10)
+        
+    return min(100, final_score)
+
 def calculate_confidence_score_quantum(structure, liquidity, order_block, fvg, volume, momentum):
     call = 0
     put = 0
     reasons = []
     weights = QUANTUM_CONFIG.get("weights", {
-        "structure": 20, "liquidity": 20, "order_block": 15,
-        "fvg": 15, "volume": 5, "momentum": 20
+        "structure": 35, "liquidity": 25, "order_block": 20,
+        "fvg": 10, "volume": 0, "momentum": 10
     })
 
     if structure == "BULLISH":
@@ -2383,12 +2407,12 @@ def handle_quantum_command(command):
     
     elif cmd == "/quantum_weights reset":
         QUANTUM_CONFIG["weights"] = {
-            "structure": 20,
-            "liquidity": 20,
-            "order_block": 15,
-            "fvg": 15,
-            "volume": 5,
-            "momentum": 20
+            "structure": 35,
+            "liquidity": 25,
+            "order_block": 20,
+            "fvg": 10,
+            "volume": 0,
+            "momentum": 10
         }
         return "✅ *تم إعادة ضبط الأوزان إلى القيم الافتراضية*"
     
@@ -2503,10 +2527,14 @@ def analyze_pair_quantum(pair, timeframe="5m"):
     adjusted_score = result['score'] + vol_filter['score_adjust']
     adjusted_score = max(0, min(100, adjusted_score))
     
-    logger.info(f"📊 Quantum {pair}: النتيجة الأصلية {result['score']} → معدلة {adjusted_score} ({vol_filter['reason']})")
+    # ===== استخدام الدالة الجديدة لحساب السكور المحسّن =====
+    htf_alignment = (regime == "trending")
+    indicator_alignment = (structure is not None or liquidity is not None)
+    final_score = calculate_optimized_score(adjusted_score, htf_alignment, indicator_alignment)
+    
+    logger.info(f"📊 Quantum {pair}: النتيجة الأصلية {result['score']} → معدلة {adjusted_score} → محسنة {final_score}")
 
     min_score = QUANTUM_CONFIG["min_score_otc"] if "OTC" in pair.upper() else QUANTUM_CONFIG["min_score_live"]
-    final_score = adjusted_score
     
     if result['direction'] is None or final_score < min_score:
         logger.info(f"🛑 Quantum {pair}: النتيجة {final_score} < {min_score}")
@@ -4401,15 +4429,15 @@ def calculate_king_score(structure_ok, sweep_ok, trend_ok, momentum_ok,
     with data_lock:
         w = dict(KING_WEIGHTS)
     score = 0
-    if structure_ok: score += w.get('structure', 25)
-    if sweep_ok: score += w.get('sweep', 25)
+    if structure_ok: score += w.get('structure', 40)
+    if sweep_ok: score += w.get('sweep', 30)
     if trend_ok: score += w.get('trend', 15)
-    if momentum_ok: score += w.get('momentum', 10)
-    if volatility_ok: score += w.get('volatility', 10)
-    if adx_ok: score += w.get('adx', 10)
+    if momentum_ok: score += w.get('momentum', 15)
+    if volatility_ok: score += w.get('volatility', 0)
+    if adx_ok: score += w.get('adx', 0)
     if rsi_ok: score += w.get('rsi', 0)
     if stoch_ok: score += w.get('stochastic', 0)
-    if candle_ok: score += w.get('candle', 5)
+    if candle_ok: score += w.get('candle', 0)
     return score
 
 # ========== CACHE FUNCTIONS ==========
