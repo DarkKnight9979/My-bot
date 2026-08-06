@@ -110,8 +110,8 @@ def get_pair_thresholds(pair):
 
 # ========== QUANTUM CONFIGURATION ==========
 QUANTUM_CONFIG = {
-    "min_score_live": 60,
-    "min_score_otc": 55,
+    "min_score_live": 70,
+    "min_score_otc": 65,
     "cooldown": 300,
     "weights": {
         "structure": 20,
@@ -324,8 +324,8 @@ FILES = {
     "settings_live.json": {},
     "settings_otc.json": {},
     "king_weights.json": {
-        "structure": 25, "sweep": 15, "trend": 20,
-        "momentum": 15, "volatility": 10, "adx": 10,
+        "structure": 25, "sweep": 25, "trend": 15,
+        "momentum": 10, "volatility": 10, "adx": 10,
         "rsi": 0, "stochastic": 0, "candle": 5
     },
     "optimization_proposal.json": {},
@@ -370,8 +370,8 @@ def init_log_files():
 
 # ========== KING WEIGHTS ==========
 DEFAULT_KING_WEIGHTS = {
-    "structure": 25, "sweep": 15, "trend": 20,
-    "momentum": 15, "volatility": 10, "adx": 10,
+    "structure": 25, "sweep": 25, "trend": 15,
+    "momentum": 10, "volatility": 10, "adx": 10,
     "rsi": 0, "stochastic": 0, "candle": 5
 }
 
@@ -403,13 +403,13 @@ SETTINGS_OTC_FILE = "settings_otc.json"
 def load_settings(market_type="live"):
     file_path = SETTINGS_LIVE_FILE if market_type == "live" else SETTINGS_OTC_FILE
     default = {
-        "adx_threshold": 18 if market_type == "otc" else 22,
-        "rsi_low_call": 25,
-        "rsi_high_call": 55,
-        "rsi_low_put": 45,
-        "rsi_high_put": 75,
-        "sweep_threshold": 0.0005 if market_type == "otc" else 0.0003,
-        "body_pct_min": 0.55,
+        "adx_threshold": 22,
+        "rsi_low_call": 30,
+        "rsi_high_call": 50,
+        "rsi_low_put": 50,
+        "rsi_high_put": 70,
+        "sweep_threshold": 0.0003,
+        "body_pct_min": 0.60,
         "last_updated": 0,
         "market_type": market_type,
         "approved": False,
@@ -2169,15 +2169,9 @@ def calculate_confidence_score_quantum(structure, liquidity, order_block, fvg, v
         put += weights["order_block"]; reasons.append("📦 Order Block هابط")
 
     if fvg and fvg["type"] == "BULLISH":
-        if fvg_retest_ok:
-            call += weights["fvg"]; reasons.append("🔲 FVG صاعد (معاد اختباره)")
-        else:
-            call += weights["fvg"] * 0.5; reasons.append("🔲 FVG صاعد (بدون retest)")
+        call += weights["fvg"]; reasons.append("🔲 FVG صاعد")
     elif fvg and fvg["type"] == "BEARISH":
-        if fvg_retest_ok:
-            put += weights["fvg"]; reasons.append("🔲 FVG هابط (معاد اختباره)")
-        else:
-            put += weights["fvg"] * 0.5; reasons.append("🔲 FVG هابط (بدون retest)")
+        put += weights["fvg"]; reasons.append("🔲 FVG هابط")
 
     if volume:
         if structure == "BULLISH" or liquidity == "BULLISH":
@@ -2480,23 +2474,12 @@ def analyze_pair_quantum(pair, timeframe="5m"):
     smoothed_price = kalman.update(price)
     volatility = kalman.get_volatility()
 
-    # ===== FIX: لو Kalman لسه جديد (history < 10)، نتجاهل volatility filter =====
-    if len(kalman.history) < 10:
-        logger.info(f"ℹ️ Quantum {pair}: Kalman جديد — نتجاهل volatility filter")
-        vol_filter = {
-            'status': 'OK',
-            'reason': f'Kalman جديد (history={len(kalman.history)})',
-            'score_adjust': 0,
-            'can_enter': True,
-            'emoji': '📊'
-        }
-    else:
-        vol_filter = analyze_volatility_filter(volatility)
-
+    vol_filter = analyze_volatility_filter(volatility)
+    
     if not vol_filter['can_enter']:
         logger.info(f"🛑 Quantum {pair}: {vol_filter['reason']}")
         return None
-
+    
     logger.info(f"📊 Quantum {pair}: {vol_filter['reason']}")
 
     structure = detect_market_structure_quantum(df)
@@ -2504,14 +2487,13 @@ def analyze_pair_quantum(pair, timeframe="5m"):
     order_block = detect_order_block_quantum(df, curr)
     fvg = detect_fvg_quantum(df, curr)
 
-    # ===== FIX: FVG retest optional (تحذير مش رفض) =====
-    fvg_retest_ok = False
     if fvg:
-        fvg_retest_ok = fvg_retest_quantum(df, fvg)
-        if not fvg_retest_ok:
-            logger.info(f"⚠️ Quantum {pair}: FVG لم يُعاد اختباره — مستمر بس بدون FVG نقاط")
+        if not fvg_retest_quantum(df, fvg):
+            logger.info(f"🛑 Quantum {pair}: FVG لم يُعاد اختباره - تم الإلغاء")
+            return None
     else:
-        logger.info(f"ℹ️ Quantum {pair}: لا يوجد FVG — مستمر بدونه")
+        logger.info(f"🛑 Quantum {pair}: لا يوجد FVG - تم الإلغاء")
+        return None
 
     volume = volume_confirmation_quantum(df, curr)
     momentum = momentum_confirmation_quantum(df, curr)
@@ -2641,13 +2623,10 @@ def analyze_pair_quantum(pair, timeframe="5m"):
         indicators_str = f"Score={final_score}/100 | " + " | ".join(result['reasons'][:3])
         indicators_str += f" | {kalman_info} | {volatility_info}"
 
-        # ===== FIX: entry_price = open الشمعة الجديدة =====
-        next_open = df.iloc[-1]['Open'] if len(df) > 1 else price
-
         new_trade = _build_trade_dict(
             pair=pair,
             direction=result['direction'],
-            entry_price=next_open,
+            entry_price=price,
             expire_offset=300,
             is_king=False,
             is_martingale=False,
@@ -2893,15 +2872,18 @@ def analyze_pair(pair, timeframe="5m"):
 
     if potential_direction is None:
         return None
-    if htf_trend is not None and htf_trend != potential_direction:
-        logger.info(f"⚠️ {pair}: HTF Trend عكسي — مستمر بحذر")
-        # ===== FIX: مش بنرفض، بنكمل بس بنخصم 10 نقاط =====
 
-    # Structure عكسي = تحذير مش رفض
+    # ========== تحسين 5: HTF Filter أقوى ==========
+    if htf_trend is not None and htf_trend != potential_direction:
+        logger.info(f"🛑 {pair}: HTF Trend عكسي")
+        return None
+    
+    # Structure عكسي = رفض
     if htf_structure:
-        if (potential_direction == "CALL" and htf_structure == "BEARISH") or            (potential_direction == "PUT" and htf_structure == "BULLISH"):
-            logger.info(f"⚠️ {pair}: HTF Structure عكسي — مستمر بحذر")
-            # ===== FIX: مش بنرفض =====
+        if (potential_direction == "CALL" and htf_structure == "BEARISH") or \
+           (potential_direction == "PUT" and htf_structure == "BULLISH"):
+            logger.info(f"🛑 {pair}: HTF Structure عكسي")
+            return None
 
     # ========== تحسين 6: فلاتر صارمة ==========
     atr_avg = atr_series.tail(20).mean()
@@ -2913,9 +2895,8 @@ def analyze_pair(pair, timeframe="5m"):
     if atr > atr_avg * 3.5:
         logger.info(f"⚠️ {pair}: تقلب عالي (ATR > avg*3.5) — مستمر بحذر")
 
-    # ===== FIX: حجم >= MA*0.8 مقبول =====
-    if curr['Volume'] <= vol_ma * 0.8:
-        logger.info(f"🛑 {pair}: حجم ضعيف (Vol < MA*0.8)")
+    if curr['Volume'] <= vol_ma * 1.2:  # رفع من 1.5
+        logger.info(f"🛑 {pair}: حجم ضعيف (Vol < MA*1.8)")
         return None
 
     # ========== تحسين 7: تقييم محسّن ==========
@@ -2930,7 +2911,7 @@ def analyze_pair(pair, timeframe="5m"):
 
     # ===== الحد الأدنى للدخول هو LEVEL 5 (Score >= 80) =====
     if strength < 5:
-        logger.info(f"🛑 {pair}: مرفوضة — Level={strength} (Score={strength*16}/100 < 80)")
+        logger.info(f"🛑 {pair}: مرفوضة — القوة={strength} < 5 (Score < 80)")
         return None
 
     signal_name_ar, signal_name_en = SIGNAL_NAMES[strength]
@@ -3015,9 +2996,6 @@ def analyze_pair(pair, timeframe="5m"):
                 if pair in state.pending_alerts:
                     del state.pending_alerts[pair]
 
-            # ===== FIX: entry_price = open الشمعة الجديدة (الدخول الفعلي) =====
-            next_open = df.iloc[-1]['Open'] if len(df) > 1 else curr['Close']
-
             indicators_str = f"ADX={adx:.1f} | BBW={bbw:.4f} | RSI={rsi:.1f} | Reasons: {', '.join(reasons[:3])}"
             indicator_counts = get_indicator_counts(pair, df)
             htf_data = get_htf_market_regime(pair)
@@ -3034,7 +3012,7 @@ def analyze_pair(pair, timeframe="5m"):
                 state.recent_signals[pair] = (get_iq_time(), potential_direction)
 
             new_trade = _build_trade_dict(
-                pair=pair, direction=potential_direction, entry_price=next_open,
+                pair=pair, direction=potential_direction, entry_price=curr['Close'],
                 expire_offset=300, is_king=False, is_martingale=False,
                 signal_level=strength, signal_name=signal_name_ar, score=strength * 16,
                 filters={
@@ -3102,31 +3080,18 @@ def analyze_pair_king(pair, timeframe="5m"):
     df = detect_swings(df, window=2)
     structure, last_sh_idx, last_sl_idx = get_market_structure(df, lookback=30)
     
-    # ===== تعديل: NEUTRAL مش بيقتل الإشارة، بس بيقلل الـ score =====
     if structure == "NEUTRAL":
         adx_check, _, _ = calculate_adx(df, 14)
-        if adx_check < 12:
-            logger.info(f"🛑 King {pair}: NEUTRAL و ADX={adx_check:.1f} < 12 — ضعيف جداً")
+        if adx_check < 15:
+            logger.info(f"🛑 King {pair}: NEUTRAL و ADX={adx_check:.1f} < 20")
             return None
         else:
-            logger.info(f"ℹ️ King {pair}: NEUTRAL لكن ADX={adx_check:.1f} >= 12 — مستمر بس بدون Structure نقاط")
+            logger.info(f"ℹ️ King {pair}: NEUTRAL لكن ADX={adx_check:.1f} >= 20")
 
-    potential_direction = "CALL" if structure == "BULLISH" else "PUT" if structure == "BEARISH" else None
+    potential_direction = "CALL" if structure == "BULLISH" else "PUT"
 
     df['ALMA_20'] = calculate_alma(df['Close'], 20, 0.85, 6)
     df['ALMA_80'] = calculate_alma(df['Close'], 80, 0.85, 6)
-
-    # ===== تعديل: لو Structure NEUTRAL، نحدد الاتجاه من ALMA =====
-    if potential_direction is None:
-        curr_tmp = df.iloc[-2]
-        # ===== FIX: >= بدل > عشان ALMA_20 == ALMA_80 يعتبر CALL =====
-        if curr_tmp['ALMA_20'] >= curr_tmp['ALMA_80']:
-            potential_direction = "CALL"
-            logger.info(f"ℹ️ King {pair}: اتجاه من ALMA = CALL (ALMA20={curr_tmp['ALMA_20']:.5f} >= ALMA80={curr_tmp['ALMA_80']:.5f})")
-        else:
-            potential_direction = "PUT"
-            logger.info(f"ℹ️ King {pair}: اتجاه من ALMA = PUT (ALMA20={curr_tmp['ALMA_20']:.5f} < ALMA80={curr_tmp['ALMA_80']:.5f})")
-
     df['RSI'] = wilder_rsi(df['Close'], 14)
     df['Stoch_K'], df['Stoch_D'] = calculate_stoch(df, 14, 3)
     df['ROC'] = calculate_roc(df['Close'], 5)
@@ -3149,37 +3114,20 @@ def analyze_pair_king(pair, timeframe="5m"):
     sup_levels, res_levels = get_smart_sr_levels(df, lookback=30)
 
     sweep_ok, sweep_level = detect_liquidity_sweep(df, potential_direction, sweep_threshold=sweep_threshold)
-
-    # ===== تعديل: Order Block كـ fallback لو مفيش Sweep =====
-    ob_ok = False
     if not sweep_ok:
-        obs = detect_order_blocks(df, lookback=30)
-        target_obs = obs['bull'][-3:] if potential_direction == "CALL" else obs['bear'][-3:]
-        for ob in reversed(target_obs):
-            if potential_direction == "CALL":
-                if ob['low'] <= price <= ob['high'] * 1.001:
-                    ob_ok = True
-                    logger.info(f"✅ King {pair}: Order Block صاعد كـ fallback")
-                    break
-            else:
-                if ob['high'] * 0.999 <= price <= ob['low']:
-                    ob_ok = True
-                    logger.info(f"✅ King {pair}: Order Block هابط كـ fallback")
-                    break
-
-        if not sweep_ok and not ob_ok and adx < 12:
-            logger.info(f"🛑 King {pair}: لا يوجد Sweep/OB و ADX={adx:.1f} < 12")
+        if adx < 12:
+            logger.info(f"🛑 King {pair}: لا يوجد Sweep و ADX={adx:.1f} < 20")
             return None
-        elif not sweep_ok and not ob_ok:
-            logger.info(f"ℹ️ King {pair}: لا يوجد Sweep/OB لكن ADX={adx:.1f} >= 12 — مستمر")
+        else:
+            logger.info(f"ℹ️ King {pair}: لا يوجد Sweep لكن ADX={adx:.1f} >= 20")
 
     trend_ok = (potential_direction == "CALL" and alma20 > alma80) or (potential_direction == "PUT" and alma20 < alma80)
     momentum_ok = (potential_direction == "CALL" and roc > 0) or (potential_direction == "PUT" and roc < 0)
     volatility_ok = (atr_avg * 0.8 <= atr <= atr_avg * 2.0) if atr_avg > 0 else False
     
-    # ===== FIX: نستخدم atr_avg بدل price-based عشان أزواج JPY =====
-    if atr_avg > 0 and atr < atr_avg * 0.3:
-        logger.info(f"🛑 King {pair}: ATR={atr:.5f} < avg*0.3={atr_avg*0.3:.5f}")
+    min_atr = price * 0.0002
+    if atr < min_atr:
+        logger.info(f"🛑 King {pair}: ATR={atr:.5f} < {min_atr:.5f}")
         return None
 
     adx_ok = adx >= adx_threshold
@@ -3195,9 +3143,8 @@ def analyze_pair_king(pair, timeframe="5m"):
         stoch_ok = stoch_k < stoch_d
 
     candle_ok, body_pct = check_king_candle_quality(curr)
-    # ===== تعديل: body_pct >= 0.35 مقبول =====
-    if body_pct < 0.35:
-        logger.info(f"🛑 King {pair}: body_pct < 0.35")
+    if body_pct < 0.45:
+        logger.info(f"🛑 King {pair}: body_pct < 0.45")
         return None
 
     near_sr = False
@@ -3212,18 +3159,16 @@ def analyze_pair_king(pair, timeframe="5m"):
                 near_sr = True
                 break
 
-    # ===== FIX: نمرر is_neutral عشان ندي 15 نقاط =====
     score = calculate_king_score(
         structure_ok=(structure in ["BULLISH", "BEARISH"]),
         sweep_ok=sweep_ok, trend_ok=trend_ok, momentum_ok=momentum_ok,
         volatility_ok=volatility_ok, adx_ok=adx_ok, rsi_ok=rsi_ok,
-        stoch_ok=stoch_ok, candle_ok=candle_ok, ob_ok=ob_ok,
-        is_neutral=(structure == "NEUTRAL")
+        stoch_ok=stoch_ok, candle_ok=candle_ok
     )
 
     level = get_adaptive_king_level(score, market_type=market_type)
     if level == 0:
-        logger.info(f"🛑 King {pair}: Score={score} < 80")
+        logger.info(f"🛑 King {pair}: Score={score} < 65")
         return None
 
     htf_trend = get_king_htf_trend(pair)
@@ -3294,16 +3239,13 @@ def analyze_pair_king(pair, timeframe="5m"):
                 if f"king_{pair}" in state.pending_alerts:
                     del state.pending_alerts[f"king_{pair}"]
 
-            # ===== FIX: entry_price = open الشمعة الجديدة =====
-            next_open = df.iloc[-1]['Open'] if len(df) > 1 else curr['Close']
-
             new_trade = _build_trade_dict(
-                pair=pair, direction=potential_direction, entry_price=next_open,
+                pair=pair, direction=potential_direction, entry_price=curr['Close'],
                 expire_offset=300, is_king=True, is_martingale=False,
                 signal_level=level, signal_name=signal_name_ar, score=score,
                 filters={
                     'structure_ok': structure in ["BULLISH", "BEARISH"],
-                    'sweep_ok': sweep_ok, 'ob_ok': ob_ok, 'trend_ok': trend_ok,
+                    'sweep_ok': sweep_ok, 'trend_ok': trend_ok,
                     'momentum_ok': momentum_ok, 'volatility_ok': volatility_ok,
                     'adx_ok': adx_ok, 'rsi_ok': rsi_ok, 'stoch_ok': stoch_ok,
                     'candle_ok': candle_ok
@@ -3431,52 +3373,49 @@ def analyze_pair_smc(pair, timeframe="5m"):
     score = 0
     conf = []
 
-    # ===== FIX: weights أعلى =====
     if (bias == "CALL" and structure == "BULLISH") or (bias == "PUT" and structure == "BEARISH"):
-        score += 30; conf.append("Structure")
+        score += 25; conf.append("Structure")
 
     sweep_ok, _ = detect_liquidity_sweep(df, bias, 0.0003)
-    if sweep_ok: score += 30; conf.append("Sweep")
+    if sweep_ok: score += 25; conf.append("Sweep")
 
     ob_hit = False
     target_obs = obs['bull'][-3:] if bias == "CALL" else obs['bear'][-3:]
     for ob in reversed(target_obs):
         if (bias == "CALL" and ob['low'] <= price <= ob['high']*1.001) or (bias == "PUT" and ob['high']*0.999 <= price <= ob['low']):
-            ob_hit = True; score += 25; conf.append("OB"); break
+            ob_hit = True; score += 20; conf.append("OB"); break
 
     bb_hit = False
     target_bb = breakers['bull'][-2:] if bias == "CALL" else breakers['bear'][-2:]
     for bb in reversed(target_bb):
         if bb['low'] <= price <= bb['high']:
-            bb_hit = True; score += 20; conf.append("Breaker"); break
+            bb_hit = True; score += 15; conf.append("Breaker"); break
 
     fvg_hit = False
     target_fvg = fvg_bull[-3:] if bias == "CALL" else fvg_bear[-3:]
     for fvg in reversed(target_fvg):
         if fvg['bottom'] <= price <= fvg['top']:
-            fvg_hit = True; score += 20; conf.append("FVG"); break
+            fvg_hit = True; score += 15; conf.append("FVG"); break
 
     if (bias == "CALL" and curr['ALMA_20'] > curr['ALMA_50']) or (bias == "PUT" and curr['ALMA_20'] < curr['ALMA_50']):
-        score += 15; conf.append("Trend")
+        score += 10; conf.append("Trend")
 
-    if (bias == "CALL" and 25 <= rsi <= 55) or (bias == "PUT" and 45 <= rsi <= 75):
-        score += 15; conf.append("RSI")
+    if (bias == "CALL" and 30 <= rsi <= 50) or (bias == "PUT" and 50 <= rsi <= 70):
+        score += 10; conf.append("RSI")
 
-    # ===== FIX: min_score = 70 (بدل 80) =====
     if score < 70:
-        logger.info(f"🛑 SMC {pair}: Score={score} < 70")
+        logger.info(f"🛑 SMC {pair}: Score={score} < 80")
         return None
 
     if not (sweep_ok or ob_hit or bb_hit or fvg_hit):
         logger.info(f"🛑 SMC {pair}: لا يوجد Sweep/OB/Breaker/FVG")
         return None
 
-    # ===== FIX: thresholds أقل =====
-    if score >= 90:
+    if score >= 95:
         level, name = 4, "SMC Elite 🏆"
-    elif score >= 80:
+    elif score >= 85:
         level, name = 3, "SMC Gold 🥇"
-    elif score >= 75:
+    elif score >= 80:
         level, name = 2, "SMC Silver 🥈"
     else:
         level, name = 1, "SMC Bronze 🥉"
@@ -3543,13 +3482,10 @@ def analyze_pair_smc(pair, timeframe="5m"):
 
         da = "صعود (CALL)" if bias == "CALL" else "هبوط (PUT)"
         
-        # ===== FIX: entry_price = open الشمعة الجديدة =====
-        next_open = df.iloc[-1]['Open'] if len(df) > 1 else price
-
         new_trade = _build_trade_dict(
             pair=pair,
             direction=bias,
-            entry_price=next_open,
+            entry_price=price,
             expire_offset=300,
             is_king=False,
             is_martingale=False,
@@ -3698,15 +3634,13 @@ def analyze_pair_pro(pair, timeframe="5m"):
                 score += 5
                 factors.append("Sweep")
     
-    # ===== FIX: min_score = 60 (بدل 65) =====
-    if direction is None or score < 60:
-        logger.info(f"🛑 Pro {pair}: Score={score} < 60 أو لا يوجد اتجاه")
+    if direction is None or score < 65:
+        logger.info(f"🛑 Pro {pair}: Score={score} < 75 أو لا يوجد اتجاه")
         return None
     
-    # ===== FIX: thresholds أقل =====
-    if score >= 90: level = 4
-    elif score >= 80: level = 3
-    elif score >= 70: level = 2
+    if score >= 95: level = 4
+    elif score >= 85: level = 3
+    elif score >= 80: level = 2
     else: level = 1
     
     iq_now = get_iq_time()
@@ -3772,11 +3706,8 @@ def analyze_pair_pro(pair, timeframe="5m"):
         with data_lock:
             state.recent_signals[pair] = (get_iq_time(), direction)
     
-        # ===== FIX: entry_price = open الشمعة الجديدة =====
-        next_open = df.iloc[-1]['Open'] if len(df) > 1 else curr['Close']
-
         new_trade = _build_trade_dict(
-            pair=pair, direction=direction, entry_price=next_open,
+            pair=pair, direction=direction, entry_price=curr['Close'],
             expire_offset=300, is_king=False, is_martingale=False,
             signal_level=level, signal_name=name_ar, score=score,
             filters={
@@ -4029,10 +3960,15 @@ def calculate_adaptive_threshold(trades, market_type="live"):
     return threshold
 
 def get_adaptive_king_level(score, market_type="live"):
-    if score >= 95: return 4
-    elif score >= 90: return 3
-    elif score >= 85: return 2
-    elif score >= 80: return 1
+    threshold = state.adaptive_thresholds.get(market_type, 80)
+    if score >= threshold + 15:
+        return 4
+    elif score >= threshold + 10:
+        return 3
+    elif score >= threshold + 5:
+        return 2
+    elif score >= threshold:
+        return 1
     return 0
 
 # ========== NEWS FUNCTIONS ==========
@@ -4116,10 +4052,7 @@ def calculate_alma(series, window=9, offset=0.85, sigma=6):
     s = window / sigma
     w = np.exp(-((np.arange(window) - m) ** 2) / (2 * s * s))
     w /= w.sum()
-    result = series.rolling(window).apply(lambda x: np.dot(x, w), raw=True)
-    # ===== FIX: نملأ NaN بآخر قيمة صحيحة =====
-    result = result.ffill().bfill()
-    return result
+    return series.rolling(window).apply(lambda x: np.dot(x, w), raw=True)
 
 def wilder_rsi(series, period=14):
     delta = series.diff()
@@ -4411,39 +4344,28 @@ def detect_liquidity_sweep(df, direction, sweep_threshold=0.0003):
     if len(df) < 10:
         return False, None
     if direction == "CALL":
-        # ===== تعديل: نوسع لـ 5 swings بدل 3 =====
-        swing_lows = df[df['is_swing_low']].tail(5)
+        swing_lows = df[df['is_swing_low']].tail(3)
         if swing_lows.empty:
             return False, None
         for idx, row in swing_lows.iterrows():
             sl_price = row['Low']
-            # ===== تعديل: نفحص 5 شموع أخيرة بدل 3 =====
-            for i in range(max(-5, -len(df)), 0):
+            for i in range(max(-3, -len(df)), 0):
                 candle = df.iloc[i]
                 if candle['Low'] < sl_price * (1 - sweep_threshold):
                     if candle['Close'] > sl_price:
                         return True, sl_price
-            # ===== تعديل: نضيف check لو السعر قريب من Swing Low =====
-            curr_price = df.iloc[-1]['Close']
-            if abs(curr_price - sl_price) / sl_price <= sweep_threshold * 1.5:
-                if curr_price > sl_price:
-                    return True, sl_price
         return False, None
     else:
-        swing_highs = df[df['is_swing_high']].tail(5)
+        swing_highs = df[df['is_swing_high']].tail(3)
         if swing_highs.empty:
             return False, None
         for idx, row in swing_highs.iterrows():
             sh_price = row['High']
-            for i in range(max(-5, -len(df)), 0):
+            for i in range(max(-3, -len(df)), 0):
                 candle = df.iloc[i]
                 if candle['High'] > sh_price * (1 + sweep_threshold):
                     if candle['Close'] < sh_price:
                         return True, sh_price
-            curr_price = df.iloc[-1]['Close']
-            if abs(curr_price - sh_price) / sh_price <= sweep_threshold * 1.5:
-                if curr_price < sh_price:
-                    return True, sh_price
         return False, None
 
 def get_smart_sr_levels(df, lookback=30, tolerance=0.0002):
@@ -4472,24 +4394,17 @@ def check_king_candle_quality(candle):
     upper_shadow = candle['High'] - max(candle['Close'], candle['Open'])
     lower_shadow = min(candle['Close'], candle['Open']) - candle['Low']
     shadow_pct = (upper_shadow + lower_shadow) / rng
-    # ===== تعديل: body >= 50% و shadow <= 40% =====
-    return body_pct >= 0.50 and shadow_pct <= 0.40, body_pct
+    return body_pct >= 0.60 and shadow_pct <= 0.30, body_pct
 
 def calculate_king_score(structure_ok, sweep_ok, trend_ok, momentum_ok,
-                         volatility_ok, adx_ok, rsi_ok, stoch_ok, candle_ok, ob_ok=False, is_neutral=False):
+                         volatility_ok, adx_ok, rsi_ok, stoch_ok, candle_ok):
     with data_lock:
         w = dict(KING_WEIGHTS)
     score = 0
-    # ===== FIX: NEUTRAL مع ADX >= 12 بياخد 15 نقاط (بدل 0) =====
-    if structure_ok:
-        score += w.get('structure', 25)
-    elif is_neutral:
-        score += 15
-        logger.info(f"ℹ️ King: NEUTRAL structure +15 pts")
-    # ===== تعديل: Sweep أو OB بياخدو نفس الـ weight =====
-    if sweep_ok or ob_ok: score += w.get('sweep', 15)
-    if trend_ok: score += w.get('trend', 20)
-    if momentum_ok: score += w.get('momentum', 15)
+    if structure_ok: score += w.get('structure', 25)
+    if sweep_ok: score += w.get('sweep', 25)
+    if trend_ok: score += w.get('trend', 15)
+    if momentum_ok: score += w.get('momentum', 10)
     if volatility_ok: score += w.get('volatility', 10)
     if adx_ok: score += w.get('adx', 10)
     if rsi_ok: score += w.get('rsi', 0)
@@ -4632,8 +4547,8 @@ def get_king_htf_trend(pair):
 # ========== TRADE RESULTS CHECK ==========
 
 def check_tie(ep, fp):
-    """التعادل: سعر الدخول يساوي سعر الخروج بالضبط (5 منازل عشرية)"""
-    return round(float(ep), 5) == round(float(fp), 5)
+    """التعادل: سعر الدخول يساوي سعر الخروج بالضبط"""
+    return float(ep) == float(fp)
 
 def check_trade_results():
     current_time = get_iq_time()
@@ -4662,7 +4577,6 @@ def check_trade_results():
                         trade['warned_loss'] = True
 
             if time_left <= 0:
-                # ===== FIX: نجيب الشمعة اللي expire_time جواها بالضبط =====
                 candles = get_cached_candles(pair, 300, 5, max_age=0, force_refresh=True)
 
                 if not candles or len(candles) < 2:
@@ -4670,36 +4584,15 @@ def check_trade_results():
                     continue
 
                 target_candle = None
-                # ندور على الشمعة اللي expire_time جواها (from <= expire <= to)
                 for c in reversed(candles):
-                    candle_from = c.get('from', 0)
                     candle_to = c.get('to', 0)
-                    if candle_from <= trade['expire_time'] <= candle_to:
+                    if candle_to <= trade['expire_time'] + 5:
                         target_candle = c
                         break
 
-                # لو مالقناش، ندور على الشمعة المقفولة قبل expire_time
                 if target_candle is None:
-                    for c in reversed(candles):
-                        if c.get('to', 0) <= trade['expire_time']:
-                            target_candle = c
-                            break
-
-                # ===== FIX: لو الشمعة لسه مفتوحة، نستنى الدورة الجاية =====
-                if target_candle and target_candle.get('to', 0) > current_time:
-                    logger.info(f"⏳ {pair}: الشمعة لسه مفتوحة (to={target_candle['to']} > now={int(current_time)}) — مستنى التقييم")
-                    continue
-
-                # ===== FIX: fallback = آخر شمعة مقفولة =====
-                if target_candle is None:
-                    for c in reversed(candles):
-                        if c.get('to', 0) <= current_time:
-                            target_candle = c
-                            break
-                    if target_candle is None:
-                        logger.warning("⏳ " + pair + ": مفيش شمعة مقفولة متاحة — مستنى")
-                        continue
-                    logger.warning("⚠️ " + pair + f": fallback — expire={trade['expire_time']} | candle_to={target_candle.get('to',0)} | now={int(current_time)}")
+                    target_candle = candles[-2] if len(candles) >= 2 else candles[-1]
+                    logger.warning("⚠️ " + pair + ": استخدام fallback للشمعة (مش متطابقة بالـ timestamp)")
 
                 fp = target_candle['close']
                 candle_to = target_candle.get('to', 0)
@@ -4719,13 +4612,10 @@ def check_trade_results():
                 else:
                     is_win = fp < ep and not is_tie
 
-                diff = fp - ep
-                diff_pct = abs(diff) / ep * 100 if ep != 0 else 0
-                # ===== FIX: debug أكتر عشان نعرف إيه اللي بيحصل =====
+                diff_pct = abs(fp - ep) / ep * 100 if ep != 0 else 0
                 logger.info(
-                    f"📊 RESULT | {pair} | Dir:{direction} | EP:{ep:.5f} | FP:{fp:.5f} | "
-                    f"Diff:{diff:+.5f} ({diff_pct:.4f}%) | Tie:{is_tie} | Win:{is_win} | "
-                    f"Candle:[{target_candle.get('from',0)}-{target_candle.get('to',0)}] | Strategy:{strategy}"
+                    "📊 RESULT | " + str(pair) + " | Win:" + str(is_win) + " | Tie:" + str(is_tie) + " | "
+                    "Diff:" + "{:.4f}".format(diff_pct) + "% | Strategy:" + str(strategy)
                 )
 
                 ts = get_cairo_time().strftime('%I:%M %p')
