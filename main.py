@@ -324,9 +324,9 @@ FILES = {
     "settings_live.json": {},
     "settings_otc.json": {},
     "king_weights.json": {
-        "structure": 25, "sweep": 25, "trend": 15,
+        "structure": 20, "sweep": 20, "trend": 15,
         "momentum": 10, "volatility": 10, "adx": 10,
-        "rsi": 0, "stochastic": 0, "candle": 5
+        "rsi": 5, "stochastic": 5, "candle": 5
     },
     "optimization_proposal.json": {},
     "walk_forward_state.json": {},
@@ -370,9 +370,9 @@ def init_log_files():
 
 # ========== KING WEIGHTS ==========
 DEFAULT_KING_WEIGHTS = {
-    "structure": 25, "sweep": 25, "trend": 15,
+    "structure": 20, "sweep": 20, "trend": 15,
     "momentum": 10, "volatility": 10, "adx": 10,
-    "rsi": 0, "stochastic": 0, "candle": 5
+    "rsi": 5, "stochastic": 5, "candle": 5
 }
 
 WEIGHTS_FILE = "king_weights.json"
@@ -3082,11 +3082,11 @@ def analyze_pair_king(pair, timeframe="5m"):
     
     if structure == "NEUTRAL":
         adx_check, _, _ = calculate_adx(df, 14)
-        if adx_check < 12:
-            logger.info(f"🛑 King {pair}: NEUTRAL و ADX={adx_check:.1f} < 12")
+        if adx_check < 10:
+            logger.info(f"🛑 King {pair}: NEUTRAL و ADX={adx_check:.1f} < 10")
             return None
         else:
-            logger.info(f"ℹ️ King {pair}: NEUTRAL لكن ADX={adx_check:.1f} >= 12")
+            logger.info(f"ℹ️ King {pair}: NEUTRAL لكن ADX={adx_check:.1f} >= 10")
 
     potential_direction = "CALL" if structure == "BULLISH" else "PUT"
 
@@ -3115,47 +3115,47 @@ def analyze_pair_king(pair, timeframe="5m"):
 
     sweep_ok, sweep_level = detect_liquidity_sweep(df, potential_direction, sweep_threshold=sweep_threshold)
     if not sweep_ok:
-        if adx < 15:
-            logger.info(f"🛑 King {pair}: لا يوجد Sweep و ADX={adx:.1f} < 15")
+        if adx < 12:
+            logger.info(f"🛑 King {pair}: لا يوجد Sweep و ADX={adx:.1f} < 12")
             return None
         else:
-            logger.info(f"ℹ️ King {pair}: لا يوجد Sweep لكن ADX={adx:.1f} >= 15 — مستمر")
+            logger.info(f"ℹ️ King {pair}: لا يوجد Sweep لكن ADX={adx:.1f} >= 12 — مستمر (+10pts)")
 
     trend_ok = (potential_direction == "CALL" and alma20 > alma80) or (potential_direction == "PUT" and alma20 < alma80)
-    momentum_ok = (potential_direction == "CALL" and roc > -0.2) or (potential_direction == "PUT" and roc < 0.2)
-    volatility_ok = (atr_avg * 0.6 <= atr <= atr_avg * 2.5) if atr_avg > 0 else True
+    momentum_ok = (potential_direction == "CALL" and roc > -0.3) or (potential_direction == "PUT" and roc < 0.3)
+    volatility_ok = (atr_avg * 0.5 <= atr <= atr_avg * 3.0) if atr_avg > 0 else True
     
-    min_atr = price * 0.00015
+    min_atr = price * 0.0001
     if atr < min_atr:
         logger.info(f"🛑 King {pair}: ATR={atr:.5f} < {min_atr:.5f}")
         return None
 
-    adx_ok = adx >= 18
+    adx_ok = adx >= 15
 
     if potential_direction == "CALL":
-        rsi_ok = 28 <= rsi <= 52
+        rsi_ok = 25 <= rsi <= 55
     else:
-        rsi_ok = 48 <= rsi <= 72
+        rsi_ok = 45 <= rsi <= 75
 
     if potential_direction == "CALL":
-        stoch_ok = stoch_k > stoch_d
+        stoch_ok = stoch_k >= stoch_d
     else:
-        stoch_ok = stoch_k < stoch_d
+        stoch_ok = stoch_k <= stoch_d
 
     candle_ok, body_pct = check_king_candle_quality(curr)
-    if body_pct < 0.40:
-        logger.info(f"🛑 King {pair}: body_pct < 0.40")
+    if body_pct < 0.45:
+        logger.info(f"🛑 King {pair}: body_pct < 0.45")
         return None
 
     near_sr = False
     if potential_direction == "CALL":
         for level in sup_levels:
-            if abs(price - level) <= price * 0.0006:
+            if abs(price - level) <= price * 0.0007:
                 near_sr = True
                 break
     else:
         for level in res_levels:
-            if abs(price - level) <= price * 0.0006:
+            if abs(price - level) <= price * 0.0007:
                 near_sr = True
                 break
 
@@ -3960,14 +3960,13 @@ def calculate_adaptive_threshold(trades, market_type="live"):
     return threshold
 
 def get_adaptive_king_level(score, market_type="live"):
-    threshold = state.adaptive_thresholds.get(market_type, 70)
-    if score >= threshold + 15:
+    if score >= 90:
         return 4
-    elif score >= threshold + 10:
+    elif score >= 85:
         return 3
-    elif score >= threshold + 5:
+    elif score >= 80:
         return 2
-    elif score >= threshold:
+    elif score >= 70:
         return 1
     return 0
 
@@ -4401,14 +4400,15 @@ def calculate_king_score(structure_ok, sweep_ok, trend_ok, momentum_ok,
     with data_lock:
         w = dict(KING_WEIGHTS)
     score = 0
-    if structure_ok: score += w.get('structure', 25)
-    if sweep_ok: score += w.get('sweep', 25)
+    if structure_ok: score += w.get('structure', 20)
+    if sweep_ok: score += w.get('sweep', 20)
+    elif adx_ok: score += 10  # partial credit if no sweep but ADX ok
     if trend_ok: score += w.get('trend', 15)
     if momentum_ok: score += w.get('momentum', 10)
     if volatility_ok: score += w.get('volatility', 10)
     if adx_ok: score += w.get('adx', 10)
-    if rsi_ok: score += w.get('rsi', 0)
-    if stoch_ok: score += w.get('stochastic', 0)
+    if rsi_ok: score += w.get('rsi', 5)
+    if stoch_ok: score += w.get('stochastic', 5)
     if candle_ok: score += w.get('candle', 5)
     return score
 
