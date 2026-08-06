@@ -119,7 +119,8 @@ QUANTUM_CONFIG = {
         "order_block": 15,
         "fvg": 15,
         "volume": 5,
-        "momentum": 20
+        "momentum": 20,
+        "rsi": 5
     },
     "learning": {
         "min_trades": 50,
@@ -1933,10 +1934,10 @@ def detect_market_regime(pair, tf=300):
 def analyze_volatility_filter(volatility):
     config = QUANTUM_CONFIG.get("volatility_filter", {})
     
-    reject_low = config.get("reject_low", 0.0003)
-    reject_high = config.get("reject_high", 0.012)
-    ideal_low = config.get("ideal_low", 0.001)
-    ideal_high = config.get("ideal_high", 0.005)
+    reject_low = config.get("reject_low", 0.00005)
+    reject_high = config.get("reject_high", 0.015)
+    ideal_low = config.get("ideal_low", 0.0008)
+    ideal_high = config.get("ideal_high", 0.006)
     score_bonus = config.get("score_bonus", 5)
     score_penalty = config.get("score_penalty", 10)
     
@@ -2118,7 +2119,7 @@ def volume_confirmation_quantum(df, curr):
         if "Volume" not in df.columns or curr['Volume'] <= 0:
             return False
         vol_ma = df['Volume'].tail(20).mean()
-        return curr['Volume'] >= vol_ma * 1.1
+        return curr['Volume'] >= vol_ma * 0.9
     except Exception as e:
         logger.error(f"خطأ في تأكيد الحجم Quantum: {e}")
         return False
@@ -2135,22 +2136,22 @@ def momentum_confirmation_quantum(df, curr):
         alma9 = curr['ALMA_9']
         alma50 = curr['ALMA_50']
 
-        if rsi > 55 and alma9 > alma50 and roc > 0:
+        if rsi > 52 and alma9 > alma50 and roc > -0.1:
             return "BULLISH"
-        if rsi < 45 and alma9 < alma50 and roc < 0:
+        if rsi < 48 and alma9 < alma50 and roc < 0.1:
             return "BEARISH"
         return None
     except Exception as e:
         logger.error(f"خطأ في تأكيد الزخم Quantum: {e}")
         return None
 
-def calculate_confidence_score_quantum(structure, liquidity, order_block, fvg, volume, momentum):
+def calculate_confidence_score_quantum(structure, liquidity, order_block, fvg, volume, momentum, fvg_ok=True, rsi_val=50, regime="unknown"):
     call = 0
     put = 0
     reasons = []
     weights = QUANTUM_CONFIG.get("weights", {
         "structure": 20, "liquidity": 20, "order_block": 15,
-        "fvg": 15, "volume": 5, "momentum": 20
+        "fvg": 15, "volume": 5, "momentum": 20, "rsi": 5
     })
 
     if structure == "BULLISH":
@@ -2169,20 +2170,43 @@ def calculate_confidence_score_quantum(structure, liquidity, order_block, fvg, v
         put += weights["order_block"]; reasons.append("📦 Order Block هابط")
 
     if fvg and fvg["type"] == "BULLISH":
-        call += weights["fvg"]; reasons.append("🔲 FVG صاعد")
+        if fvg_ok:
+            call += weights["fvg"]; reasons.append("🔲 FVG صاعد")
+        else:
+            call += weights["fvg"] // 2; reasons.append("🔲 FVG صاعد (جزئي)")
     elif fvg and fvg["type"] == "BEARISH":
-        put += weights["fvg"]; reasons.append("🔲 FVG هابط")
+        if fvg_ok:
+            put += weights["fvg"]; reasons.append("🔲 FVG هابط")
+        else:
+            put += weights["fvg"] // 2; reasons.append("🔲 FVG هابط (جزئي)")
 
     if volume:
         if structure == "BULLISH" or liquidity == "BULLISH":
             call += weights["volume"]; reasons.append("📊 حجم مرتفع")
         elif structure == "BEARISH" or liquidity == "BEARISH":
             put += weights["volume"]; reasons.append("📊 حجم مرتفع")
+    else:
+        if structure == "BULLISH" or liquidity == "BULLISH":
+            call += weights["volume"] // 2; reasons.append("📊 حجم متوسط")
+        elif structure == "BEARISH" or liquidity == "BEARISH":
+            put += weights["volume"] // 2; reasons.append("📊 حجم متوسط")
 
     if momentum == "BULLISH":
         call += weights["momentum"]; reasons.append("⚡ زخم صاعد")
     elif momentum == "BEARISH":
         put += weights["momentum"]; reasons.append("⚡ زخم هابط")
+    else:
+        # Partial momentum credit if RSI aligns
+        if rsi_val > 55:
+            call += weights["momentum"] // 2; reasons.append("⚡ زخم جزئي (RSI)")
+        elif rsi_val < 45:
+            put += weights["momentum"] // 2; reasons.append("⚡ زخم جزئي (RSI)")
+
+    # RSI bonus
+    if rsi_val > 55 and (structure == "BULLISH" or liquidity == "BULLISH"):
+        call += weights["rsi"]; reasons.append("📈 RSI مؤكد")
+    elif rsi_val < 45 and (structure == "BEARISH" or liquidity == "BEARISH"):
+        put += weights["rsi"]; reasons.append("📉 RSI مؤكد")
 
     if call > put:
         return {"direction": "CALL", "score": min(call, 100), "reasons": reasons}
@@ -2388,7 +2412,8 @@ def handle_quantum_command(command):
             "order_block": 15,
             "fvg": 15,
             "volume": 5,
-            "momentum": 20
+            "momentum": 20,
+            "rsi": 5
         }
         return "✅ *تم إعادة ضبط الأوزان إلى القيم الافتراضية*"
     
@@ -2463,8 +2488,7 @@ def analyze_pair_quantum(pair, timeframe="5m"):
     # استخدام تحليل HTF المحسن
     regime = analyze_market_condition_quantum(df, pair=pair)
     if regime == "ranging":
-        logger.info(f"🛑 Quantum {pair}: سوق عرضي (RANGE) - تم الإلغاء")
-        return None
+        logger.info(f"⚠️ Quantum {pair}: سوق عرضي (RANGE) - مستمر بتخفيض 10 نقاط")
 
     # استخدام آخر شمعة مقفولة
     curr = df.iloc[-2]
@@ -2487,20 +2511,27 @@ def analyze_pair_quantum(pair, timeframe="5m"):
     order_block = detect_order_block_quantum(df, curr)
     fvg = detect_fvg_quantum(df, curr)
 
+    fvg_ok = False
     if fvg:
-        if not fvg_retest_quantum(df, fvg):
-            logger.info(f"🛑 Quantum {pair}: FVG لم يُعاد اختباره - تم الإلغاء")
-            return None
+        if fvg_retest_quantum(df, fvg):
+            fvg_ok = True
+            logger.info(f"✅ Quantum {pair}: FGV معاد اختباره")
+        else:
+            logger.info(f"⚠️ Quantum {pair}: FVG لم يُعاد اختباره - جزئي فقط")
     else:
-        logger.info(f"🛑 Quantum {pair}: لا يوجد FVG - تم الإلغاء")
-        return None
+        logger.info(f"⚠️ Quantum {pair}: لا يوجد FVG - جزئي فقط")
 
     volume = volume_confirmation_quantum(df, curr)
     momentum = momentum_confirmation_quantum(df, curr)
 
-    result = calculate_confidence_score_quantum(structure, liquidity, order_block, fvg, volume, momentum)
+    # Get RSI for extra scoring
+    rsi_val = curr.get('RSI', 50) if 'RSI' in curr else 50
+
+    result = calculate_confidence_score_quantum(structure, liquidity, order_block, fvg, volume, momentum, fvg_ok, rsi_val, regime)
 
     adjusted_score = result['score'] + vol_filter['score_adjust']
+    if regime == "ranging":
+        adjusted_score -= 10
     adjusted_score = max(0, min(100, adjusted_score))
     
     logger.info(f"📊 Quantum {pair}: النتيجة الأصلية {result['score']} → معدلة {adjusted_score} ({vol_filter['reason']})")
@@ -2516,18 +2547,21 @@ def analyze_pair_quantum(pair, timeframe="5m"):
         logger.info(f"🛑 Quantum {pair}: إشارة مكررة - تم الإلغاء")
         return None
 
-    if final_score >= 95:
+    if final_score >= 90:
         level = 4
         signal_name_ar, signal_name_en = QUANTUM_SIGNAL_NAMES[level]
-    elif final_score >= 90:
+    elif final_score >= 85:
         level = 3
         signal_name_ar, signal_name_en = QUANTUM_SIGNAL_NAMES[level]
-    elif final_score >= 85:
+    elif final_score >= 80:
         level = 2
         signal_name_ar, signal_name_en = QUANTUM_SIGNAL_NAMES[level]
-    else:
+    elif final_score >= 70:
         level = 1
         signal_name_ar, signal_name_en = QUANTUM_SIGNAL_NAMES[level]
+    else:
+        logger.info(f"🛑 Quantum {pair}: Score={final_score} < 70")
+        return None
 
     da = "صعود (CALL)" if result['direction'] == "CALL" else "هبوط (PUT)"
 
