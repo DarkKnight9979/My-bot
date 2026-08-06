@@ -1960,8 +1960,8 @@ def analyze_volatility_filter(volatility):
     if volatility < ideal_low:
         return {
             'status': 'WARNING',
-            'reason': f'⚠️ تقلب منخفض ({volatility:.4f}) - خصم {score_penalty} نقطة',
-            'score_adjust': -score_penalty,
+            'reason': f'⚠️ تقلب منخفض ({volatility:.4f}) - خصم 5 نقاط',
+            'score_adjust': -5,
             'can_enter': True,
             'emoji': '😴'
         }
@@ -2145,68 +2145,123 @@ def momentum_confirmation_quantum(df, curr):
         logger.error(f"خطأ في تأكيد الزخم Quantum: {e}")
         return None
 
-def calculate_confidence_score_quantum(structure, liquidity, order_block, fvg, volume, momentum, fvg_ok=True, rsi_val=50, regime="unknown"):
+def calculate_confidence_score_quantum(structure, liquidity, order_block, fvg, volume, momentum, fvg_ok=True, rsi_val=50, regime="unknown", df=None, curr=None):
     call = 0
     put = 0
     reasons = []
-    weights = QUANTUM_CONFIG.get("weights", {
-        "structure": 20, "liquidity": 20, "order_block": 15,
-        "fvg": 15, "volume": 5, "momentum": 20, "rsi": 5
-    })
+
+    # === BASE TECHNICAL SCORE (up to 50 points) ===
+    # This ensures signals exist even without perfect SMC conditions
+    if df is not None and len(df) >= 20:
+        # Calculate indicators if missing
+        if 'ALMA_9' not in df.columns:
+            df['ALMA_9'] = calculate_alma(df['Close'], 9, 0.85, 6)
+        if 'ALMA_50' not in df.columns:
+            df['ALMA_50'] = calculate_alma(df['Close'], 50, 0.85, 6)
+        if 'RSI' not in df.columns:
+            df['RSI'] = wilder_rsi(df['Close'], 14)
+        if 'Stoch_K' not in df.columns:
+            df['Stoch_K'], df['Stoch_D'] = calculate_stoch(df, 14, 3)
+        if 'ROC' not in df.columns:
+            df['ROC'] = calculate_roc(df['Close'], 5)
+
+        last = df.iloc[-2] if len(df) > 2 else df.iloc[-1]
+
+        # ALMA Trend: 15 pts
+        if last['ALMA_9'] > last['ALMA_50']:
+            call += 15; reasons.append("📈 ALMA صاعد")
+        elif last['ALMA_9'] < last['ALMA_50']:
+            put += 15; reasons.append("📉 ALMA هابط")
+
+        # RSI: 10 pts
+        if 'RSI' in last:
+            if last['RSI'] > 55:
+                call += 10; reasons.append("📈 RSI قوي")
+            elif last['RSI'] < 45:
+                put += 10; reasons.append("📉 RSI قوي")
+            elif last['RSI'] >= 50:
+                call += 5
+            elif last['RSI'] < 50:
+                put += 5
+
+        # Stochastic: 10 pts
+        if 'Stoch_K' in last and 'Stoch_D' in last:
+            if last['Stoch_K'] > last['Stoch_D']:
+                call += 10; reasons.append("📈 Stoch صاعد")
+            elif last['Stoch_K'] < last['Stoch_D']:
+                put += 10; reasons.append("📉 Stoch هابط")
+
+        # ROC: 10 pts
+        if 'ROC' in last:
+            if last['ROC'] > 0:
+                call += 10; reasons.append("📈 ROC صاعد")
+            elif last['ROC'] < 0:
+                put += 10; reasons.append("📉 ROC هابط")
+
+        # ADX: 5 pts
+        try:
+            adx_val, _, _ = calculate_adx(df, 14)
+            if adx_val >= 15:
+                call += 5; put += 5; reasons.append("📊 ADX نشط")
+        except:
+            pass
+
+    # === SMC BONUS (up to 50 points) ===
+    # Strong signals when SMC concepts align
+    smc_weights = {"structure": 12, "liquidity": 12, "order_block": 8, "fvg": 8, "volume": 5, "momentum": 5}
 
     if structure == "BULLISH":
-        call += weights["structure"]; reasons.append("📈 هيكل صاعد")
+        call += smc_weights["structure"]; reasons.append("📈 هيكل صاعد")
     elif structure == "BEARISH":
-        put += weights["structure"]; reasons.append("📉 هيكل هابط")
+        put += smc_weights["structure"]; reasons.append("📉 هيكل هابط")
 
     if liquidity == "BULLISH":
-        call += weights["liquidity"]; reasons.append("💧 Liquidity Sweep صاعد")
+        call += smc_weights["liquidity"]; reasons.append("💧 Liquidity Sweep صاعد")
     elif liquidity == "BEARISH":
-        put += weights["liquidity"]; reasons.append("💧 Liquidity Sweep هابط")
+        put += smc_weights["liquidity"]; reasons.append("💧 Liquidity Sweep هابط")
 
     if order_block == "BULLISH":
-        call += weights["order_block"]; reasons.append("📦 Order Block صاعد")
+        call += smc_weights["order_block"]; reasons.append("📦 Order Block صاعد")
     elif order_block == "BEARISH":
-        put += weights["order_block"]; reasons.append("📦 Order Block هابط")
+        put += smc_weights["order_block"]; reasons.append("📦 Order Block هابط")
 
     if fvg and fvg["type"] == "BULLISH":
         if fvg_ok:
-            call += weights["fvg"]; reasons.append("🔲 FVG صاعد")
+            call += smc_weights["fvg"]; reasons.append("🔲 FVG صاعد")
         else:
-            call += weights["fvg"] // 2; reasons.append("🔲 FVG صاعد (جزئي)")
+            call += smc_weights["fvg"] // 2; reasons.append("🔲 FVG صاعد (جزئي)")
     elif fvg and fvg["type"] == "BEARISH":
         if fvg_ok:
-            put += weights["fvg"]; reasons.append("🔲 FVG هابط")
+            put += smc_weights["fvg"]; reasons.append("🔲 FVG هابط")
         else:
-            put += weights["fvg"] // 2; reasons.append("🔲 FVG هابط (جزئي)")
+            put += smc_weights["fvg"] // 2; reasons.append("🔲 FVG هابط (جزئي)")
 
     if volume:
-        if structure == "BULLISH" or liquidity == "BULLISH":
-            call += weights["volume"]; reasons.append("📊 حجم مرتفع")
-        elif structure == "BEARISH" or liquidity == "BEARISH":
-            put += weights["volume"]; reasons.append("📊 حجم مرتفع")
+        if call > put:
+            call += smc_weights["volume"]; reasons.append("📊 حجم مرتفع")
+        elif put > call:
+            put += smc_weights["volume"]; reasons.append("📊 حجم مرتفع")
     else:
-        if structure == "BULLISH" or liquidity == "BULLISH":
-            call += weights["volume"] // 2; reasons.append("📊 حجم متوسط")
-        elif structure == "BEARISH" or liquidity == "BEARISH":
-            put += weights["volume"] // 2; reasons.append("📊 حجم متوسط")
+        if call > put:
+            call += smc_weights["volume"] // 2; reasons.append("📊 حجم متوسط")
+        elif put > call:
+            put += smc_weights["volume"] // 2; reasons.append("📊 حجم متوسط")
 
     if momentum == "BULLISH":
-        call += weights["momentum"]; reasons.append("⚡ زخم صاعد")
+        call += smc_weights["momentum"]; reasons.append("⚡ زخم صاعد")
     elif momentum == "BEARISH":
-        put += weights["momentum"]; reasons.append("⚡ زخم هابط")
+        put += smc_weights["momentum"]; reasons.append("⚡ زخم هابط")
     else:
-        # Partial momentum credit if RSI aligns
         if rsi_val > 55:
-            call += weights["momentum"] // 2; reasons.append("⚡ زخم جزئي (RSI)")
+            call += smc_weights["momentum"] // 2; reasons.append("⚡ زخم جزئي (RSI)")
         elif rsi_val < 45:
-            put += weights["momentum"] // 2; reasons.append("⚡ زخم جزئي (RSI)")
+            put += smc_weights["momentum"] // 2; reasons.append("⚡ زخم جزئي (RSI)")
 
-    # RSI bonus
-    if rsi_val > 55 and (structure == "BULLISH" or liquidity == "BULLISH"):
-        call += weights["rsi"]; reasons.append("📈 RSI مؤكد")
-    elif rsi_val < 45 and (structure == "BEARISH" or liquidity == "BEARISH"):
-        put += weights["rsi"]; reasons.append("📉 RSI مؤكد")
+    # RSI bonus when aligned with direction
+    if rsi_val > 55 and call > put:
+        call += 5; reasons.append("📈 RSI مؤكد")
+    elif rsi_val < 45 and put > call:
+        put += 5; reasons.append("📉 RSI مؤكد")
 
     if call > put:
         return {"direction": "CALL", "score": min(call, 100), "reasons": reasons}
@@ -2528,11 +2583,11 @@ def analyze_pair_quantum(pair, timeframe="5m"):
     # Get RSI for extra scoring
     rsi_val = curr.get('RSI', 50) if 'RSI' in curr else 50
 
-    result = calculate_confidence_score_quantum(structure, liquidity, order_block, fvg, volume, momentum, fvg_ok, rsi_val, regime)
+    result = calculate_confidence_score_quantum(structure, liquidity, order_block, fvg, volume, momentum, fvg_ok, rsi_val, regime, df, curr)
 
     adjusted_score = result['score'] + vol_filter['score_adjust']
     if regime == "ranging":
-        adjusted_score -= 10
+        adjusted_score -= 5
     adjusted_score = max(0, min(100, adjusted_score))
     
     logger.info(f"📊 Quantum {pair}: النتيجة الأصلية {result['score']} → معدلة {adjusted_score} ({vol_filter['reason']})")
