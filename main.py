@@ -4697,15 +4697,6 @@ def check_trade_results():
         is_king = trade.get('is_king', False)
 
         try:
-            if 0 < time_left <= 20 and not trade.get('warned_loss', False) and not is_mg and not is_king and strategy not in ['smart', 'pro', 'quantum']:
-                candles = get_cached_candles(pair, 300, 1, max_age=5, force_refresh=True)
-                if candles and len(candles) >= 1:
-                    cp = candles[-1]['close']
-                    losing = (direction == "CALL" and cp < ep) or (direction == "PUT" and cp > ep)
-                    if losing:
-                        send_telegram_message("⏳ *تنبيه مبكر*\nالزوج: `" + pair + "` [5m]\nالصفقة تتجه للخسارة...")
-                        trade['warned_loss'] = True
-
             if time_left <= 0:
                 candles = get_cached_candles(pair, 300, 5, max_age=0, force_refresh=True)
 
@@ -4801,7 +4792,7 @@ def check_trade_results():
                         "indicators": trade.get('indicators', {}),
                         "hour": trade.get('hour', datetime.now(CAIRO_TZ).hour),
                         "day_of_week": datetime.now(CAIRO_TZ).weekday(),
-                        "is_martingale": is_mg,
+                        "is_martingale": False,
                         "is_king": is_king,
                         "candle_to": candle_to,
                         "candle_from": candle_from,
@@ -4810,43 +4801,8 @@ def check_trade_results():
                 except Exception as e:
                     logger.error("خطأ في تسجيل الصفقة: " + str(e))
 
-                if is_tie:
-                    result_msg = "➖ *تعادل*\nالزوج: `" + pair + "` [5m]\n⏰ `" + ts + "`\nالدخول: " + "{:.5f}".format(ep) + " | الخروج: " + "{:.5f}".format(fp)
-                    send_telegram_message(result_msg)
-                elif is_mg:
-                    msg = "✅ *مارتينجيل: رابحة*" if is_win else "❌ *مارتينجيل: خاسرة*"
-                    msg += "\nالزوج: `" + pair + "` [5m]\n⏰ `" + ts + "`\nالدخول: " + "{:.5f}".format(ep) + " | الخروج: " + "{:.5f}".format(fp)
-                    send_telegram_message(msg)
                 else:
-                    if is_win:
-                        if strategy == 'quantum':
-                            send_telegram_message("🧠 *Quantum — رابحة* 🎯\nالزوج: `" + pair + "` [5m]\n⏰ `" + ts + "`\nالدخول: " + "{:.5f}".format(ep) + " | الخروج: " + "{:.5f}".format(fp))
-                        elif strategy == 'pro':
-                            send_telegram_message("🔥 *Pro — رابحة* 🎯\nالزوج: `" + pair + "` [5m]\n⏰ `" + ts + "`\nالدخول: " + "{:.5f}".format(ep) + " | الخروج: " + "{:.5f}".format(fp))
-                        elif strategy == 'smart':
-                            send_telegram_message("🏆 *SMC — رابحة* 🎯\nالزوج: `" + pair + "` [5m]\n⏰ `" + ts + "`\nالدخول: " + "{:.5f}".format(ep) + " | الخروج: " + "{:.5f}".format(fp))
-                        elif is_king:
-                            send_telegram_message("👑 *" + trade.get('signal_name', 'King') + " — رابحة*\nالزوج: `" + pair + "` [5m]\n⏰ `" + ts + "`\nالدخول: " + "{:.5f}".format(ep) + " | الخروج: " + "{:.5f}".format(fp))
-                        else:
-                            send_telegram_message("✅ *صفقة رابحة* 🎯\nالزوج: `" + pair + "` [5m]\n⏰ `" + ts + "`\nالدخول: " + "{:.5f}".format(ep) + " | الخروج: " + "{:.5f}".format(fp))
-                    else:
-                        if strategy == 'quantum':
-                            send_telegram_message("❌ *Quantum — خاسرة* 🧠\nالزوج: `" + pair + "` [5m]\n⏰ `" + ts + "`\nالدخول: " + "{:.5f}".format(ep) + " | الخروج: " + "{:.5f}".format(fp))
-                        elif strategy == 'pro':
-                            send_telegram_message("❌ *Pro — خاسرة*\nالزوج: `" + pair + "` [5m]\n⏰ `" + ts + "`\nالدخول: " + "{:.5f}".format(ep) + " | الخروج: " + "{:.5f}".format(fp))
-                        elif strategy == 'smart':
-                            send_telegram_message("❌ *SMC — خاسرة*\nالزوج: `" + pair + "` [5m]\n⏰ `" + ts + "`\nالدخول: " + "{:.5f}".format(ep) + " | الخروج: " + "{:.5f}".format(fp))
-                        elif is_king:
-                            send_telegram_message("❌ *" + trade.get('signal_name', 'King') + " — خاسرة*\nالزوج: `" + pair + "` [5m]\n⏰ `" + ts + "`\nالدخول: " + "{:.5f}".format(ep) + " | الخروج: " + "{:.5f}".format(fp))
-                        else:
-                            with data_lock:
-                                if pair not in state.martingale_queue:
-                                    state.martingale_queue[pair] = {'original_direction': direction, 'entry_price': ep, 'time': get_iq_time()}
-                            send_telegram_message(
-                                "❌ *صفقة خاسرة*\n"
-                                "الزوج: `" + pair + "` [5m]\n"
-                                "⏰ `" + ts + "`\n"
-                                "الدخول: " + "{:.5f}".format(ep) + " | الخروج: " + "{:.5f}".format(fp) + "\n\n"
+                    pass  # Result messages removed per user request + " | الخروج: " + "{:.5f}".format(fp) + "\n\n"
                                 "🔴 *دخول وضع المارتينجيل!*\n"
                                 "🎯 البحث في كل الأزواج عن إشارة *قوية جداً* 🔵 أو أعلى.\n"
                                 "⏳ تحليل السوق..."
@@ -5176,22 +5132,7 @@ def run_bot():
                 if len(valid_pairs) < len(pairs):
                     logger.info(f"📋 الأزواج المتاحة: {len(valid_pairs)}/{len(pairs)}")
 
-                with data_lock:
-                    mg_queue_copy = dict(state.martingale_queue)
-                if mg_queue_copy:
-                    now_time = get_iq_time()
-                    if now_time - state.last_hunt_message_time >= MARTINGALE_HUNT_INTERVAL:
-                        state.last_hunt_message_time = now_time
-                        send_telegram_message(
-                            f"🔍 *البحث عن مارتينجيل...*\n"
-                            f"🎯 تحليل كل الأزواج المتاحة.\n"
-                            f"⏳ البحث عن *قوية جداً* 🔵 أو أعلى.\n"
-                            f"✅ كل الإشارات العادية شغالة.\n"
-                            f"👑 King شغال.\n"
-                            f"🏆 SMC شغال.\n"
-                            f"🔥 Pro شغال.\n"
-                            f"🧠 Quantum شغال."
-                        )
+
 
                 active_pairs = []
                 disabled_count = 0
@@ -5228,19 +5169,6 @@ def run_bot():
                 if "original" in strategies_to_run:
                     results = list(executor.map(analyze_pair_wrapper, active_pairs))
 
-                    with data_lock:
-                        in_hunt = len(state.martingale_queue) > 0
-
-                    if in_hunt:
-                        martingale_found = False
-                        for pair, signal in results:
-                            if signal and not martingale_found:
-                                logger.info(f"✅ تم العثور على مارتينجيل: {pair}")
-                                martingale_found = True
-                                with data_lock:
-                                    state.martingale_queue.clear()
-                                with data_lock:
-                                    state.alerted_pairs.clear()
                     else:
                         for pair, signal in results:
                             if signal:
