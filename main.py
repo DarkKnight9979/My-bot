@@ -1934,8 +1934,8 @@ def detect_market_regime(pair, tf=300):
 def analyze_volatility_filter(volatility):
     config = QUANTUM_CONFIG.get("volatility_filter", {})
     
-    reject_low = config.get("reject_low", 0.00005)
-    reject_high = config.get("reject_high", 0.015)
+    reject_low = config.get("reject_low", 0.000001)
+    reject_high = config.get("reject_high", 0.02)
     ideal_low = config.get("ideal_low", 0.0008)
     ideal_high = config.get("ideal_high", 0.006)
     score_bonus = config.get("score_bonus", 5)
