@@ -2599,9 +2599,7 @@ def analyze_pair_quantum(pair, timeframe="5m"):
         logger.info(f"🛑 Quantum {pair}: النتيجة {final_score} < {min_score}")
         return None
 
-    if duplicate_signal_quantum(pair, result['direction']):
-        logger.info(f"🛑 Quantum {pair}: إشارة مكررة - تم الإلغاء")
-        return None
+    # duplicate check moved to Phase 3 (Final Signal only)
 
     if final_score >= 90:
         level = 4
