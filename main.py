@@ -2496,7 +2496,8 @@ def analyze_pair_quantum(pair, timeframe="5m"):
 
     kalman = get_kalman(pair)
     smoothed_price = kalman.update(price)
-    volatility = atr if atr > 0 else kalman.get_volatility()
+    atr_val = calculate_atr_series(df, 14).iloc[-1] / price if len(df) >= 14 else 0
+    volatility = atr_val if atr_val > 0 else kalman.get_volatility()
 
     vol_filter = analyze_volatility_filter(volatility)
     
