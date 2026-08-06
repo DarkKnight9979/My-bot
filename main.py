@@ -4802,11 +4802,7 @@ def check_trade_results():
                     logger.error("خطأ في تسجيل الصفقة: " + str(e))
 
                 else:
-                    pass  # Result messages removed per user request + " | الخروج: " + "{:.5f}".format(fp) + "\n\n"
-                                "🔴 *دخول وضع المارتينجيل!*\n"
-                                "🎯 البحث في كل الأزواج عن إشارة *قوية جداً* 🔵 أو أعلى.\n"
-                                "⏳ تحليل السوق..."
-                            )
+                    pass  # Result messages removed per user request
 
                 trades_to_remove.append(trade)
 
@@ -5169,10 +5165,9 @@ def run_bot():
                 if "original" in strategies_to_run:
                     results = list(executor.map(analyze_pair_wrapper, active_pairs))
 
-                    else:
-                        for pair, signal in results:
-                            if signal:
-                                logger.info(f"✅ إشارة: {pair}")
+                    for pair, signal in results:
+                        if signal:
+                            logger.info(f"✅ إشارة: {pair}")
 
                 # ========== KING ==========
                 if "king" in strategies_to_run:
