@@ -2751,9 +2751,10 @@ def analyze_pair_quantum(pair, timeframe="5m"):
             return None
 
         htf_data = get_htf_market_regime(pair)
+        indicator_counts = get_indicator_counts(pair, df)
         final_signal = send_final_signal(
             pair, result['direction'], signal_name_ar, final_score,
-            duration_text, indicators_str, 'quantum', regime=regime, signal_level=level, htf_data=htf_data
+            duration_text, indicators_str, 'quantum', regime=regime, signal_level=level, htf_data=htf_data, indicator_counts=indicator_counts
         )
         
         if final_signal is None:
