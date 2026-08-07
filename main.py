@@ -2942,9 +2942,7 @@ def evaluate_signal_strength_enhanced(direction, curr, prev, df, price, alma9, a
         score = max(0, score - 5)
         reasons.append("BBW Low")
 
-    # Normalize from 130 max to 100 scale
-    normalized_score = int(min(round(score * (100 / 130)), 100))
-    return normalized_score, reasons
+    return int(min(score, 100)), reasons
 
 
 def analyze_pair(pair, timeframe="5m"):
