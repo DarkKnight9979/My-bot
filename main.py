@@ -203,6 +203,7 @@ def health():
 
 def run_web_server():
     port = int(os.environ.get("PORT", 10000))
+    logging.getLogger('werkzeug').setLevel(logging.ERROR)
     app.run(host="0.0.0.0", port=port)
 
 # ========== LOCKS ==========
@@ -4208,6 +4209,8 @@ def is_news_for_pair(pair):
     update_news()
     with data_lock:
         if state.news_fetch_failed:
+            if now - state.last_news_update < 3600:
+                return False
             logger.warning("⚠️ الأخبار غير متاحة، الإشارات مستمرة")
             return False
         news_snapshot = state.news_data.copy()
