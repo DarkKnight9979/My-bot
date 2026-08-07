@@ -4207,14 +4207,14 @@ def is_news_for_pair(pair):
     if day_of_week in [5, 6]:
         return False
     update_news()
+    now = datetime.now(UTC_TZ)
     with data_lock:
         if state.news_fetch_failed:
-            if now - state.last_news_update < 3600:
+            if now - datetime.fromtimestamp(state.last_news_update, tz=UTC_TZ) < timedelta(hours=1):
                 return False
             logger.warning("⚠️ الأخبار غير متاحة، الإشارات مستمرة")
             return False
         news_snapshot = state.news_data.copy()
-    now = datetime.now(UTC_TZ)
     for ev in news_snapshot:
         try:
             impact = str(ev.get('impact','')).upper()
