@@ -2914,16 +2914,16 @@ def evaluate_signal_strength_enhanced(direction, curr, prev, df, price, alma9, a
             score += 5
             reasons.append("Structure Weak")
 
-    # 8. HTF Trend Confirmation — 15 pts
+    # 8. HTF Trend Confirmation — ±15 pts
     if htf_regime:
         if htf_regime.get("trend") == direction:
             score += 15
             reasons.append("HTF Confirm")
         elif htf_regime.get("trend") is not None:
-            score += 3
-            reasons.append("HTF Mixed")
+            score -= 15
+            reasons.append("HTF Opposite (-15)")
 
-    # 9. HTF Structure — 10 pts
+    # 9. HTF Structure — ±10 pts
     if htf_regime:
         htf_struct = htf_regime.get("structure")
         if htf_struct:
@@ -2931,8 +2931,8 @@ def evaluate_signal_strength_enhanced(direction, curr, prev, df, price, alma9, a
                 score += 10
                 reasons.append("HTF Structure")
             else:
-                score += 2
-                reasons.append("HTF Structure Weak")
+                score -= 10
+                reasons.append("HTF Structure Opposite (-10)")
 
     # Hard filters (reduce score but don't reject)
     if atr < price * 0.00015:
@@ -2991,30 +2991,31 @@ def analyze_pair(pair, timeframe="5m"):
     bullish_cross = (a9p <= a50p) and (a9c > a50c)
     bearish_cross = (a9p >= a50p) and (a9c < a50c)
 
-    # شروط أقوى: أضفنا stoch_k > 50 للـ CALL و < 50 للـ PUT
-    if bullish_cross and stoch_k > stoch_d and stoch_k > 50:
+    # تحديد الاتجاه
+    if bullish_cross and stoch_k > stoch_d:
         potential_direction = "CALL"
-    elif bearish_cross and stoch_k < stoch_d and stoch_k < 50:
+    elif bearish_cross and stoch_k < stoch_d:
         potential_direction = "PUT"
-    elif price > alma9 and stoch_k > stoch_d and rsi <= 65 and stoch_k > 50:
+    elif price > alma9 and stoch_k > stoch_d and rsi <= 65:
         potential_direction = "CALL"
-    elif price < alma9 and stoch_k < stoch_d and rsi >= 35 and stoch_k < 50:
+    elif price < alma9 and stoch_k < stoch_d and rsi >= 35:
         potential_direction = "PUT"
 
     if potential_direction is None:
+        logger.info(f"🛑 {pair}: لا يوجد اتجاه محتمل (ALMA/Stoch غير متوافقين)")
         return None
 
-    # ========== تحسين 5: HTF Filter أقوى ==========
+    # HTF Trend/Structure: تحذير فقط — العقوبة فى النقاط مش رفض تام
+    htf_mismatch = False
     if htf_trend is not None and htf_trend != potential_direction:
-        logger.info(f"🛑 {pair}: HTF Trend عكسي")
-        return None
-    
-    # Structure عكسي = رفض
+        logger.info(f"⚠️ {pair}: HTF Trend عكسى — خصم 15 نقطة")
+        htf_mismatch = True
+
     if htf_structure:
         if (potential_direction == "CALL" and htf_structure == "BEARISH") or \
            (potential_direction == "PUT" and htf_structure == "BULLISH"):
-            logger.info(f"🛑 {pair}: HTF Structure عكسي")
-            return None
+            logger.info(f"⚠️ {pair}: HTF Structure عكسى — خصم 10 نقاط")
+            htf_mismatch = True
 
     # ========== تحسين 6: فلاتر صارمة ==========
     atr_avg = atr_series.tail(20).mean()
@@ -3026,8 +3027,8 @@ def analyze_pair(pair, timeframe="5m"):
     if atr > atr_avg * 3.5:
         logger.info(f"⚠️ {pair}: تقلب عالي (ATR > avg*3.5) — مستمر بحذر")
 
-    if curr['Volume'] <= vol_ma * 1.2:  # رفع من 1.5
-        logger.info(f"🛑 {pair}: حجم ضعيف (Vol < MA*1.8)")
+    if curr['Volume'] <= vol_ma * 1.2:
+        logger.info(f"🛑 {pair}: حجم ضعيف (Vol {volume:.0f} < MA {vol_ma:.0f} * 1.2)")
         return None
 
     # ========== تحسين 7: تقييم محسّن ==========
