@@ -2983,6 +2983,11 @@ def analyze_pair_quantum(pair, timeframe="5m"):
             logger.error(f"🛑 Quantum {pair}: فشل جلب السعر اللحظي")
             return None
 
+        signal_timestamp = int(curr["from"])
+        trade_candle_timestamp = (
+            signal_timestamp // 300
+        ) * 300
+
         new_trade = _build_trade_dict(
             pair=pair,
             direction=result['direction'],
@@ -3019,6 +3024,9 @@ def analyze_pair_quantum(pair, timeframe="5m"):
             },
             strategy='quantum'
         )
+
+        new_trade["trade_candle_timestamp"] = trade_candle_timestamp
+        new_trade["timeframe"] = 300
 
         if not add_trade_atomic(new_trade):
             return None
@@ -3430,6 +3438,11 @@ def analyze_pair(pair, timeframe="5m"):
                 logger.error(f"🛑 {pair}: فشل جلب السعر اللحظي")
                 return None
 
+            signal_timestamp = int(curr["from"])
+            trade_candle_timestamp = (
+                signal_timestamp // 300
+            ) * 300
+
             new_trade = _build_trade_dict(
                 pair=pair, direction=potential_direction, 
                 signal_price=signal_price, entry_price=entry_price,
@@ -3457,6 +3470,9 @@ def analyze_pair(pair, timeframe="5m"):
                 },
                 strategy='original'
             )
+
+            new_trade["trade_candle_timestamp"] = trade_candle_timestamp
+            new_trade["timeframe"] = 300
 
             if add_trade_atomic(new_trade):
                 logger.info(f"✅ {pair}: {signal_name_ar} تم الإرسال (Level={strength} | Score={score})")
@@ -3666,6 +3682,11 @@ def analyze_pair_king(pair, timeframe="5m"):
                 logger.error(f"🛑 King {pair}: فشل جلب السعر اللحظي")
                 return None
 
+            signal_timestamp = int(curr["from"])
+            trade_candle_timestamp = (
+                signal_timestamp // 300
+            ) * 300
+
             new_trade = _build_trade_dict(
                 pair=pair, direction=potential_direction, 
                 signal_price=signal_price, entry_price=entry_price,
@@ -3687,6 +3708,9 @@ def analyze_pair_king(pair, timeframe="5m"):
                 },
                 strategy='king'
             )
+
+            new_trade["trade_candle_timestamp"] = trade_candle_timestamp
+            new_trade["timeframe"] = 300
 
             if not add_trade_atomic(new_trade):
                 logger.info(f"🛑 King {pair}: مكررة")
@@ -3979,6 +4003,11 @@ def analyze_pair_smc(pair, timeframe="5m"):
             logger.error(f"🛑 SMC {pair}: فشل جلب السعر اللحظي")
             return None
 
+        signal_timestamp = int(curr["from"])
+        trade_candle_timestamp = (
+            signal_timestamp // 300
+        ) * 300
+
         new_trade = _build_trade_dict(
             pair=pair,
             direction=bias,
@@ -4006,6 +4035,9 @@ def analyze_pair_smc(pair, timeframe="5m"):
             },
             strategy='smart'
         )
+
+        new_trade["trade_candle_timestamp"] = trade_candle_timestamp
+        new_trade["timeframe"] = 300
 
         if not add_trade_atomic(new_trade):
             logger.info(f"🛑 SMC {pair}: مكررة")
@@ -4221,6 +4253,11 @@ def analyze_pair_pro(pair, timeframe="5m"):
         if entry_price is None:
             logger.error(f"🛑 Pro {pair}: فشل جلب السعر اللحظي")
             return None
+
+        signal_timestamp = int(curr["from"])
+        trade_candle_timestamp = (
+            signal_timestamp // 300
+        ) * 300
 
         new_trade = _build_trade_dict(
             pair=pair, direction=direction, 
@@ -4655,6 +4692,55 @@ def get_live_price(pair, max_retries=3):
             if attempt < max_retries - 1:
                 time.sleep(0.2)
     return None
+
+
+
+def get_iq_trade_candle(pair, candle_timestamp, timeframe=300):
+    """
+    جلب شمعة الصفقة نفسها من IQ Option.
+    candle_timestamp = وقت بداية شمعة الصفقة.
+    """
+
+    try:
+        candle_timestamp = int(candle_timestamp)
+
+        candles = API.get_candles(
+            pair,
+            timeframe,
+            3,
+            candle_timestamp + timeframe
+        )
+
+        if not candles:
+            logger.warning(
+                f"⚠️ {pair}: لم يتم جلب شموع IQ Option"
+            )
+            return None
+
+        for candle in candles:
+            candle_from = int(candle.get("from", 0))
+
+            if candle_from == candle_timestamp:
+                return {
+                    "timestamp": candle_from,
+                    "open": float(candle["open"]),
+                    "high": float(candle["max"]),
+                    "low": float(candle["min"]),
+                    "close": float(candle["close"])
+                }
+
+        logger.warning(
+            f"⚠️ {pair}: شمعة الصفقة غير موجودة "
+            f"timestamp={candle_timestamp}"
+        )
+
+        return None
+
+    except Exception as e:
+        logger.error(
+            f"❌ {pair}: خطأ في جلب شمعة IQ Option: {e}"
+        )
+        return None
 
 def get_next_expiration(entry_time, expire_offset=300):
     """تقريب وقت الانتهاء لأعلى حد زمني (متوافق مع IQ Option)"""
@@ -5114,7 +5200,6 @@ def check_trade_results():
     for trade in trades_snapshot:
         time_left = trade['expire_time'] - current_time
         pair = trade['pair']
-        ep = trade['entry_price']
         direction = trade['direction']
         strategy = trade.get('strategy', 'unknown')
         is_mg = trade.get('is_martingale', False)
@@ -5122,23 +5207,38 @@ def check_trade_results():
 
         try:
             if time_left <= 0:
-                # جلب السعر اللحظي عند لحظة انتهاء الصفقة
-                fp = get_live_price(pair)
+                candle = get_iq_trade_candle(
+                    pair,
+                    trade["trade_candle_timestamp"],
+                    trade.get("timeframe", 300)
+                )
 
-                if fp is None:
+                if candle is None:
                     logger.warning(
-                        f"⏳ {pair}: فشل جلب سعر الانتهاء اللحظي، "
-                        "سيتم المحاولة في الدورة التالية"
+                        f"⏳ {pair}: لم تصل بيانات شمعة الصفقة بعد"
                     )
                     continue
 
-                fp = float(fp)
+                # بيانات نفس شمعة IQ Option
+                ep = candle["open"]
+                fp = candle["close"]
+
+                trade["entry_price"] = ep
+                trade["exit_price"] = fp
+
+                logger.info(
+                    f"📊 IQ OPTION CANDLE | {pair} | "
+                    f"OPEN={ep:.6f} | "
+                    f"HIGH={candle['high']:.6f} | "
+                    f"LOW={candle['low']:.6f} | "
+                    f"CLOSE={fp:.6f}"
+                )
 
                 # وقت الانتهاء الفعلي المستخدم في التقييم
                 expire_timestamp = trade['expire_time']
 
-                candle_to = 0
-                candle_from = 0
+                candle_to = candle["timestamp"] + trade.get("timeframe", 300)
+                candle_from = candle["timestamp"]
 
                 logger.info(
                     "📊 RESULT DEBUG | "
