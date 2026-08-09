@@ -1019,10 +1019,38 @@ def get_time_quality(strategy_name):
     return "⏳ وقت عادي"
 
 # ====== تم التعديل هنا: إضافة htf_data=None ======
+def get_strategy_win_rate(strategy_name):
+    """حساب نسبة الربح الفعلية للاستراتيجية من الإحصائيات الحية"""
+    with data_lock:
+        if strategy_name == 'original':
+            stats = state.stats
+        elif strategy_name == 'king':
+            stats = state.king_stats
+        elif strategy_name == 'smart':
+            stats = state.smart_stats
+        elif strategy_name == 'pro':
+            stats = state.pro_stats
+        elif strategy_name == 'quantum':
+            stats = state.quantum_stats
+        else:
+            return None
+
+        total_wins = sum(s['win'] for s in stats.values())
+        total_loss = sum(s['loss'] for s in stats.values())
+        total = total_wins + total_loss
+        if total > 0:
+            return (total_wins / total) * 100
+    return None
+
+
 def send_early_alert(pair, direction, signal_name, score, strategy_name, regime="unknown", htf_data=None, indicator_counts=None):
     da = "صعود (CALL)" if direction == "CALL" else "هبوط (PUT)"
     time_quality = get_time_quality(strategy_name)
     regime_badge = get_regime_badge(strategy_name, regime, htf_data, indicator_counts)
+    is_compatible = regime in STRATEGY_REGIMES.get(strategy_name, [])
+    compat_text = "✅ نوع السوق متوافق مع الاستراتيجية" if is_compatible else "⚠️ نوع السوق غير متوافق مع الاستراتيجية"
+    wr = get_strategy_win_rate(strategy_name)
+    wr_text = f"🎯 *نسبة ربح {strategy_name}:* `{wr:.1f}%\n`" if wr else ""
     msg = (
         f"⚠️ *تنبيه مبكر — {signal_name}*\n"
         f"الزوج: `{pair}` [5 دقائق]\n"
@@ -1032,7 +1060,9 @@ def send_early_alert(pair, direction, signal_name, score, strategy_name, regime=
         f"🔄 *جاري التحقق من الشروط النهائية...*\n"
         f"━━━━━━━━━━━━\n"
         f"🕐 *الوقت:* {time_quality}\n"
-        f"📍 {regime_badge}"
+        f"📍 {regime_badge}\n"
+        f"{compat_text}\n"
+        f"{wr_text}"
     )
     send_telegram_message(msg)
 
@@ -1047,17 +1077,17 @@ def send_cancelled_alert(pair, direction, reason, strategy_name):
     )
     send_telegram_message(msg)
 
-def send_final_signal(pair, direction, signal_name, score, duration_text, indicators, strategy_name, regime="unknown", signal_level=None, htf_data=None, indicator_counts=None):
+def send_final_signal(pair, direction, signal_name, score, duration_text, indicators, strategy_name, regime="unknown", signal_level=None, htf_data=None, indicator_counts=None, signal_price=None, entry_price=None):
     da = "صعود (CALL)" if direction == "CALL" else "هبوط (PUT)"
     time_quality = get_time_quality(strategy_name)
     regime_badge = get_regime_badge(strategy_name, regime, htf_data, indicator_counts)
-    
+
     msg_hash = f"{pair}_{direction}_{strategy_name}_{int(get_iq_time()) // 300}"
     with data_lock:
         if msg_hash in state.sent_final_signals:
             return None
         state.sent_final_signals[msg_hash] = time.time()
-    
+
     if strategy_name == 'quantum':
         emoji = QUANTUM_EMOJIS.get(signal_level, "🧠")
     elif strategy_name == 'original':
@@ -1068,15 +1098,24 @@ def send_final_signal(pair, direction, signal_name, score, duration_text, indica
         emoji = SMC_EMOJIS.get(signal_level, "🏆")
     else:
         emoji = PRO_EMOJIS.get(signal_level, "🔥")
-    
+
+    price_line = f"💰 *سعر الدخول:* `{entry_price:.5f}\n`" if entry_price else ""
+    is_compatible = regime in STRATEGY_REGIMES.get(strategy_name, [])
+    compat_text = "✅ نوع السوق متوافق مع الاستراتيجية" if is_compatible else "⚠️ نوع السوق غير متوافق مع الاستراتيجية"
+    wr = get_strategy_win_rate(strategy_name)
+    wr_text = f"🎯 *نسبة ربح {strategy_name}:* `{wr:.1f}%\n`" if wr else ""
+
     msg = (
         f"{emoji} *{signal_name}* {emoji}\n"
         f"الزوج: `{pair}` (IQ Option) [5 دقائق]\n"
         f"الاتجاه: *{da}*\n"
+        f"{price_line}"
         f"⏱️ *المدة:* {duration_text}\n"
         f"📊 *النقاط:* *{score}/100*\n"
         f"🕐 *الوقت:* {time_quality}\n"
         f"📍 *حالة السوق:* {regime_badge}\n"
+        f"{compat_text}\n"
+        f"{wr_text}"
         f"⚡ *ادخل الآن في الشمعة القادمة!*"
     )
     send_telegram_message(msg)
@@ -2873,7 +2912,7 @@ def analyze_pair_quantum(pair, timeframe="5m"):
         logger.info(f"🛑 Quantum {pair}: إلغاء - {reason}")
         return None
 
-    # ===== المرحلة 1: تنبيه مبكر (270-280) =====
+    # ===== مرحلة 1: تنبيه مبكر (270-280) =====
     if 270 <= csec <= 280:
         with data_lock:
             if pair_key not in state.quantum_alerted_pairs:
@@ -2887,24 +2926,8 @@ def analyze_pair_quantum(pair, timeframe="5m"):
                 }
 
                 indicator_counts = get_indicator_counts(pair, df)
-                time_quality = get_time_quality('quantum')
-                regime_badge = get_regime_badge('quantum', regime, None, indicator_counts)
-                vol_emoji = vol_filter.get('emoji', '📊')
-                vol_status = vol_filter['reason']
-
-                msg = (
-                    f"⚠️ *تنبيه مبكر — {signal_name_ar}*\n"
-                    f"الزوج: `{pair}` [5 دقائق]\n"
-                    f"الاتجاه: *{da}*\n"
-                    f"📊 النقاط: *{final_score}/100* (معدلة)\n"
-                    f"⏱️ *صفقة قادمة خلال 20 ثانية...*\n"
-                    f"🔄 *جاري التحقق من الشروط النهائية...*\n"
-                    f"━━━━━━━━━━━━\n"
-                    f"🕐 *الوقت:* {time_quality}\n"
-                    f"📍 {regime_badge}\n"
-                    f"⚛️ Kalman: {smoothed_price:.5f} | {vol_emoji} {vol_status}"
-                )
-                send_telegram_message(msg)
+                htf_data = get_htf_market_regime(pair)
+                send_early_alert(pair, result['direction'], signal_name_ar, final_score, 'quantum', regime=regime, htf_data=htf_data, indicator_counts=indicator_counts)
                 state.quantum_alerted_pairs[pair_key] = iq_now
         return None
 
@@ -3004,7 +3027,7 @@ def analyze_pair_quantum(pair, timeframe="5m"):
         indicator_counts = get_indicator_counts(pair, df)
         final_signal = send_final_signal(
             pair, result['direction'], signal_name_ar, final_score,
-            duration_text, indicators_str, 'quantum', regime=regime, signal_level=level, htf_data=htf_data, indicator_counts=indicator_counts, signal_price=signal_price
+            duration_text, indicators_str, 'quantum', regime=regime, signal_level=level, htf_data=htf_data, indicator_counts=indicator_counts, signal_price=signal_price, entry_price=entry_price
         )
         
         if final_signal is None:
@@ -3391,7 +3414,7 @@ def analyze_pair(pair, timeframe="5m"):
             htf_data = get_htf_market_regime(pair)
             final_signal = send_final_signal(
                 pair, potential_direction, signal_name_ar, score,
-                duration_text, indicators_str, 'original', regime=regime, signal_level=strength, htf_data=htf_data, indicator_counts=indicator_counts, signal_price=signal_price
+                duration_text, indicators_str, 'original', regime=regime, signal_level=strength, htf_data=htf_data, indicator_counts=indicator_counts, signal_price=signal_price, entry_price=entry_price
             )
 
             if final_signal is None:
@@ -3674,7 +3697,7 @@ def analyze_pair_king(pair, timeframe="5m"):
             htf_data = get_htf_market_regime(pair)
             final_signal = send_final_signal(
                 pair, potential_direction, signal_name_ar, score,
-                duration_text, indicators_str, 'king', regime=regime, htf_data=htf_data, indicator_counts=indicator_counts, signal_price=signal_price
+                duration_text, indicators_str, 'king', regime=regime, htf_data=htf_data, indicator_counts=indicator_counts, signal_price=signal_price, entry_price=entry_price
             )
             
             if final_signal is None:
@@ -3994,7 +4017,7 @@ def analyze_pair_smc(pair, timeframe="5m"):
         htf_data = get_htf_market_regime(pair)
         final_signal = send_final_signal(
             pair, bias, name, score,
-            duration_text, indicators_str, 'smart', regime=regime, htf_data=htf_data, indicator_counts=indicator_counts, signal_price=signal_price
+            duration_text, indicators_str, 'smart', regime=regime, htf_data=htf_data, indicator_counts=indicator_counts, signal_price=signal_price, entry_price=entry_price
         )
 
         if final_signal is None:
@@ -4232,7 +4255,7 @@ def analyze_pair_pro(pair, timeframe="5m"):
         htf_data = get_htf_market_regime(pair)
         final_signal = send_final_signal(
             pair, direction, name_ar, score,
-            duration_text, indicators_str, 'pro', regime=regime, htf_data=htf_data, indicator_counts=indicator_counts, signal_price=signal_price
+            duration_text, indicators_str, 'pro', regime=regime, htf_data=htf_data, indicator_counts=indicator_counts, signal_price=signal_price, entry_price=entry_price
         )
         
         if final_signal is None:
@@ -4254,7 +4277,7 @@ def analyze_pair_wrapper_pro(pair):
 
 # ========== TRADE HELPERS ==========
 
-def _build_trade_dict(pair, direction, entry_price, expire_offset, is_king, is_martingale,
+def _build_trade_dict(pair, direction, signal_price, entry_price, expire_offset, is_king, is_martingale,
                       signal_level, signal_name, score, filters, indicators, strategy):
     def convert_bool_to_int(obj):
         if isinstance(obj, dict):
@@ -4269,12 +4292,16 @@ def _build_trade_dict(pair, direction, entry_price, expire_offset, is_king, is_m
     filters_clean = convert_bool_to_int(filters)
     indicators_clean = convert_bool_to_int(indicators)
 
+    entry_time = get_iq_time()
+
     return {
         'pair': pair,
         'timeframe': '5m',
         'direction': direction,
-        'entry_price': entry_price,
-        'expire_time': get_iq_time() + expire_offset,
+        'signal_price': float(signal_price),
+        'entry_price': float(entry_price),
+        'entry_time': entry_time,
+        'expire_time': entry_time + expire_offset,
         'warned_loss': False,
         'is_martingale': is_martingale,
         'is_king': is_king,
@@ -4610,15 +4637,23 @@ def bollinger_bandwidth(df, period=20):
 
 
 
-def get_live_price(pair):
+def get_live_price(pair, max_retries=3):
     """جلب السعر اللحظي الفعلي من IQ Option"""
-    try:
-        with api_lock:
-            tick = API.get_candles(pair, 1, 1, int(get_iq_time()))
-            if tick and len(tick) > 0:
-                return float(tick[-1]['close'])
-    except Exception as e:
-        logger.warning(f"⚠️ فشل جلب السعر اللحظي لـ {pair}: {e}")
+    for attempt in range(max_retries):
+        try:
+            with api_lock:
+                server_ts = int(get_iq_time())
+                tick = API.get_candles(pair, 1, 1, server_ts)
+                if tick and len(tick) > 0:
+                    candle_ts = tick[-1].get('to', 0)
+                    if abs(server_ts - candle_ts) <= 3:
+                        return float(tick[-1]['close'])
+                    else:
+                        logger.warning(f"⚠️ شمعة قديمة لـ {pair}: الفرق {abs(server_ts - candle_ts)} ثانية")
+        except Exception as e:
+            logger.warning(f"⚠️ فشل جلب السعر اللحظي لـ {pair} (محاولة {attempt+1}/{max_retries}): {e}")
+            if attempt < max_retries - 1:
+                time.sleep(0.2)
     return None
 
 def get_next_expiration(entry_time, expire_offset=300):
@@ -5087,45 +5122,50 @@ def check_trade_results():
 
         try:
             if time_left <= 0:
-                candles = get_cached_candles(pair, 300, 5, max_age=0, force_refresh=True)
+                # جلب السعر اللحظي عند لحظة انتهاء الصفقة
+                fp = get_live_price(pair)
 
-                if not candles or len(candles) < 2:
-                    logger.warning("⏳ " + pair + ": شموع غير كافية للتقييم، هيتم المحاولة في الدورة الجاية")
+                if fp is None:
+                    logger.warning(
+                        f"⏳ {pair}: فشل جلب سعر الانتهاء اللحظي، "
+                        "سيتم المحاولة في الدورة التالية"
+                    )
                     continue
 
-                target_candle = None
-                for c in candles:
-                    candle_to = c.get('to', 0)
-                    if candle_to == trade['expire_time']:
-                        target_candle = c
-                        break
+                fp = float(fp)
 
-                if target_candle is None:
-                    target_candle = candles[-2] if len(candles) >= 2 else candles[-1]
-                    logger.warning("⚠️ " + pair + ": لم يتم العثور على الشمعة المستهدفة، استخدام fallback")
+                # وقت الانتهاء الفعلي المستخدم في التقييم
+                expire_timestamp = trade['expire_time']
 
-                fp = target_candle['close']
-                candle_to = target_candle.get('to', 0)
-                candle_from = target_candle.get('from', 0)
+                candle_to = 0
+                candle_from = 0
 
                 logger.info(
-                    "📊 RESULT DEBUG | " + str(pair) + " | Dir:" + str(direction) + " | "
-                    "EP:" + "{:.5f}".format(ep) + " | FP:" + "{:.5f}".format(fp) + " | "
-                    "Expire:" + str(trade['expire_time']) + " | "
-                    "CandleFrom:" + str(candle_from) + " | CandleTo:" + str(candle_to) + " | "
-                    "CurrentTime:" + str(current_time)
+                    "📊 RESULT DEBUG | "
+                    + str(pair)
+                    + " | Dir:" + str(direction)
+                    + " | EP:" + "{:.5f}".format(ep)
+                    + " | FP:" + "{:.5f}".format(fp)
+                    + " | Expire:" + str(expire_timestamp)
+                    + " | CurrentTime:" + str(current_time)
                 )
 
                 is_tie = check_tie(ep, fp)
+
                 if direction == "CALL":
                     is_win = fp > ep and not is_tie
                 else:
                     is_win = fp < ep and not is_tie
 
                 diff_pct = abs(fp - ep) / ep * 100 if ep != 0 else 0
+
                 logger.info(
-                    "📊 RESULT | " + str(pair) + " | Win:" + str(is_win) + " | Tie:" + str(is_tie) + " | "
-                    "Diff:" + "{:.4f}".format(diff_pct) + "% | Strategy:" + str(strategy)
+                    "📊 RESULT | "
+                    + str(pair)
+                    + " | Win:" + str(is_win)
+                    + " | Tie:" + str(is_tie)
+                    + " | Diff:" + "{:.4f}".format(diff_pct)
+                    + "% | Strategy:" + str(strategy)
                 )
 
                 ts = get_cairo_time().strftime('%I:%M %p')
@@ -5190,8 +5230,19 @@ def check_trade_results():
                 except Exception as e:
                     logger.error("خطأ في تسجيل الصفقة: " + str(e))
 
-                else:
-                    pass  # Result messages removed per user request
+                # ===== رسالة نتيجة الصفقة =====
+                result_emoji = "✅" if is_win else ("➖" if is_tie else "❌")
+                result_text = "رابحة" if is_win else ("تعادل" if is_tie else "خاسرة")
+                price_change = abs(fp - ep) / ep * 100
+                direction_arrow = "📈" if fp > ep else "📉"
+                result_msg = (
+                    f"📊 *نتيجة {pair}*\n"
+                    f"💰 *الدخول:* `{ep:.5f}`\n"
+                    f"🏁 *الخروج:* `{fp:.5f}`\n"
+                    f"{result_emoji} *{result_text}*\n"
+                    f"{direction_arrow} *نسبة تحرك السعر:* `{price_change:.4f}%`"
+                )
+                send_telegram_message(result_msg)
 
                 trades_to_remove.append(trade)
 
