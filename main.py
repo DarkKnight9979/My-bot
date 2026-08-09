@@ -666,75 +666,304 @@ def get_kalman(pair):
     return kalman_instances[pair]
 
 
+def get_strategy_regime_performance(strategy_name, regime):
+    """
+    حساب الأداء الحقيقي للاستراتيجية داخل نوع سوق معين (Regime)
+    بناءً على سجلات الصفقات المسجلة.
+    """
+    try:
+        # ربط اسم الاستراتيجية المعروض بالاسم المخزن في السجلات
+        name_map = {
+            "Original": "original",
+            "King": "king",
+            "SMC": "smart",
+            "Pro": "pro",
+            "Quantum": "quantum"
+        }
+        strategy_key = name_map.get(strategy_name, strategy_name.lower())
+
+        trades = read_trade_log(max_entries=5000)
+
+        # فلترة الصفقات حسب الاستراتيجية والـ Regime
+        filtered = [
+            t for t in trades
+            if t.get("strategy") == strategy_key
+            and t.get("indicators", {}).get("market") == regime
+        ]
+
+        total_trades = len(filtered)
+        if total_trades == 0:
+            return None
+
+        wins = sum(1 for t in filtered if t.get("outcome") == "win")
+        win_rate = (wins / total_trades) * 100
+
+        return {
+            "win_rate": win_rate,
+            "total_trades": total_trades
+        }
+    except Exception:
+        return None
+
+
 def get_regime_badge(strategy_name, regime, htf_data=None, indicator_counts=None):
     """
-    إرجاع شارة حالة السوق مع توضيح لماذا الاستراتيجية مناسبة/غير مناسبة
-    بناءً على تركيبتها الفعلية (المؤشرات + الشروط) — مش كلام مبرمج.
+    وصف طبيعة الاستراتيجية + تقييم ملاءمتها للـRegime
+    + الاحتفاظ بالأداء الحقيقي WR إذا كانت البيانات كافية.
     """
-    enhancers = ""
-    if indicator_counts and isinstance(indicator_counts, dict):
-        htf = indicator_counts.get("1H", {})
-        ltf = indicator_counts.get("5m", {})
-        enhancers = f"\n📊 [1H]: {htf.get('CALL',0)}↑ / {htf.get('PUT',0)}↓ / {htf.get('NEUTRAL',0)}! / [5m]: {ltf.get('CALL',0)}↑ / {ltf.get('PUT',0)}↓ / {ltf.get('NEUTRAL',0)}!"
 
-    # التقييم بناءً على تحليل تركيبة المؤشرات الفعلية
-    default_badges = {
-        'original': {
-            'trending':  "🌊 السوق *ترندي قوي* — Original مناسبة: ALMA Cross + Stoch/ROC Momentum + HTF Structure" + enhancers,
-            'ranging':   "↔️ السوق *متراوح* — Original *متوسطة*: المؤشرات ترندية (ALMA) لكن فيها S/R + Candle" + enhancers,
-            'high_vol':  "⚡ تقلب عالي — Original *جيدة*: Momentum ينشط مع الحركة" + enhancers,
-            'low_vol':   "😴 تقلب منخفض — Original *ضعيفة*: ALMA Cross يعطي إشارات كاذبة في السوق الراكد" + enhancers,
-            'mixed':     "🌫️ سوق مختلط — Original *عادية*: HTF متضارب، ALMA قد يتأرجح" + enhancers,
-            'unknown':   "❓ نوع السوق غير واضح — Original: انتظر توضيح الحالة" + enhancers
+    # =========================================================
+    # 1) حساب أصوات 1H و 5m
+    # =========================================================
+    enhancers = ""
+
+    if indicator_counts and isinstance(indicator_counts, dict):
+        htf = indicator_counts.get("1H", {}) or {}
+        ltf = indicator_counts.get("5m", {}) or {}
+
+        enhancers = (
+            f"\n📊 [1H]: "
+            f"{htf.get('CALL', 0)}↑ / "
+            f"{htf.get('PUT', 0)}↓ / "
+            f"{htf.get('NEUTRAL', 0)}! "
+            f"/ [5m]: "
+            f"{ltf.get('CALL', 0)}↑ / "
+            f"{ltf.get('PUT', 0)}↓ / "
+            f"{ltf.get('NEUTRAL', 0)}!"
+        )
+
+    # =========================================================
+    # 2) تحديد المرحلة الانتقالية
+    # =========================================================
+    transitional = False
+
+    if regime == "mixed":
+        transitional = True
+
+    if indicator_counts and isinstance(indicator_counts, dict):
+        htf = indicator_counts.get("1H", {}) or {}
+        ltf = indicator_counts.get("5m", {}) or {}
+
+        htf_call = htf.get("CALL", 0)
+        htf_put = htf.get("PUT", 0)
+
+        ltf_call = ltf.get("CALL", 0)
+        ltf_put = ltf.get("PUT", 0)
+
+        if (
+            (htf_call > htf_put and ltf_put > ltf_call) or
+            (htf_put > htf_call and ltf_call > ltf_put)
+        ):
+            transitional = True
+
+    # =========================================================
+    # 3) تعريف طبيعة كل استراتيجية
+    # =========================================================
+    strategy_name = str(strategy_name).lower().strip()
+
+    strategy_profiles = {
+
+        "original": {
+            "name": "Original",
+            "nature": "📈 طبيعة الاستراتيجية: ترند + زخم + هيكل",
+
+            "trending":
+                "🌊 السوق ترندي قوي — "
+                "Original ممتازة هنا",
+
+            "ranging":
+                "↔️ السوق رينجيج — "
+                "Original ليست البيئة المثالية لها",
+
+            "high_vol":
+                "⚡ السوق عالي التقلب — "
+                "Original جيدة بحذر",
+
+            "low_vol":
+                "😴 السوق منخفض التقلب — "
+                "Original ضعيفة نسبيًا",
+
+            "transitional":
+                "🔄 السوق انتقالي — "
+                "Original تحتاج تأكيد الاتجاه"
         },
-        'king': {
-            'trending':  "🌊 السوق *ترندي قوي* — King مناسبة: Structure + ALMA Trend + Liquidity Sweep (Continuation)" + enhancers,
-            'ranging':   "↔️ السوق *متراوح* — King *متوسطة*: Sweep يحدث لكن بدون استمرار (إشارات نصفية)" + enhancers,
-            'high_vol':  "⚡ تقلب عالي — King *جيدة*: Sweep + Volatility = فرص قوية مع الحركة" + enhancers,
-            'low_vol':   "😴 تقلب منخفض — King *ضعيفة*: لا يوجد Sweep حقيقي + Structure ضعيف" + enhancers,
-            'mixed':     "🌫️ سوق مختلط — King *عادية*: HTF Bias غير واضح يضعف Structure" + enhancers,
-            'unknown':   "❓ نوع السوق غير واضح — King: انتظر توضيح الحالة" + enhancers
+
+        "king": {
+            "name": "King",
+            "nature": "♻️ طبيعة الاستراتيجية: ترند + سحب سيولة + استمرار الاتجاه",
+
+            "trending":
+                "🚀 السوق ترندي — "
+                "King ممتازة لاستمرار الاتجاه",
+
+            "ranging":
+                "↔️ السوق رينجيج — "
+                "King ليست البيئة المثالية لاستمرار الاتجاه",
+
+            "high_vol":
+                "⚡ السوق عالي التقلب — "
+                "King جيدة لاستمرار الاتجاه بحذر",
+
+            "low_vol":
+                "😴 السوق منخفض التقلب — "
+                "King ضعيفة نسبيًا",
+
+            "transitional":
+                "🔄 السوق انتقالي — "
+                "King مناسبة لالتقاط استمرار الاتجاه بعد التأكيد"
         },
-        'smart': {
-            'trending':  "🌊 السوق *ترندي قوي* — SMC مناسبة: HTF Bias + Structure + OB/FVG مع الاتجاه" + enhancers,
-            'ranging':   "↔️ السوق *متراوح* — SMC *ضعيفة*: OB/FVG بدون استمرار = كسر وهمي" + enhancers,
-            'high_vol':  "⚡ تقلب عالي — SMC *ممتازة*: Liquidity Sweep + حركة قوية = أفضل حالة" + enhancers,
-            'low_vol':   "😴 تقلب منخفض — SMC *ضعيفة*: لا يوجد Sweep حقيقي + Volume ضعيف" + enhancers,
-            'mixed':     "🌫️ سوق مختلط — SMC *جيدة*: HTF Bias واضح لكن LTF متأرجح" + enhancers,
-            'unknown':   "❓ نوع السوق غير واضح — SMC: انتظر توضيح الحالة" + enhancers
+
+        "smart": {
+            "name": "SMC",
+            "nature": "🎯 طبيعة الاستراتيجية: سيولة + هيكل + OB/FVG + HTF",
+
+            "trending":
+                "🌊 السوق ترندي — "
+                "SMC جيدة مع تأكيد الهيكل والسيولة",
+
+            "ranging":
+                "↔️ السوق رينجيج — "
+                "SMC ضعيفة بدون حركة سيولة واضحة",
+
+            "high_vol":
+                "⚡ السوق عالي التقلب — "
+                "SMC ممتازة عند وجود Sweep + OB/FVG",
+
+            "low_vol":
+                "😴 السوق منخفض التقلب — "
+                "SMC ضعيفة نسبيًا",
+
+            "transitional":
+                "🔄 السوق انتقالي — "
+                "SMC ممتازة لهذه البيئة"
         },
-        'pro': {
-            'trending':  "🌊 السوق *ترندي قوي* — Pro *متوسطة*: S/R Rejection قد يكسر في الترند القوي" + enhancers,
-            'ranging':   "↔️ السوق *متراوح* — Pro *ممتازة*: S/R واضحة + Wick Rejection = ارتداد مضمون" + enhancers,
-            'high_vol':  "⚡ تقلب عالي — Pro *متوسطة*: Wick قوي لكن السعر قد يكسر S/R" + enhancers,
-            'low_vol':   "😴 تقلب منخفض — Pro *ضعيفة*: لا يوجد حركة تصل للـ S/R" + enhancers,
-            'mixed':     "🌫️ سوق مختلط — Pro *جيدة*: Swing Points متواضعة لكن Rejection موجود" + enhancers,
-            'unknown':   "❓ نوع السوق غير واضح — Pro: انتظر توضيح الحالة" + enhancers
+
+        "pro": {
+            "name": "Pro",
+            "nature": "↩️ طبيعة الاستراتيجية: دعم/مقاومة + رفض + Wick",
+
+            "trending":
+                "🌊 السوق ترندي — "
+                "Pro ليست البيئة المثالية للانعكاس",
+
+            "ranging":
+                "↔️ السوق رينجيج — "
+                "Pro ممتازة للانعكاس",
+
+            "high_vol":
+                "⚡ السوق عالي التقلب — "
+                "Pro تحتاج تأكيد رفض قوي قبل الانعكاس",
+
+            "low_vol":
+                "😴 السوق منخفض التقلب — "
+                "Pro تحتاج حركة سعر واضحة",
+
+            "transitional":
+                "🔄 السوق انتقالي — "
+                "Pro تحتاج تأكيد انعكاس واضح"
         },
-        'quantum': {
-            'trending':  "🌊 السوق *ترندي قوي* — Quantum *ممتازة*: Trend + Liquidity + SMC + Momentum (جميع الشروط متوافقة)" + enhancers,
-            'ranging':   "↔️ السوق *متراوح* — Quantum *❌ مرفوضة*: Kalman + Volatility Filter يلغيان تلقائياً" + enhancers,
-            'high_vol':  "⚡ تقلب عالي — Quantum *جيدة*: Volatility Filter يسمح بحذر + جميع المؤشرات نشطة" + enhancers,
-            'low_vol':   "😴 تقلب منخفض — Quantum *❌ مرفوضة*: Volatility Filter < 0.00005 = إلغاء تلقائي" + enhancers,
-            'mixed':     "🌫️ سوق مختلط — Quantum *جيدة*: متوسطة الثقة — تحقق إضافي من HTF مطلوب" + enhancers,
-            'unknown':   "❓ نوع السوق غير واضح — Quantum *⏸️ متوقفة*: انتظر توضيح الحالة" + enhancers
+
+        "quantum": {
+            "name": "Quantum",
+            "nature": "⚛️ طبيعة الاستراتيجية: ترند + سيولة + SMC + زخم",
+
+            "trending":
+                "🚀 السوق ترندي قوي — "
+                "Quantum ممتازة لاستمرار الاتجاه",
+
+            "ranging":
+                "↔️ السوق رينجيج — "
+                "Quantum ليست البيئة المناسبة لتركيبتها",
+
+            "high_vol":
+                "⚡ السوق عالي التقلب — "
+                "Quantum جيدة بحذر مع تأكيد السيولة والزخم",
+
+            "low_vol":
+                "😴 السوق منخفض التقلب — "
+                "Quantum ليست البيئة المناسبة لتركيبتها",
+
+            "transitional":
+                "🔄 السوق انتقالي — "
+                "Quantum مناسبة لاستمرار الاتجاه بعد التأكيد"
         }
     }
-    return default_badges.get(strategy_name, default_badges['original']).get(regime, "🌫️ سوق مختلط")
 
+    profile = strategy_profiles.get(strategy_name)
 
-CURRENCY_PAIRS = {
-    'USD': ['EURUSD','GBPUSD','USDJPY','AUDUSD','USDCAD','USDCHF'],
-    'EUR': ['EURUSD','EURJPY','EURGBP','EURAUD','EURCAD'],
-    'GBP': ['GBPUSD','EURGBP','GBPJPY'],
-    'JPY': ['USDJPY','EURJPY','AUDJPY','CADJPY','GBPJPY'],
-    'AUD': ['AUDUSD','AUDCAD','AUDJPY','EURAUD'],
-    'CAD': ['USDCAD','AUDCAD','CADJPY','EURCAD'],
-    'CHF': ['USDCHF']
-}
+    if profile is None:
+        profile = strategy_profiles["original"]
 
-# ========== FUNCIONES DE ALERTAS EN ÁRABE ==========
+    # =========================================================
+    # 4) تحديد وصف السوق الحالي
+    # =========================================================
+    if transitional:
+        market_text = profile["transitional"]
 
+    elif regime == "trending":
+        market_text = profile["trending"]
+
+    elif regime == "ranging":
+        market_text = profile["ranging"]
+
+    elif regime == "high_vol":
+        market_text = profile["high_vol"]
+
+    elif regime == "low_vol":
+        market_text = profile["low_vol"]
+
+    else:
+        market_text = (
+            "🌫️ السوق غير واضح — "
+            f"{profile['name']} تحتاج تأكيد إضافي"
+        )
+
+    # =========================================================
+    # 5) الأداء الحقيقي للاستراتيجية داخل الـRegime
+    # =========================================================
+    performance_text = ""
+
+    try:
+        perf = get_strategy_regime_performance(
+            profile["name"],
+            regime
+        )
+
+        if perf:
+            win_rate = perf.get("win_rate")
+            total_trades = perf.get("total_trades", 0)
+
+            if (
+                win_rate is not None
+                and total_trades >= 10
+            ):
+                performance_text = (
+                    f"\n📊 الأداء الحقيقي: "
+                    f"{win_rate:.1f}% "
+                    f"({total_trades} صفقة)"
+                )
+
+            else:
+                performance_text = (
+                    "\n📊 الأداء الحقيقي: "
+                    "بيانات غير كافية"
+                )
+
+    except Exception:
+        performance_text = (
+            "\n📊 الأداء الحقيقي: "
+            "بيانات غير متاحة"
+        )
+
+    # =========================================================
+    # 6) الرسالة النهائية لهذا الجزء
+    # =========================================================
+    return (
+        f"{market_text}\n"
+        f"{profile['nature']}"
+        f"{performance_text}"
+        f"{enhancers}"
+    )
 def get_signal_level(score):
     """تقسيم موحد للمستويات"""
     if score >= 95: return 4
