@@ -2985,8 +2985,8 @@ def analyze_pair_quantum(pair, timeframe="5m"):
 
         signal_timestamp = int(curr["from"])
         trade_candle_timestamp = (
-            signal_timestamp // 300
-        ) * 300
+            (signal_timestamp // 300) * 300
+        ) + 300
 
         new_trade = _build_trade_dict(
             pair=pair,
@@ -3440,8 +3440,8 @@ def analyze_pair(pair, timeframe="5m"):
 
             signal_timestamp = int(curr["from"])
             trade_candle_timestamp = (
-                signal_timestamp // 300
-            ) * 300
+                (signal_timestamp // 300) * 300
+            ) + 300
 
             new_trade = _build_trade_dict(
                 pair=pair, direction=potential_direction, 
@@ -3684,8 +3684,8 @@ def analyze_pair_king(pair, timeframe="5m"):
 
             signal_timestamp = int(curr["from"])
             trade_candle_timestamp = (
-                signal_timestamp // 300
-            ) * 300
+                (signal_timestamp // 300) * 300
+            ) + 300
 
             new_trade = _build_trade_dict(
                 pair=pair, direction=potential_direction, 
@@ -4005,8 +4005,8 @@ def analyze_pair_smc(pair, timeframe="5m"):
 
         signal_timestamp = int(curr["from"])
         trade_candle_timestamp = (
-            signal_timestamp // 300
-        ) * 300
+            (signal_timestamp // 300) * 300
+        ) + 300
 
         new_trade = _build_trade_dict(
             pair=pair,
@@ -4256,8 +4256,8 @@ def analyze_pair_pro(pair, timeframe="5m"):
 
         signal_timestamp = int(curr["from"])
         trade_candle_timestamp = (
-            signal_timestamp // 300
-        ) * 300
+            (signal_timestamp // 300) * 300
+        ) + 300
 
         new_trade = _build_trade_dict(
             pair=pair, direction=direction, 
