@@ -67,7 +67,7 @@ STRATEGY_REGIMES = {
     'original': ['trending', 'high_vol'],
     'king': ['trending', 'high_vol'],
     'quantum': ['trending', 'high_vol'],
-    'smart': ['high_vol'],
+    'smart': ['trending', 'high_vol', 'mixed'],
     'pro': ['ranging', 'mixed']
 }
 
@@ -110,8 +110,8 @@ def get_pair_thresholds(pair):
 
 # ========== QUANTUM CONFIGURATION ==========
 QUANTUM_CONFIG = {
-    "min_score_live": 70,
-    "min_score_otc": 65,
+    "min_score_live": 80,
+    "min_score_otc": 75,
     "cooldown": 300,
     "weights": {
         "structure": 20,
@@ -326,7 +326,7 @@ FILES = {
     "settings_live.json": {},
     "settings_otc.json": {},
     "king_weights.json": {
-        "structure": 20, "sweep": 20, "trend": 15,
+        "structure": 15, "sweep": 25, "trend": 15,
         "momentum": 10, "volatility": 10, "adx": 10,
         "rsi": 5, "stochastic": 5, "candle": 5
     },
@@ -372,7 +372,7 @@ def init_log_files():
 
 # ========== KING WEIGHTS ==========
 DEFAULT_KING_WEIGHTS = {
-    "structure": 20, "sweep": 20, "trend": 15,
+    "structure": 15, "sweep": 25, "trend": 15,
     "momentum": 10, "volatility": 10, "adx": 10,
     "rsi": 5, "stochastic": 5, "candle": 5
 }
@@ -665,9 +665,11 @@ def get_kalman(pair):
         kalman_instances[pair] = KalmanFilter(q=0.001, r=0.05)
     return kalman_instances[pair]
 
+
 def get_regime_badge(strategy_name, regime, htf_data=None, indicator_counts=None):
     """
-    إرجاع شارة حالة السوق مع عرض المؤشرات المحسّنة (Supertrend + MACD + EMA + ALMA)
+    إرجاع شارة حالة السوق مع توضيح لماذا الاستراتيجية مناسبة/غير مناسبة
+    بناءً على تركيبتها الفعلية (المؤشرات + الشروط) — مش كلام مبرمج.
     """
     enhancers = ""
     if indicator_counts and isinstance(indicator_counts, dict):
@@ -675,49 +677,50 @@ def get_regime_badge(strategy_name, regime, htf_data=None, indicator_counts=None
         ltf = indicator_counts.get("5m", {})
         enhancers = f"\n📊 [1H]: {htf.get('CALL',0)}↑ / {htf.get('PUT',0)}↓ / {htf.get('NEUTRAL',0)}! / [5m]: {ltf.get('CALL',0)}↑ / {ltf.get('PUT',0)}↓ / {ltf.get('NEUTRAL',0)}!"
 
-    badges = {
+    # التقييم بناءً على تحليل تركيبة المؤشرات الفعلية
+    default_badges = {
         'original': {
-            'trending':  "🌊 السوق *ترندي قوي* — الاستراتيجية الأصلية *ممتازة* هنا" + enhancers,
-            'ranging':   "↔️ السوق *متراوح* — الاستراتيجية الأصلية *متوسطة* هنا" + enhancers,
-            'high_vol':  "⚡ تقلب عالي — الاستراتيجية الأصلية *جيدة*" + enhancers,
-            'low_vol':   "😴 تقلب منخفض — الاستراتيجية الأصلية *ضعيفة* هنا" + enhancers,
-            'mixed':     "🌫️ سوق مختلط — الاستراتيجية الأصلية *عادية*" + enhancers,
-            'unknown':   "❓ نوع السوق غير واضح" + enhancers
+            'trending':  "🌊 السوق *ترندي قوي* — Original مناسبة: ALMA Cross + Stoch/ROC Momentum + HTF Structure" + enhancers,
+            'ranging':   "↔️ السوق *متراوح* — Original *متوسطة*: المؤشرات ترندية (ALMA) لكن فيها S/R + Candle" + enhancers,
+            'high_vol':  "⚡ تقلب عالي — Original *جيدة*: Momentum ينشط مع الحركة" + enhancers,
+            'low_vol':   "😴 تقلب منخفض — Original *ضعيفة*: ALMA Cross يعطي إشارات كاذبة في السوق الراكد" + enhancers,
+            'mixed':     "🌫️ سوق مختلط — Original *عادية*: HTF متضارب، ALMA قد يتأرجح" + enhancers,
+            'unknown':   "❓ نوع السوق غير واضح — Original: انتظر توضيح الحالة" + enhancers
         },
         'king': {
-            'trending':  "🌊 السوق *ترندي قوي* — King Strategy *ممتازة* 👑" + enhancers,
-            'ranging':   "↔️ السوق *متراوح* — King Strategy *متوسطة*" + enhancers,
-            'high_vol':  "⚡ تقلب عالي — King Strategy *جيدة*" + enhancers,
-            'low_vol':   "😴 تقلب منخفض — King Strategy *ضعيفة*" + enhancers,
-            'mixed':     "🌫️ سوق مختلط — King Strategy *عادية*" + enhancers,
-            'unknown':   "❓ نوع السوق غير واضح" + enhancers
+            'trending':  "🌊 السوق *ترندي قوي* — King مناسبة: Structure + ALMA Trend + Liquidity Sweep (Continuation)" + enhancers,
+            'ranging':   "↔️ السوق *متراوح* — King *متوسطة*: Sweep يحدث لكن بدون استمرار (إشارات نصفية)" + enhancers,
+            'high_vol':  "⚡ تقلب عالي — King *جيدة*: Sweep + Volatility = فرص قوية مع الحركة" + enhancers,
+            'low_vol':   "😴 تقلب منخفض — King *ضعيفة*: لا يوجد Sweep حقيقي + Structure ضعيف" + enhancers,
+            'mixed':     "🌫️ سوق مختلط — King *عادية*: HTF Bias غير واضح يضعف Structure" + enhancers,
+            'unknown':   "❓ نوع السوق غير واضح — King: انتظر توضيح الحالة" + enhancers
         },
         'smart': {
-            'trending':  "🌊 السوق *ترندي قوي* — SMC Strategy *جيدة*" + enhancers,
-            'ranging':   "↔️ السوق *متراوح* — SMC Strategy *ضعيفة* هنا" + enhancers,
-            'high_vol':  "⚡ تقلب عالي — SMC Strategy *ممتازة* 🏆" + enhancers,
-            'low_vol':   "😴 تقلب منخفض — SMC Strategy *ضعيفة*" + enhancers,
-            'mixed':     "🌫️ سوق مختلط — SMC Strategy *عادية*" + enhancers,
-            'unknown':   "❓ نوع السوق غير واضح" + enhancers
+            'trending':  "🌊 السوق *ترندي قوي* — SMC مناسبة: HTF Bias + Structure + OB/FVG مع الاتجاه" + enhancers,
+            'ranging':   "↔️ السوق *متراوح* — SMC *ضعيفة*: OB/FVG بدون استمرار = كسر وهمي" + enhancers,
+            'high_vol':  "⚡ تقلب عالي — SMC *ممتازة*: Liquidity Sweep + حركة قوية = أفضل حالة" + enhancers,
+            'low_vol':   "😴 تقلب منخفض — SMC *ضعيفة*: لا يوجد Sweep حقيقي + Volume ضعيف" + enhancers,
+            'mixed':     "🌫️ سوق مختلط — SMC *جيدة*: HTF Bias واضح لكن LTF متأرجح" + enhancers,
+            'unknown':   "❓ نوع السوق غير واضح — SMC: انتظر توضيح الحالة" + enhancers
         },
         'pro': {
-            'trending':  "🌊 السوق *ترندي قوي* — Pro Strategy *متوسطة*" + enhancers,
-            'ranging':   "↔️ السوق *متراوح* — Pro Strategy *ممتازة* 🔥" + enhancers,
-            'high_vol':  "⚡ تقلب عالي — Pro Strategy *متوسطة*" + enhancers,
-            'low_vol':   "😴 تقلب منخفض — Pro Strategy *ضعيفة*" + enhancers,
-            'mixed':     "🌫️ سوق مختلط — Pro Strategy *جيدة*" + enhancers,
-            'unknown':   "❓ نوع السوق غير واضح" + enhancers
+            'trending':  "🌊 السوق *ترندي قوي* — Pro *متوسطة*: S/R Rejection قد يكسر في الترند القوي" + enhancers,
+            'ranging':   "↔️ السوق *متراوح* — Pro *ممتازة*: S/R واضحة + Wick Rejection = ارتداد مضمون" + enhancers,
+            'high_vol':  "⚡ تقلب عالي — Pro *متوسطة*: Wick قوي لكن السعر قد يكسر S/R" + enhancers,
+            'low_vol':   "😴 تقلب منخفض — Pro *ضعيفة*: لا يوجد حركة تصل للـ S/R" + enhancers,
+            'mixed':     "🌫️ سوق مختلط — Pro *جيدة*: Swing Points متواضعة لكن Rejection موجود" + enhancers,
+            'unknown':   "❓ نوع السوق غير واضح — Pro: انتظر توضيح الحالة" + enhancers
         },
         'quantum': {
-            'trending':  "🌊 السوق *ترندي قوي* — Quantum Strategy *ممتازة* 🧠 (جميع الشروط متوافقة)" + enhancers,
-            'ranging':   "↔️ السوق *متراوح* — Quantum Strategy *❌ مرفوضة* (الكود يلغي الصفقة تلقائياً)" + enhancers,
-            'high_vol':  "⚡ تقلب عالي — Quantum Strategy *جيدة* (مع فلتر التقلب + حذر)" + enhancers,
-            'low_vol':   "😴 تقلب منخفض — Quantum Strategy *❌ مرفوضة* (فلتر التقلب يمنع الدخول)" + enhancers,
-            'mixed':     "🌫️ سوق مختلط — Quantum Strategy *جيدة* (متوسطة الثقة - تحقق إضافي مطلوب)" + enhancers,
-            'unknown':   "❓ نوع السوق غير واضح — Quantum Strategy *⏸️ متوقفة* (انتظر توضيح الحالة)" + enhancers
+            'trending':  "🌊 السوق *ترندي قوي* — Quantum *ممتازة*: Trend + Liquidity + SMC + Momentum (جميع الشروط متوافقة)" + enhancers,
+            'ranging':   "↔️ السوق *متراوح* — Quantum *❌ مرفوضة*: Kalman + Volatility Filter يلغيان تلقائياً" + enhancers,
+            'high_vol':  "⚡ تقلب عالي — Quantum *جيدة*: Volatility Filter يسمح بحذر + جميع المؤشرات نشطة" + enhancers,
+            'low_vol':   "😴 تقلب منخفض — Quantum *❌ مرفوضة*: Volatility Filter < 0.00005 = إلغاء تلقائي" + enhancers,
+            'mixed':     "🌫️ سوق مختلط — Quantum *جيدة*: متوسطة الثقة — تحقق إضافي من HTF مطلوب" + enhancers,
+            'unknown':   "❓ نوع السوق غير واضح — Quantum *⏸️ متوقفة*: انتظر توضيح الحالة" + enhancers
         }
     }
-    return badges.get(strategy_name, badges['original']).get(regime, "🌫️ سوق مختلط")
+    return default_badges.get(strategy_name, default_badges['original']).get(regime, "🌫️ سوق مختلط")
 
 
 CURRENCY_PAIRS = {
@@ -2722,10 +2725,17 @@ def analyze_pair_quantum(pair, timeframe="5m"):
         indicators_str = f"Score={final_score}/100 | " + " | ".join(result['reasons'][:3])
         indicators_str += f" | {kalman_info} | {volatility_info}"
 
+        signal_price = price
+        entry_price = get_live_price(pair)
+        if entry_price is None:
+            logger.error(f"🛑 Quantum {pair}: فشل جلب السعر اللحظي")
+            return None
+
         new_trade = _build_trade_dict(
             pair=pair,
             direction=result['direction'],
-            entry_price=price,
+            signal_price=signal_price,
+            entry_price=entry_price,
             expire_offset=300,
             is_king=False,
             is_martingale=False,
@@ -2765,7 +2775,7 @@ def analyze_pair_quantum(pair, timeframe="5m"):
         indicator_counts = get_indicator_counts(pair, df)
         final_signal = send_final_signal(
             pair, result['direction'], signal_name_ar, final_score,
-            duration_text, indicators_str, 'quantum', regime=regime, signal_level=level, htf_data=htf_data, indicator_counts=indicator_counts
+            duration_text, indicators_str, 'quantum', regime=regime, signal_level=level, htf_data=htf_data, indicator_counts=indicator_counts, signal_price=signal_price
         )
         
         if final_signal is None:
@@ -2915,14 +2925,14 @@ def evaluate_signal_strength_enhanced(direction, curr, prev, df, price, alma9, a
             score += 5
             reasons.append("Structure Weak")
 
-    # 8. HTF Trend Confirmation — ±15 pts
+    # 8. HTF Trend Confirmation — ±10 / -20 pts
     if htf_regime:
         if htf_regime.get("trend") == direction:
-            score += 15
+            score += 10
             reasons.append("HTF Confirm")
         elif htf_regime.get("trend") is not None:
-            score -= 15
-            reasons.append("HTF Opposite (-15)")
+            score -= 20
+            reasons.append("HTF Opposite (-20)")
 
     # 9. HTF Structure — ±10 pts
     if htf_regime:
@@ -2934,6 +2944,14 @@ def evaluate_signal_strength_enhanced(direction, curr, prev, df, price, alma9, a
             else:
                 score -= 10
                 reasons.append("HTF Structure Opposite (-10)")
+
+    # Triple Align Bonus: ALMA + Stoch + ROC all aligned
+    alma_aligned = (direction == "CALL" and alma9 > alma50) or (direction == "PUT" and alma9 < alma50)
+    stoch_aligned = (direction == "CALL" and stoch_k > stoch_d) or (direction == "PUT" and stoch_k < stoch_d)
+    roc_aligned = (direction == "CALL" and roc > 0) or (direction == "PUT" and roc < 0)
+    if alma_aligned and stoch_aligned and roc_aligned:
+        score += 15
+        reasons.append("Triple Align")
 
     # Hard filters (reduce score but don't reject)
     if atr < price * 0.00015:
@@ -3028,13 +3046,13 @@ def analyze_pair(pair, timeframe="5m"):
     if atr > atr_avg * 3.5:
         logger.info(f"⚠️ {pair}: تقلب عالي (ATR > avg*3.5) — مستمر بحذر")
 
-    if curr['Volume'] <= vol_ma * 1.2:
-        logger.info(f"🛑 {pair}: حجم ضعيف (Vol {volume:.0f} < MA {vol_ma:.0f} * 1.2)")
+    if curr['Volume'] <= vol_ma * 1.5:
+        logger.info(f"🛑 {pair}: حجم ضعيف (Vol {volume:.0f} < MA {vol_ma:.0f} * 1.5)")
         return None
 
     # ========== تحسين 7: تقييم محسّن ==========
-    near_sup = any(abs(price - level) <= price * 0.0005 for level in sup_levels)
-    near_res = any(abs(price - level) <= price * 0.0005 for level in res_levels)
+    near_sup = any(abs(price - level) <= price * 0.0003 for level in sup_levels)
+    near_res = any(abs(price - level) <= price * 0.0003 for level in res_levels)
 
     score, reasons = evaluate_signal_strength_enhanced(
         potential_direction, curr, prev, df, price, alma9, alma50,
@@ -3111,13 +3129,13 @@ def analyze_pair(pair, timeframe="5m"):
         if rng == 0:
             return None
         body_pct = body / rng
-        if body_pct < 0.45:
+        if body_pct < 0.55:
             if pending:
                 send_cancelled_alert(pair, potential_direction, f"شمعة ضعيفة ({body_pct:.1%})", 'original')
             with data_lock:
                 if pair in state.pending_alerts:
                     del state.pending_alerts[pair]
-            logger.info(f"🛑 {pair}: إلغاء — شمعة ضعيفة ({body_pct:.2%})")
+            logger.info(f"🛑 {pair}: إلغاء — شمعة ضعيفة ({body_pct:.2%} < 55%)")
             return None
 
         if not can_take_signal(pair, potential_direction):
@@ -3144,7 +3162,7 @@ def analyze_pair(pair, timeframe="5m"):
             htf_data = get_htf_market_regime(pair)
             final_signal = send_final_signal(
                 pair, potential_direction, signal_name_ar, score,
-                duration_text, indicators_str, 'original', regime=regime, signal_level=strength, htf_data=htf_data, indicator_counts=indicator_counts
+                duration_text, indicators_str, 'original', regime=regime, signal_level=strength, htf_data=htf_data, indicator_counts=indicator_counts, signal_price=signal_price
             )
 
             if final_signal is None:
@@ -3154,8 +3172,15 @@ def analyze_pair(pair, timeframe="5m"):
             with data_lock:
                 state.recent_signals[pair] = (get_iq_time(), potential_direction)
 
+            signal_price = curr['Close']
+            entry_price = get_live_price(pair)
+            if entry_price is None:
+                logger.error(f"🛑 {pair}: فشل جلب السعر اللحظي")
+                return None
+
             new_trade = _build_trade_dict(
-                pair=pair, direction=potential_direction, entry_price=curr['Close'],
+                pair=pair, direction=potential_direction, 
+                signal_price=signal_price, entry_price=entry_price,
                 expire_offset=300, is_king=False, is_martingale=False,
                 signal_level=strength, signal_name=signal_name_ar, score=score,
                 filters={
@@ -3175,7 +3200,8 @@ def analyze_pair(pair, timeframe="5m"):
                     'atr': float(atr), 'roc': float(roc),
                     'stoch_k': float(stoch_k), 'stoch_d': float(stoch_d),
                     'structure': str(structure) if structure else 'None',
-                    'reasons': reasons
+                    'reasons': reasons,
+                    'market': regime
                 },
                 strategy='original'
             )
@@ -3286,8 +3312,8 @@ def analyze_pair_king(pair, timeframe="5m"):
         stoch_ok = stoch_k <= stoch_d
 
     candle_ok, body_pct = check_king_candle_quality(curr)
-    if body_pct < 0.45:
-        logger.info(f"🛑 King {pair}: body_pct < 0.45")
+    if body_pct < 0.55:
+        logger.info(f"🛑 King {pair}: body_pct < 0.55")
         return None
 
     near_sr = False
@@ -3382,8 +3408,15 @@ def analyze_pair_king(pair, timeframe="5m"):
                 if f"king_{pair}" in state.pending_alerts:
                     del state.pending_alerts[f"king_{pair}"]
 
+            signal_price = curr['Close']
+            entry_price = get_live_price(pair)
+            if entry_price is None:
+                logger.error(f"🛑 King {pair}: فشل جلب السعر اللحظي")
+                return None
+
             new_trade = _build_trade_dict(
-                pair=pair, direction=potential_direction, entry_price=curr['Close'],
+                pair=pair, direction=potential_direction, 
+                signal_price=signal_price, entry_price=entry_price,
                 expire_offset=300, is_king=True, is_martingale=False,
                 signal_level=level, signal_name=signal_name_ar, score=score,
                 filters={
@@ -3397,7 +3430,8 @@ def analyze_pair_king(pair, timeframe="5m"):
                     'adx': float(adx), 'rsi': float(rsi), 'roc': float(roc),
                     'atr': float(atr), 'bbw': float(bbw),
                     'stoch_k': float(stoch_k), 'stoch_d': float(stoch_d),
-                    'sweep_threshold_used': float(sweep_threshold)
+                    'sweep_threshold_used': float(sweep_threshold),
+                    'market': regime
                 },
                 strategy='king'
             )
@@ -3411,7 +3445,7 @@ def analyze_pair_king(pair, timeframe="5m"):
             htf_data = get_htf_market_regime(pair)
             final_signal = send_final_signal(
                 pair, potential_direction, signal_name_ar, score,
-                duration_text, indicators_str, 'king', regime=regime, htf_data=htf_data, indicator_counts=indicator_counts
+                duration_text, indicators_str, 'king', regime=regime, htf_data=htf_data, indicator_counts=indicator_counts, signal_price=signal_price
             )
             
             if final_signal is None:
@@ -3476,14 +3510,14 @@ def detect_order_blocks(df, lookback=30):
         thrust = c['Close'] > c['Open'] and (c['Close'] - c['Open']) > abs(p['Close'] - p['Open']) * 1.5
         if thrust and c['Close'] > p['High'] and p['Close'] < p['Open']:
             age = len(recent) - (i - 1)
-            if age <= 20:
+            if age <= 12:
                 obs['bull'].append({'high': p['High'], 'low': p['Low'], 'idx': i-1, 'age': age})
 
         # Bearish OB: last bullish candle before strong bearish thrust
         thrust_bear = c['Close'] < c['Open'] and (c['Open'] - c['Close']) > abs(p['Close'] - p['Open']) * 1.5
         if thrust_bear and c['Close'] < p['Low'] and p['Close'] > p['Open']:
             age = len(recent) - (i - 1)
-            if age <= 20:
+            if age <= 12:
                 obs['bear'].append({'high': p['High'], 'low': p['Low'], 'idx': i-1, 'age': age})
     return obs
 
@@ -3530,10 +3564,12 @@ def detect_breaker_blocks(df, lookback=40):
 def analyze_pair_smc(pair, timeframe="5m"):
     tf_seconds, duration_text = 300, "5 دقائق"
 
-    # Kill Zone filter
+    # Kill Zone filter ( tightened )
     now_cairo = get_cairo_time()
     hour = now_cairo.hour
-    if not ((8 <= hour < 12) or (14 <= hour < 17)):
+    minute = now_cairo.minute
+    hm = hour * 60 + minute
+    if not ((9*60 <= hm < 11*60) or (14*60+30 <= hm < 16*60+30)):
         return None
 
     df = get_cached_df_smart(pair, tf_seconds, 100)
@@ -3560,8 +3596,8 @@ def analyze_pair_smc(pair, timeframe="5m"):
 
     # Essential volume filter
     vol_ma = df['Volume'].tail(20).mean()
-    if curr['Volume'] < vol_ma * 1.2:
-        logger.info(f"🛑 SMC {pair}: حجم ضعيف (Vol < MA*1.2)")
+    if curr['Volume'] < vol_ma * 1.5:
+        logger.info(f"🛑 SMC {pair}: حجم ضعيف (Vol < MA*1.5)")
         return None
 
     fvg_bull, fvg_bear = detect_fvg(df)
@@ -3593,7 +3629,8 @@ def analyze_pair_smc(pair, timeframe="5m"):
     fvg_hit = False
     target_fvg = fvg_bull[-3:] if bias == "CALL" else fvg_bear[-3:]
     for fvg in reversed(target_fvg):
-        if fvg['bottom'] <= price <= fvg['top']:
+        # FVG must be unmitigated (already filtered) AND retested (not the last 2 candles)
+        if fvg['idx'] < len(df) - 2 and fvg['bottom'] <= price <= fvg['top']:
             fvg_hit = True; score += 15; conf.append("FVG"); break
 
     if (bias == "CALL" and curr['ALMA_20'] > curr['ALMA_50']) or (bias == "PUT" and curr['ALMA_20'] < curr['ALMA_50']):
@@ -3609,8 +3646,8 @@ def analyze_pair_smc(pair, timeframe="5m"):
         logger.info(f"🛑 SMC {pair}: Score={score} < 58 (normalized)")
         return None
 
-    if not (sweep_ok or ob_hit or bb_hit or fvg_hit):
-        logger.info(f"🛑 SMC {pair}: لا يوجد Sweep/OB/Breaker/FVG")
+    if not (sweep_ok and (ob_hit or bb_hit or fvg_hit)):
+        logger.info(f"🛑 SMC {pair}: لا يوجد Sweep + (OB/Breaker/FVG)")
         return None
 
     if score >= 80:
@@ -3684,10 +3721,17 @@ def analyze_pair_smc(pair, timeframe="5m"):
 
         da = "صعود (CALL)" if bias == "CALL" else "هبوط (PUT)"
 
+        signal_price = price
+        entry_price = get_live_price(pair)
+        if entry_price is None:
+            logger.error(f"🛑 SMC {pair}: فشل جلب السعر اللحظي")
+            return None
+
         new_trade = _build_trade_dict(
             pair=pair,
             direction=bias,
-            entry_price=price,
+            signal_price=signal_price,
+            entry_price=entry_price,
             expire_offset=300,
             is_king=False,
             is_martingale=False,
@@ -3705,7 +3749,8 @@ def analyze_pair_smc(pair, timeframe="5m"):
                 'rsi': float(rsi),
                 'score': score,
                 'conf': conf,
-                'htf': htf
+                'htf': htf,
+                'market': regime
             },
             strategy='smart'
         )
@@ -3720,7 +3765,7 @@ def analyze_pair_smc(pair, timeframe="5m"):
         htf_data = get_htf_market_regime(pair)
         final_signal = send_final_signal(
             pair, bias, name, score,
-            duration_text, indicators_str, 'smart', regime=regime, htf_data=htf_data, indicator_counts=indicator_counts
+            duration_text, indicators_str, 'smart', regime=regime, htf_data=htf_data, indicator_counts=indicator_counts, signal_price=signal_price
         )
 
         if final_signal is None:
@@ -3794,9 +3839,9 @@ def analyze_pair_pro(pair, timeframe="5m"):
     factors = []
     
     if structure == "BULLISH":
-        at_sup = (abs(price - last_sup) <= price * 0.0005) or (curr['Low'] <= last_sup * 1.0003)
+        at_sup = (abs(price - last_sup) <= price * 0.0003) or (curr['Low'] <= last_sup * 1.0003)
         
-        if at_sup and lower_wick > body and curr['Close'] > curr['Open']:
+        if at_sup and lower_wick >= body * 1.5 and curr['Close'] > curr['Open']:
             score = 60
             direction = "CALL"
             factors.append("رفض من الدعم")
@@ -3804,7 +3849,13 @@ def analyze_pair_pro(pair, timeframe="5m"):
             if lower_wick > upper_wick * 1.5:
                 score += 15
                 factors.append("ظل قوي")
-            if curr['Close'] > prev['High']:
+            # بونص الرفض المزدوج: الشمعة السابقة رفضت كمان
+            prev_lower_wick = min(prev["Close"], prev["Open"]) - prev["Low"]
+            prev_body = abs(prev["Close"] - prev["Open"])
+            if prev_lower_wick >= prev_body * 1.5 and prev["Close"] > prev["Open"]:
+                score += 10
+                factors.append("رفض مزدوج")
+            if curr['Close'] > prev['High'] + price * 0.0003:
                 score += 10
                 factors.append("زخم")
             if vol_ok:
@@ -3815,9 +3866,9 @@ def analyze_pair_pro(pair, timeframe="5m"):
                 factors.append("Sweep")
     
     elif structure == "BEARISH":
-        at_res = (abs(price - last_res) <= price * 0.0005) or (curr['High'] >= last_res * 0.9997)
+        at_res = (abs(price - last_res) <= price * 0.0003) or (curr['High'] >= last_res * 0.9997)
         
-        if at_res and upper_wick > body and curr['Close'] < curr['Open']:
+        if at_res and upper_wick >= body * 1.5 and curr['Close'] < curr['Open']:
             score = 60
             direction = "PUT"
             factors.append("رفض من المقاومة")
@@ -3825,7 +3876,13 @@ def analyze_pair_pro(pair, timeframe="5m"):
             if upper_wick > lower_wick * 1.5:
                 score += 15
                 factors.append("ظل قوي")
-            if curr['Close'] < prev['Low']:
+            # بونص الرفض المزدوج: الشمعة السابقة رفضت كمان
+            prev_upper_wick = prev["High"] - max(prev["Close"], prev["Open"])
+            prev_body = abs(prev["Close"] - prev["Open"])
+            if prev_upper_wick >= prev_body * 1.5 and prev["Close"] < prev["Open"]:
+                score += 10
+                factors.append("رفض مزدوج")
+            if curr['Close'] < prev['Low'] - price * 0.0003:
                 score += 10
                 factors.append("زخم")
             if vol_ok:
@@ -3907,8 +3964,15 @@ def analyze_pair_pro(pair, timeframe="5m"):
         with data_lock:
             state.recent_signals[pair] = (get_iq_time(), direction)
     
+        signal_price = curr['Close']
+        entry_price = get_live_price(pair)
+        if entry_price is None:
+            logger.error(f"🛑 Pro {pair}: فشل جلب السعر اللحظي")
+            return None
+
         new_trade = _build_trade_dict(
-            pair=pair, direction=direction, entry_price=curr['Close'],
+            pair=pair, direction=direction, 
+            signal_price=signal_price, entry_price=entry_price,
             expire_offset=300, is_king=False, is_martingale=False,
             signal_level=level, signal_name=name_ar, score=score,
             filters={
@@ -3923,7 +3987,8 @@ def analyze_pair_pro(pair, timeframe="5m"):
                 'lower_wick': float(lower_wick),
                 'body': float(body),
                 'volume': float(curr['Volume']),
-                'vol_ma': float(vol_ma)
+                'vol_ma': float(vol_ma),
+                'market': regime
             },
             strategy='pro'
         )
@@ -3938,7 +4003,7 @@ def analyze_pair_pro(pair, timeframe="5m"):
         htf_data = get_htf_market_regime(pair)
         final_signal = send_final_signal(
             pair, direction, name_ar, score,
-            duration_text, indicators_str, 'pro', regime=regime, htf_data=htf_data, indicator_counts=indicator_counts
+            duration_text, indicators_str, 'pro', regime=regime, htf_data=htf_data, indicator_counts=indicator_counts, signal_price=signal_price
         )
         
         if final_signal is None:
@@ -4314,6 +4379,23 @@ def bollinger_bandwidth(df, period=20):
     lower = sma - (std * 2)
     return ((upper - lower) / sma).iloc[-1]
 
+
+
+def get_live_price(pair):
+    """جلب السعر اللحظي الفعلي من IQ Option"""
+    try:
+        with api_lock:
+            tick = API.get_candles(pair, 1, 1, int(get_iq_time()))
+            if tick and len(tick) > 0:
+                return float(tick[-1]['close'])
+    except Exception as e:
+        logger.warning(f"⚠️ فشل جلب السعر اللحظي لـ {pair}: {e}")
+    return None
+
+def get_next_expiration(entry_time, expire_offset=300):
+    """تقريب وقت الانتهاء لأعلى حد زمني (متوافق مع IQ Option)"""
+    return ((int(entry_time) // expire_offset) + 1) * expire_offset
+
 def get_fractal_levels(df, lookback=20):
     recent = df.tail(lookback)
     highs = recent['High']
@@ -4596,24 +4678,29 @@ def check_king_candle_quality(candle):
     upper_shadow = candle['High'] - max(candle['Close'], candle['Open'])
     lower_shadow = min(candle['Close'], candle['Open']) - candle['Low']
     shadow_pct = (upper_shadow + lower_shadow) / rng
-    return body_pct >= 0.50 and shadow_pct <= 0.40, body_pct
+    return body_pct >= 0.55 and shadow_pct <= 0.40, body_pct
 
 def calculate_king_score(structure_ok, sweep_ok, trend_ok, momentum_ok,
                          volatility_ok, adx_ok, rsi_ok, stoch_ok, candle_ok):
     with data_lock:
         w = dict(KING_WEIGHTS)
     score = 0
-    if structure_ok: score += w.get('structure', 20)
-    if sweep_ok: score += w.get('sweep', 20)
-    elif adx_ok: score += 10  # partial credit if no sweep but ADX ok
-    if trend_ok: score += w.get('trend', 15)
-    if momentum_ok: score += w.get('momentum', 10)
-    if volatility_ok: score += w.get('volatility', 10)
-    if adx_ok: score += w.get('adx', 10)
-    if rsi_ok: score += w.get('rsi', 5)
-    if stoch_ok: score += w.get('stochastic', 5)
-    if candle_ok: score += w.get('candle', 5)
-    return score
+    reasons = []
+    if structure_ok: score += w.get('structure', 15); reasons.append("Structure")
+    if sweep_ok: score += w.get('sweep', 25); reasons.append("Sweep")
+    elif adx_ok: score += 5; reasons.append("ADX Partial")  # partial credit if no sweep but ADX ok
+    if trend_ok: score += w.get('trend', 15); reasons.append("Trend")
+    if momentum_ok: score += w.get('momentum', 10); reasons.append("Momentum")
+    if volatility_ok: score += w.get('volatility', 10); reasons.append("Volatility")
+    if adx_ok: score += w.get('adx', 10); reasons.append("ADX")
+    if rsi_ok: score += w.get('rsi', 5); reasons.append("RSI")
+    if stoch_ok: score += w.get('stochastic', 5); reasons.append("Stoch")
+    if candle_ok: score += w.get('candle', 5); reasons.append("Candle")
+    # بونص التوافق: Sweep + Structure + Trend
+    if sweep_ok and structure_ok and trend_ok:
+        score += 10
+        reasons.append("Triple Confirm")
+    return min(score, 100)
 
 # ========== CACHE FUNCTIONS ==========
 
@@ -4778,15 +4865,15 @@ def check_trade_results():
                     continue
 
                 target_candle = None
-                for c in reversed(candles):
+                for c in candles:
                     candle_to = c.get('to', 0)
-                    if candle_to <= trade['expire_time'] + 5:
+                    if candle_to == trade['expire_time']:
                         target_candle = c
                         break
 
                 if target_candle is None:
                     target_candle = candles[-2] if len(candles) >= 2 else candles[-1]
-                    logger.warning("⚠️ " + pair + ": استخدام fallback للشمعة (مش متطابقة بالـ timestamp)")
+                    logger.warning("⚠️ " + pair + ": لم يتم العثور على الشمعة المستهدفة، استخدام fallback")
 
                 fp = target_candle['close']
                 candle_to = target_candle.get('to', 0)
