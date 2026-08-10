@@ -5338,26 +5338,13 @@ def check_trade_results():
 
                     # بعت رسالة تليجرام
                     da = "صعود (CALL)" if direction == "CALL" else "هبوط (PUT)"
-                    msg = (
-                        f"💰 *صفقة منفذة على IQ Option*
-"
-                        f"الزوج: `{pair}`
-"
-                        f"الاتجاه: *{da}*
-"
-                        f"المبلغ: `${TRADE_AMOUNT}`
-"
-                        f"سعر الدخول: `{exec_result['entry_price']:.5f}`
-"
-                        f"ID: `{exec_result['trade_id']}`"
-                    )
+                    msg = f"💰 *صفقة منفذة على IQ Option*\nالزوج: `{pair}`\nالاتجاه: *{da}*\nالمبلغ: `${TRADE_AMOUNT}`\nسعر الدخول: `{exec_result['entry_price']:.5f}`\nID: `{exec_result['trade_id']}`"
                     send_telegram_message(msg)
                 else:
                     trade["executed"] = True
                     trade["real_trade"] = False
                     logger.error(f"❌ فشل تنفيذ الصفقة | {pair} | {exec_result.get('error')}")
-                    send_telegram_message(f"❌ *فشل تنفيذ صفقة {pair}*
-السبب: `{exec_result.get('error')}`")
+                    send_telegram_message(f"❌ *فشل تنفيذ صفقة {pair}*\nالسبب: `{exec_result.get('error')}`")
                 continue  # نرجع الدورة الجاية نجيب النتيجة
 
             # === المرحلة 2: جلب النتيجة بعد إغلاق الشمعة ===
@@ -5456,41 +5443,41 @@ def check_trade_results():
 
             ts = get_cairo_time().strftime('%I:%M %p')
 
-                if strategy == 'quantum':
-                    with data_lock:
-                        state.quantum_stats[pair]['total'] += 1
-                        if is_tie:
-                            state.quantum_stats[pair]['win'] += 0.5
-                        else:
-                            state.quantum_stats[pair]['win' if is_win else 'loss'] += 1
-                elif strategy == 'smart':
-                    with data_lock:
-                        state.smart_stats[pair]['total'] += 1
-                        if is_tie:
-                            state.smart_stats[pair]['win'] += 0.5
-                        else:
-                            state.smart_stats[pair]['win' if is_win else 'loss'] += 1
-                elif strategy == 'pro':
-                    with data_lock:
-                        state.pro_stats[pair]['total'] += 1
-                        if is_tie:
-                            state.pro_stats[pair]['win'] += 0.5
-                        else:
-                            state.pro_stats[pair]['win' if is_win else 'loss'] += 1
-                elif is_king:
-                    with data_lock:
-                        state.king_stats[pair]['total'] += 1
-                        if is_tie:
-                            state.king_stats[pair]['win'] += 0.5
-                        else:
-                            state.king_stats[pair]['win' if is_win else 'loss'] += 1
-                else:
-                    with data_lock:
-                        state.stats[pair]['total'] += 1
-                        if is_tie:
-                            state.stats[pair]['win'] += 0.5
-                        else:
-                            state.stats[pair]['win' if is_win else 'loss'] += 1
+            if strategy == 'quantum':
+                with data_lock:
+                    state.quantum_stats[pair]['total'] += 1
+                    if is_tie:
+                        state.quantum_stats[pair]['win'] += 0.5
+                    else:
+                        state.quantum_stats[pair]['win' if is_win else 'loss'] += 1
+            elif strategy == 'smart':
+                with data_lock:
+                    state.smart_stats[pair]['total'] += 1
+                    if is_tie:
+                        state.smart_stats[pair]['win'] += 0.5
+                    else:
+                        state.smart_stats[pair]['win' if is_win else 'loss'] += 1
+            elif strategy == 'pro':
+                with data_lock:
+                    state.pro_stats[pair]['total'] += 1
+                    if is_tie:
+                        state.pro_stats[pair]['win'] += 0.5
+                    else:
+                        state.pro_stats[pair]['win' if is_win else 'loss'] += 1
+            elif is_king:
+                with data_lock:
+                    state.king_stats[pair]['total'] += 1
+                    if is_tie:
+                        state.king_stats[pair]['win'] += 0.5
+                    else:
+                        state.king_stats[pair]['win' if is_win else 'loss'] += 1
+            else:
+                with data_lock:
+                    state.stats[pair]['total'] += 1
+                    if is_tie:
+                        state.stats[pair]['win'] += 0.5
+                    else:
+                        state.stats[pair]['win' if is_win else 'loss'] += 1
 
                 try:
                     log_trade({
