@@ -5375,8 +5375,7 @@ def check_trade_results():
                 else:
                     trade["executed"] = True
                     trade["real_trade"] = False
-                    logger.error(f"❌ فشل تنفيذ الصفقة | {pair} | {exec_result.get('error')}")
-                    send_telegram_message(f"❌ *فشل تنفيذ صفقة {pair}*\nالسبب: `{exec_result.get('error')}`")
+                    logger.warning(f"⚠️ لم يتم تنفيذ الصفقة | {pair} | {exec_result.get('error')} — ستتم متابعة النتيجة بالشمعة")
                 continue  # نرجع الدورة الجاية نجيب النتيجة
 
             # === المرحلة 2: جلب النتيجة بعد إغلاق الشمعة ===
