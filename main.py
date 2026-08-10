@@ -4775,25 +4775,56 @@ def execute_iq_trade(pair, direction, amount=1.0):
         logger.info(f"🚀 جاري تنفيذ صفقة | {pair} | {action.upper()} | ${amount}")
 
         with api_lock:
-            # جلب السعر الحالى قبل التنفيذ
-            server_ts = int(get_iq_time())
-            tick = API.get_candles(pair, 1, 1, server_ts)
-            entry_price = None
-            if tick and len(tick) > 0:
-                entry_price = float(tick[-1]['close'])
+            # === فحص 1: هل الأصل متاح للتداول؟ ===
+            try:
+                open_time = API.get_all_open_time()
+                if open_time and isinstance(open_time, dict):
+                    # البحث عن الأصل في binary أو turbo
+                    found = False
+                    is_open = False
+                    for market_type, assets in open_time.items():
+                        if isinstance(assets, dict) and pair in assets:
+                            found = True
+                            asset_info = assets[pair]
+                            if isinstance(asset_info, dict):
+                                is_open = asset_info.get('open', False)
+                            break
 
-            # تنفيذ الصفقة (Binary option - 5 دقائق)
+                    if found and not is_open:
+                        logger.warning(f"⚠️ {pair}: الأصل مغلق حالياً — لا يمكن التداول")
+                        return {"success": False, "error": f"Asset {pair} is closed"}
+                    elif not found:
+                        logger.warning(f"⚠️ {pair}: الأصل غير موجود في قائمة الأصول المتاحة")
+            except Exception as e:
+                logger.warning(f"⚠️ فشل فحص حالة الأصل {pair}: {e}")
+
+            # === فحص 2: هل نقدر نجلب شمعة من الأصل؟ ===
+            try:
+                server_ts = int(get_iq_time())
+                tick = API.get_candles(pair, 1, 1, server_ts)
+                if not tick or len(tick) == 0:
+                    logger.warning(f"⚠️ {pair}: لا يوجد بيانات شموع — الأصل غير متاح")
+                    return {"success": False, "error": f"No candle data for {pair}"}
+                entry_price = float(tick[-1]['close'])
+            except Exception as e:
+                logger.warning(f"⚠️ {pair}: فشل جلب شمعة — {e}")
+                return {"success": False, "error": f"Cannot get price for {pair}: {e}"}
+
+            # === تنفيذ الصفقة (Binary option - 5 دقائق) ===
             result = API.buy(amount, pair, action, 5)
 
             logger.info(f"📊 API.buy() returned: {result} (type: {type(result)})")
 
             success = False
             trade_id = None
+            error_msg = None
 
             if isinstance(result, tuple):
                 if len(result) >= 2:
                     success = bool(result[0])
                     trade_id = result[1]
+                    if not success and isinstance(trade_id, str):
+                        error_msg = trade_id
                 elif len(result) == 1:
                     success = bool(result[0])
             elif isinstance(result, bool):
@@ -4802,8 +4833,8 @@ def execute_iq_trade(pair, direction, amount=1.0):
                 success = True
                 trade_id = result
 
-            if success:
-                if trade_id is None:
+            if success and trade_id and not isinstance(trade_id, str) or (isinstance(trade_id, str) and not trade_id.startswith('Cannot')):
+                if trade_id is None or (isinstance(trade_id, str) and 'Cannot' in trade_id):
                     trade_id = f"manual_{int(time.time())}"
                 logger.info(f"✅ صفقة منفذة | {pair} | ID: {trade_id} | Entry: {entry_price}")
                 return {
@@ -4813,8 +4844,9 @@ def execute_iq_trade(pair, direction, amount=1.0):
                     "amount": amount
                 }
             else:
-                logger.error(f"❌ فشل تنفيذ الصفقة | {pair} | result={result}")
-                return {"success": False, "error": f"API returned: {result}"}
+                err = error_msg or f"API returned: {result}"
+                logger.error(f"❌ فشل تنفيذ الصفقة | {pair} | {err}")
+                return {"success": False, "error": err}
 
     except Exception as e:
         logger.error(f"❌ خطأ تنفيذ صفقة IQ Option: {e}")
