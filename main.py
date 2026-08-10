@@ -51,8 +51,6 @@ ADAPTIVE_THRESHOLD_WINDOW = 250
 ADAPTIVE_THRESHOLD_MIN = 65
 ADAPTIVE_THRESHOLD_MAX = 100
 SETTINGS_CACHE_TTL = 300
-TRADE_AMOUNT = float(os.environ.get("TRADE_AMOUNT", "1.0"))
-EXECUTE_TRADES = os.environ.get("EXECUTE_TRADES", "true").lower() == "true"
 
 # ========== SCORE CONFIGURATION ==========
 MIN_SCORE_ALL_STRATEGIES = 80
@@ -2985,11 +2983,6 @@ def analyze_pair_quantum(pair, timeframe="5m"):
             logger.error(f"🛑 Quantum {pair}: فشل جلب السعر اللحظي")
             return None
 
-        signal_timestamp = int(curr["from"])
-        trade_candle_timestamp = (
-            (signal_timestamp // 300) * 300
-        ) + 600
-
         new_trade = _build_trade_dict(
             pair=pair,
             direction=result['direction'],
@@ -3027,14 +3020,8 @@ def analyze_pair_quantum(pair, timeframe="5m"):
             strategy='quantum'
         )
 
-        new_trade["trade_candle_timestamp"] = trade_candle_timestamp
-        new_trade["timeframe"] = 300
-
         if not add_trade_atomic(new_trade):
             return None
-
-        new_trade["executed"] = False
-        logger.info(f"🧠 Quantum {pair}: {signal_name_ar} تم التسجيل — ستنفذ عند بداية الشمعة {trade_candle_timestamp}")
 
         htf_data = get_htf_market_regime(pair)
         indicator_counts = get_indicator_counts(pair, df)
@@ -3443,11 +3430,6 @@ def analyze_pair(pair, timeframe="5m"):
                 logger.error(f"🛑 {pair}: فشل جلب السعر اللحظي")
                 return None
 
-            signal_timestamp = int(curr["from"])
-            trade_candle_timestamp = (
-                (signal_timestamp // 300) * 300
-            ) + 600
-
             new_trade = _build_trade_dict(
                 pair=pair, direction=potential_direction, 
                 signal_price=signal_price, entry_price=entry_price,
@@ -3476,12 +3458,8 @@ def analyze_pair(pair, timeframe="5m"):
                 strategy='original'
             )
 
-            new_trade["trade_candle_timestamp"] = trade_candle_timestamp
-            new_trade["timeframe"] = 300
-
             if add_trade_atomic(new_trade):
-                new_trade["executed"] = False
-                logger.info(f"✅ {pair}: {signal_name_ar} تم التسجيل — ستنفذ عند بداية الشمعة {trade_candle_timestamp}")
+                logger.info(f"✅ {pair}: {signal_name_ar} تم الإرسال (Level={strength} | Score={score})")
                 return final_signal
             else:
                 logger.info(f"🛑 {pair}: مرفوضة (مكررة)")
@@ -3688,11 +3666,6 @@ def analyze_pair_king(pair, timeframe="5m"):
                 logger.error(f"🛑 King {pair}: فشل جلب السعر اللحظي")
                 return None
 
-            signal_timestamp = int(curr["from"])
-            trade_candle_timestamp = (
-                (signal_timestamp // 300) * 300
-            ) + 600
-
             new_trade = _build_trade_dict(
                 pair=pair, direction=potential_direction, 
                 signal_price=signal_price, entry_price=entry_price,
@@ -3715,15 +3688,9 @@ def analyze_pair_king(pair, timeframe="5m"):
                 strategy='king'
             )
 
-            new_trade["trade_candle_timestamp"] = trade_candle_timestamp
-            new_trade["timeframe"] = 300
-
             if not add_trade_atomic(new_trade):
                 logger.info(f"🛑 King {pair}: مكررة")
                 return None
-
-            new_trade["executed"] = False
-            logger.info(f"👑 King {pair}: {signal_name_ar} تم التسجيل — ستنفذ عند بداية الشمعة {trade_candle_timestamp}")
 
             indicator_counts = get_indicator_counts(pair, df)
             indicators_str = f"Score={score}/100 | ADX={adx:.1f} | RSI={rsi:.1f}"
@@ -4012,11 +3979,6 @@ def analyze_pair_smc(pair, timeframe="5m"):
             logger.error(f"🛑 SMC {pair}: فشل جلب السعر اللحظي")
             return None
 
-        signal_timestamp = int(curr["from"])
-        trade_candle_timestamp = (
-            (signal_timestamp // 300) * 300
-        ) + 600
-
         new_trade = _build_trade_dict(
             pair=pair,
             direction=bias,
@@ -4045,15 +4007,9 @@ def analyze_pair_smc(pair, timeframe="5m"):
             strategy='smart'
         )
 
-        new_trade["trade_candle_timestamp"] = trade_candle_timestamp
-        new_trade["timeframe"] = 300
-
         if not add_trade_atomic(new_trade):
             logger.info(f"🛑 SMC {pair}: مكررة")
             return None
-
-        new_trade["executed"] = False
-        logger.info(f"🏆 SMC {pair}: {name} تم التسجيل — ستنفذ عند بداية الشمعة {trade_candle_timestamp}")
 
         conf_str = ', '.join(conf)
         indicator_counts = get_indicator_counts(pair, df)
@@ -4266,11 +4222,6 @@ def analyze_pair_pro(pair, timeframe="5m"):
             logger.error(f"🛑 Pro {pair}: فشل جلب السعر اللحظي")
             return None
 
-        signal_timestamp = int(curr["from"])
-        trade_candle_timestamp = (
-            (signal_timestamp // 300) * 300
-        ) + 600
-
         new_trade = _build_trade_dict(
             pair=pair, direction=direction, 
             signal_price=signal_price, entry_price=entry_price,
@@ -4297,10 +4248,7 @@ def analyze_pair_pro(pair, timeframe="5m"):
         if not add_trade_atomic(new_trade):
             logger.info(f"🛑 Pro {pair}: مكررة")
             return None
-
-        new_trade["executed"] = False
-        logger.info(f"🔥 Pro {pair}: {name_ar} تم التسجيل — ستنفذ عند بداية الشمعة {trade_candle_timestamp}")
-
+    
         indicator_counts = get_indicator_counts(pair, df)
         factors_str = ' | '.join(factors)
         indicators_str = f"Score={score}/100 | {factors_str}"
@@ -4707,221 +4655,6 @@ def get_live_price(pair, max_retries=3):
             if attempt < max_retries - 1:
                 time.sleep(0.2)
     return None
-
-
-
-def get_iq_trade_candle(pair, candle_timestamp, timeframe=300):
-    """
-    جلب شمعة الصفقة نفسها من IQ Option.
-    candle_timestamp = وقت بداية شمعة الصفقة.
-    """
-
-    try:
-        candle_timestamp = int(candle_timestamp)
-
-        candles = API.get_candles(
-            pair,
-            timeframe,
-            3,
-            candle_timestamp + timeframe
-        )
-
-        if not candles:
-            logger.warning(
-                f"⚠️ {pair}: لم يتم جلب شموع IQ Option"
-            )
-            return None
-
-        for candle in candles:
-            candle_from = int(candle.get("from", 0))
-
-            if candle_from == candle_timestamp:
-                return {
-                    "timestamp": candle_from,
-                    "open": float(candle["open"]),
-                    "high": float(candle["max"]),
-                    "low": float(candle["min"]),
-                    "close": float(candle["close"])
-                }
-
-        logger.warning(
-            f"⚠️ {pair}: شمعة الصفقة غير موجودة "
-            f"timestamp={candle_timestamp}"
-        )
-
-        return None
-
-    except Exception as e:
-        logger.error(
-            f"❌ {pair}: خطأ في جلب شمعة IQ Option: {e}"
-        )
-        return None
-
-
-
-def _buy_with_timeout(api, amount, pair, action, exp, timeout=10):
-    """Wrapper for API buy with timeout to prevent hanging."""
-    result_holder = [None]
-
-    def _try_buy():
-        # محاولة 1: الـ raw API مباشرة (أسرع و مبيحاولش يجيب digital options)
-        try:
-            raw_api = api.api if hasattr(api, 'api') else api
-            result_holder[0] = raw_api.buy(amount, pair, action, exp)
-            logger.info(f"📊 raw_api.buy() returned: {repr(result_holder[0])}")
-            return
-        except Exception as e1:
-            logger.warning(f"⚠️ raw_api.buy() failed: {e1}")
-
-        # محاولة 2: buyv3()
-        if hasattr(api, 'buyv3'):
-            try:
-                result_holder[0] = api.buyv3(amount, pair, action, exp)
-                logger.info(f"📊 buyv3() returned: {repr(result_holder[0])}")
-                return
-            except Exception as e2:
-                logger.warning(f"⚠️ buyv3() failed: {e2}")
-
-        # محاولة 3: buy() العادى
-        try:
-            result_holder[0] = api.buy(amount, pair, action, exp)
-            logger.info(f"📊 buy() returned: {repr(result_holder[0])}")
-        except Exception as e3:
-            logger.warning(f"⚠️ buy() failed: {e3}")
-            result_holder[0] = (False, str(e3))
-
-    t = threading.Thread(target=_try_buy)
-    t.daemon = True
-    t.start()
-    t.join(timeout)
-    if t.is_alive():
-        logger.warning(f"⚠️ API.buy() timed out after {timeout}s")
-        return (False, f"Timeout after {timeout}s")
-    return result_holder[0]
-
-
-def execute_iq_trade(pair, direction, amount=1.0):
-    """
-    تنفيذ صفقة حقيقية على IQ Option.
-    """
-    if not EXECUTE_TRADES:
-        return {"success": False, "error": "Trading disabled"}
-
-    if API is None:
-        return {"success": False, "error": "API not connected"}
-
-    action = "call" if direction == "CALL" else "put"
-    logger.info(f"🚀 EXECUTE | {pair} | {action.upper()} | ${amount}")
-
-    # فحص الاتصال
-    try:
-        connected = API.check_connect()
-        logger.info(f"📊 API.check_connect() = {connected}")
-    except Exception as e:
-        logger.warning(f"⚠️ check_connect failed: {e}")
-
-    # جلب السعر
-    entry_price = get_live_price(pair)
-    logger.info(f"📊 Entry price = {entry_price}")
-
-    for attempt in range(3):
-        try:
-            logger.info(f"📊 ATTEMPT {attempt+1} | API.buy({amount}, {pair}, {action}, 5)")
-
-            # === بدون api_lock + timeout عشان ميعلقش ===
-            result = _buy_with_timeout(API, amount, pair, action, 5, timeout=10)
-
-            logger.info(f"📊 RESULT type={type(result)} value={repr(result)}")
-
-            if result is None:
-                logger.warning(f"⚠️ {pair}: result is None")
-                if attempt < 2:
-                    time.sleep(2)
-                    continue
-                return {"success": False, "error": "API returned None"}
-
-            if isinstance(result, tuple):
-                logger.info(f"📊 TUPLE len={len(result)} items={[repr(x) for x in result]}")
-                if len(result) >= 2:
-                    flag, tid = result[0], result[1]
-                    logger.info(f"📊 flag={repr(flag)} tid={repr(tid)}")
-
-                    if flag is True and tid and str(tid) not in ('', 'None'):
-                        if isinstance(tid, str) and any(x in tid.lower() for x in ['cannot', 'not available', 'error']):
-                            logger.warning(f"⚠️ {pair}: asset unavailable — {tid}")
-                            return {"success": False, "error": tid}
-                        logger.info(f"✅ SUCCESS | {pair} | ID={tid}")
-                        return {"success": True, "trade_id": str(tid), "entry_price": entry_price, "amount": amount}
-                    else:
-                        err = str(tid) if tid else f"flag={flag}"
-                        logger.warning(f"⚠️ {pair}: attempt {attempt+1} failed — {err}")
-                        if attempt < 2:
-                            time.sleep(2)
-                            continue
-                        return {"success": False, "error": err}
-                else:
-                    logger.warning(f"⚠️ {pair}: tuple too short: {result}")
-            elif result is True:
-                tid = f"manual_{int(time.time())}"
-                logger.info(f"✅ SUCCESS (bool) | {pair} | ID={tid}")
-                return {"success": True, "trade_id": tid, "entry_price": entry_price, "amount": amount}
-            elif result is False:
-                logger.warning(f"⚠️ {pair}: API returned False")
-            else:
-                logger.info(f"📊 UNEXPECTED result={repr(result)} type={type(result)}")
-                if result:
-                    return {"success": True, "trade_id": str(result), "entry_price": entry_price, "amount": amount}
-
-            if attempt < 2:
-                time.sleep(2)
-                continue
-
-        except Exception as e:
-            logger.error(f"❌ EXCEPTION attempt {attempt+1}: {e}")
-            if attempt < 2:
-                time.sleep(2)
-                continue
-
-    logger.error(f"❌ FAILED | {pair} after 3 attempts")
-    return {"success": False, "error": "Failed after 3 attempts"}
-
-
-def get_iq_trade_result(trade_id):
-    """
-    جلب نتيجة الصفقة المنفذة من IQ Option.
-    """
-    try:
-        with api_lock:
-            info = API.get_optioninfo()
-            if info and isinstance(info, dict):
-                msg = info.get('msg', {})
-                if isinstance(msg, dict):
-                    result_data = msg.get('result', {})
-                    if isinstance(result_data, dict):
-                        closed = result_data.get('closed_options', [])
-                        for opt in closed:
-                            if isinstance(opt, dict) and str(opt.get('id')) == str(trade_id):
-                                profit = float(opt.get('profit', 0))
-                                return {
-                                    "found": True,
-                                    "closed": True,
-                                    "win": profit > 0,
-                                    "tie": profit == 0,
-                                    "profit": profit,
-                                    "entry_price": float(opt.get('open_price', 0) or 0),
-                                    "exit_price": float(opt.get('close_price', 0) or 0)
-                                }
-
-                        options = result_data.get('options', [])
-                        for opt in options:
-                            if isinstance(opt, dict) and str(opt.get('id')) == str(trade_id):
-                                return {"found": True, "closed": False}
-
-            return {"found": False}
-    except Exception as e:
-        logger.error(f"❌ خطأ جلب نتيجة IQ Option: {e}")
-        return {"found": False}
-
 
 def get_next_expiration(entry_time, expire_offset=300):
     """تقريب وقت الانتهاء لأعلى حد زمني (متوافق مع IQ Option)"""
@@ -5379,168 +5112,99 @@ def check_trade_results():
         trades_snapshot = list(state.active_trades)
 
     for trade in trades_snapshot:
+        time_left = trade['expire_time'] - current_time
         pair = trade['pair']
+        ep = trade['entry_price']
         direction = trade['direction']
         strategy = trade.get('strategy', 'unknown')
         is_mg = trade.get('is_martingale', False)
         is_king = trade.get('is_king', False)
-        trade_candle_ts = trade.get("trade_candle_timestamp", 0)
-        executed = trade.get("executed", True)  # True = old trades without flag
-        iq_trade_id = trade.get("iq_trade_id")
 
         try:
-            # === المرحلة 1: تنفيذ الصفقة عند بداية الشمعة الجاية ===
-            if not executed and current_time >= trade_candle_ts:
-                logger.info(f"🚀 تنفيذ صفقة | {pair} | الوقت الحالى {current_time} >= بداية الشمعة {trade_candle_ts}")
-                exec_result = execute_iq_trade(pair, direction, TRADE_AMOUNT)
-                if exec_result["success"]:
-                    trade["iq_trade_id"] = exec_result["trade_id"]
-                    trade["entry_price"] = exec_result["entry_price"]
-                    trade["executed"] = True
-                    trade["real_trade"] = True
-                    logger.info(f"✅ صفقة منفذة | {pair} | ID: {exec_result['trade_id']} | Entry: {exec_result['entry_price']:.5f}")
+            if time_left <= 0:
+                # جلب السعر اللحظي عند لحظة انتهاء الصفقة
+                fp = get_live_price(pair)
 
-                    # بعت رسالة تليجرام
-                    da = "صعود (CALL)" if direction == "CALL" else "هبوط (PUT)"
-                    msg = f"💰 *صفقة منفذة على IQ Option*\nالزوج: `{pair}`\nالاتجاه: *{da}*\nالمبلغ: `${TRADE_AMOUNT}`\nسعر الدخول: `{exec_result['entry_price']:.5f}`\nID: `{exec_result['trade_id']}`"
-                    send_telegram_message(msg)
-                else:
-                    trade["executed"] = True
-                    trade["real_trade"] = False
-                    logger.warning(f"⚠️ لم يتم تنفيذ الصفقة | {pair} | {exec_result.get('error')} — ستتم متابعة النتيجة بالشمعة")
-                continue  # نرجع الدورة الجاية نجيب النتيجة
-
-            # === المرحلة 2: جلب النتيجة بعد إغلاق الشمعة ===
-            time_left = trade['expire_time'] - current_time
-            if time_left > 0:
-                continue  # لسه الشمعة مفتوحة
-
-            # الشمعة قفلت — نجيب النتيجة
-            ep = None
-            fp = None
-            is_win = None
-            is_tie = None
-            result_source = "candle"
-            candle_to = 0
-            candle_from = 0
-
-            # الطريقة 1: نتيجة الصفقة الحقيقية من IQ Option
-            if iq_trade_id:
-                iq_result = get_iq_trade_result(iq_trade_id)
-                if iq_result.get("found") and iq_result.get("closed"):
-                    ep = iq_result["entry_price"]
-                    fp = iq_result["exit_price"]
-                    is_win = iq_result["win"]
-                    is_tie = iq_result["tie"]
-                    result_source = "iq_option"
-                    trade["entry_price"] = ep
-                    trade["exit_price"] = fp
-                    logger.info(
-                        f"📊 نتيجة حقيقية IQ Option | {pair} | "
-                        f"Entry={ep:.5f} | Exit={fp:.5f} | "
-                        f"Win={is_win} | Tie={is_tie} | "
-                        f"Profit={iq_result.get('profit', 0):.2f}"
+                if fp is None:
+                    logger.warning(
+                        f"⏳ {pair}: فشل جلب سعر الانتهاء اللحظي، "
+                        "سيتم المحاولة في الدورة التالية"
                     )
-                elif iq_result.get("found") and not iq_result.get("closed"):
-                    logger.info(f"⏳ {pair}: الصفقة لسه مفتوحة على IQ Option")
                     continue
 
-            # الطريقة 2: شمعة IQ Option (fallback)
-            if ep is None:
-                candle = get_iq_trade_candle(
-                    pair,
-                    trade["trade_candle_timestamp"],
-                    trade.get("timeframe", 300)
-                )
+                fp = float(fp)
 
-                if candle is None:
-                    logger.warning(f"⏳ {pair}: لم تصل بيانات شمعة الصفقة بعد")
-                    continue
+                # وقت الانتهاء الفعلي المستخدم في التقييم
+                expire_timestamp = trade['expire_time']
 
-                ep = candle["open"]
-                fp = candle["close"]
-                trade["entry_price"] = ep
-                trade["exit_price"] = fp
-                candle_to = candle["timestamp"] + trade.get("timeframe", 300)
-                candle_from = candle["timestamp"]
+                candle_to = 0
+                candle_from = 0
 
                 logger.info(
-                    f"📊 IQ OPTION CANDLE | {pair} | "
-                    f"OPEN={ep:.6f} | "
-                    f"HIGH={candle['high']:.6f} | "
-                    f"LOW={candle['low']:.6f} | "
-                    f"CLOSE={fp:.6f}"
+                    "📊 RESULT DEBUG | "
+                    + str(pair)
+                    + " | Dir:" + str(direction)
+                    + " | EP:" + "{:.5f}".format(ep)
+                    + " | FP:" + "{:.5f}".format(fp)
+                    + " | Expire:" + str(expire_timestamp)
+                    + " | CurrentTime:" + str(current_time)
                 )
 
-            # وقت الانتهاء الفعلي المستخدم في التقييم
-            expire_timestamp = trade['expire_time']
-
-            logger.info(
-                "📊 RESULT DEBUG | "
-                + str(pair)
-                + " | Source:" + result_source
-                + " | Dir:" + str(direction)
-                + " | EP:" + "{:.5f}".format(ep)
-                + " | FP:" + "{:.5f}".format(fp)
-                + " | Expire:" + str(expire_timestamp)
-                + " | CurrentTime:" + str(current_time)
-            )
-
-            if is_win is None:
                 is_tie = check_tie(ep, fp)
+
                 if direction == "CALL":
                     is_win = fp > ep and not is_tie
                 else:
                     is_win = fp < ep and not is_tie
 
-            diff_pct = abs(fp - ep) / ep * 100 if ep != 0 else 0
+                diff_pct = abs(fp - ep) / ep * 100 if ep != 0 else 0
 
-            logger.info(
-                "📊 RESULT | "
-                + str(pair)
-                + " | Win:" + str(is_win)
-                + " | Tie:" + str(is_tie)
-                + " | Diff:" + "{:.4f}".format(diff_pct)
-                + "% | Strategy:" + str(strategy)
-            )
+                logger.info(
+                    "📊 RESULT | "
+                    + str(pair)
+                    + " | Win:" + str(is_win)
+                    + " | Tie:" + str(is_tie)
+                    + " | Diff:" + "{:.4f}".format(diff_pct)
+                    + "% | Strategy:" + str(strategy)
+                )
 
-            ts = get_cairo_time().strftime('%I:%M %p')
+                ts = get_cairo_time().strftime('%I:%M %p')
 
-            if strategy == 'quantum':
-                with data_lock:
-                    state.quantum_stats[pair]['total'] += 1
-                    if is_tie:
-                        state.quantum_stats[pair]['win'] += 0.5
-                    else:
-                        state.quantum_stats[pair]['win' if is_win else 'loss'] += 1
-            elif strategy == 'smart':
-                with data_lock:
-                    state.smart_stats[pair]['total'] += 1
-                    if is_tie:
-                        state.smart_stats[pair]['win'] += 0.5
-                    else:
-                        state.smart_stats[pair]['win' if is_win else 'loss'] += 1
-            elif strategy == 'pro':
-                with data_lock:
-                    state.pro_stats[pair]['total'] += 1
-                    if is_tie:
-                        state.pro_stats[pair]['win'] += 0.5
-                    else:
-                        state.pro_stats[pair]['win' if is_win else 'loss'] += 1
-            elif is_king:
-                with data_lock:
-                    state.king_stats[pair]['total'] += 1
-                    if is_tie:
-                        state.king_stats[pair]['win'] += 0.5
-                    else:
-                        state.king_stats[pair]['win' if is_win else 'loss'] += 1
-            else:
-                with data_lock:
-                    state.stats[pair]['total'] += 1
-                    if is_tie:
-                        state.stats[pair]['win'] += 0.5
-                    else:
-                        state.stats[pair]['win' if is_win else 'loss'] += 1
+                if strategy == 'quantum':
+                    with data_lock:
+                        state.quantum_stats[pair]['total'] += 1
+                        if is_tie:
+                            state.quantum_stats[pair]['win'] += 0.5
+                        else:
+                            state.quantum_stats[pair]['win' if is_win else 'loss'] += 1
+                elif strategy == 'smart':
+                    with data_lock:
+                        state.smart_stats[pair]['total'] += 1
+                        if is_tie:
+                            state.smart_stats[pair]['win'] += 0.5
+                        else:
+                            state.smart_stats[pair]['win' if is_win else 'loss'] += 1
+                elif strategy == 'pro':
+                    with data_lock:
+                        state.pro_stats[pair]['total'] += 1
+                        if is_tie:
+                            state.pro_stats[pair]['win'] += 0.5
+                        else:
+                            state.pro_stats[pair]['win' if is_win else 'loss'] += 1
+                elif is_king:
+                    with data_lock:
+                        state.king_stats[pair]['total'] += 1
+                        if is_tie:
+                            state.king_stats[pair]['win'] += 0.5
+                        else:
+                            state.king_stats[pair]['win' if is_win else 'loss'] += 1
+                else:
+                    with data_lock:
+                        state.stats[pair]['total'] += 1
+                        if is_tie:
+                            state.stats[pair]['win'] += 0.5
+                        else:
+                            state.stats[pair]['win' if is_win else 'loss'] += 1
 
                 try:
                     log_trade({
@@ -5604,20 +5268,6 @@ def connect_iqoption():
         if check:
             logger.info("✅ تم الاتصال!")
             api.change_balance(ACCOUNT_TYPE)
-            # انتظر شوية عشان الـ websocket يستقر
-            time.sleep(3)
-            # جلب البروفايل عشان يتأكد الاتصال كامل
-            try:
-                profile = api.get_profile()
-                logger.info(f"📊 Profile loaded: {profile.get('name', 'N/A')}")
-            except Exception as e:
-                logger.warning(f"⚠️ Could not load profile: {e}")
-            # جلب الرصيد
-            try:
-                balance = api.get_balance()
-                logger.info(f"💰 Balance: ${balance}")
-            except Exception as e:
-                logger.warning(f"⚠️ Could not load balance: {e}")
             sync_server_time(api)
             return api
         logger.error(f"❌ فشل الاتصال ({attempt+1}/7): {reason}")
