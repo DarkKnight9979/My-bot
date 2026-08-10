@@ -262,7 +262,7 @@ class BotState:
         self.pa_alerted_pairs = {}
         self.disabled_pairs = {}
         self.regime_cache = {}
-        self.adaptive_thresholds = {"live": 70, "otc": 70}
+        self.adaptive_thresholds = {"live": 80, "otc": 80}
         self.strategy_scores = {}
         self.stats = defaultdict(lambda: {"win": 0, "loss": 0, "total": 0})
         self.king_stats = defaultdict(lambda: {"win": 0, "loss": 0, "total": 0})
@@ -324,9 +324,9 @@ FILES = {
     "settings_live.json": {},
     "settings_otc.json": {},
     "king_weights.json": {
-        "structure": 20, "sweep": 20, "trend": 15,
+        "structure": 25, "sweep": 25, "trend": 15,
         "momentum": 10, "volatility": 10, "adx": 10,
-        "rsi": 5, "stochastic": 5, "candle": 5
+        "rsi": 0, "stochastic": 0, "candle": 5
     },
     "optimization_proposal.json": {},
     "walk_forward_state.json": {},
@@ -370,9 +370,9 @@ def init_log_files():
 
 # ========== KING WEIGHTS ==========
 DEFAULT_KING_WEIGHTS = {
-    "structure": 20, "sweep": 20, "trend": 15,
+    "structure": 25, "sweep": 25, "trend": 15,
     "momentum": 10, "volatility": 10, "adx": 10,
-    "rsi": 5, "stochastic": 5, "candle": 5
+    "rsi": 0, "stochastic": 0, "candle": 5
 }
 
 WEIGHTS_FILE = "king_weights.json"
@@ -3082,11 +3082,11 @@ def analyze_pair_king(pair, timeframe="5m"):
     
     if structure == "NEUTRAL":
         adx_check, _, _ = calculate_adx(df, 14)
-        if adx_check < 10:
-            logger.info(f"🛑 King {pair}: NEUTRAL و ADX={adx_check:.1f} < 10")
+        if adx_check < 15:
+            logger.info(f"🛑 King {pair}: NEUTRAL و ADX={adx_check:.1f} < 20")
             return None
         else:
-            logger.info(f"ℹ️ King {pair}: NEUTRAL لكن ADX={adx_check:.1f} >= 10")
+            logger.info(f"ℹ️ King {pair}: NEUTRAL لكن ADX={adx_check:.1f} >= 20")
 
     potential_direction = "CALL" if structure == "BULLISH" else "PUT"
 
@@ -3116,31 +3116,31 @@ def analyze_pair_king(pair, timeframe="5m"):
     sweep_ok, sweep_level = detect_liquidity_sweep(df, potential_direction, sweep_threshold=sweep_threshold)
     if not sweep_ok:
         if adx < 12:
-            logger.info(f"🛑 King {pair}: لا يوجد Sweep و ADX={adx:.1f} < 12")
+            logger.info(f"🛑 King {pair}: لا يوجد Sweep و ADX={adx:.1f} < 20")
             return None
         else:
-            logger.info(f"ℹ️ King {pair}: لا يوجد Sweep لكن ADX={adx:.1f} >= 12 — مستمر (+10pts)")
+            logger.info(f"ℹ️ King {pair}: لا يوجد Sweep لكن ADX={adx:.1f} >= 20")
 
     trend_ok = (potential_direction == "CALL" and alma20 > alma80) or (potential_direction == "PUT" and alma20 < alma80)
-    momentum_ok = (potential_direction == "CALL" and roc > -0.3) or (potential_direction == "PUT" and roc < 0.3)
-    volatility_ok = (atr_avg * 0.5 <= atr <= atr_avg * 3.0) if atr_avg > 0 else True
+    momentum_ok = (potential_direction == "CALL" and roc > 0) or (potential_direction == "PUT" and roc < 0)
+    volatility_ok = (atr_avg * 0.8 <= atr <= atr_avg * 2.0) if atr_avg > 0 else False
     
-    min_atr = price * 0.0001
+    min_atr = price * 0.0002
     if atr < min_atr:
         logger.info(f"🛑 King {pair}: ATR={atr:.5f} < {min_atr:.5f}")
         return None
 
-    adx_ok = adx >= 15
+    adx_ok = adx >= adx_threshold
 
     if potential_direction == "CALL":
-        rsi_ok = 25 <= rsi <= 55
+        rsi_ok = rsi_low_call <= rsi <= rsi_high_call
     else:
-        rsi_ok = 45 <= rsi <= 75
+        rsi_ok = rsi_low_put <= rsi <= rsi_high_put
 
     if potential_direction == "CALL":
-        stoch_ok = stoch_k >= stoch_d
+        stoch_ok = stoch_k > stoch_d
     else:
-        stoch_ok = stoch_k <= stoch_d
+        stoch_ok = stoch_k < stoch_d
 
     candle_ok, body_pct = check_king_candle_quality(curr)
     if body_pct < 0.45:
@@ -3150,12 +3150,12 @@ def analyze_pair_king(pair, timeframe="5m"):
     near_sr = False
     if potential_direction == "CALL":
         for level in sup_levels:
-            if abs(price - level) <= price * 0.0007:
+            if abs(price - level) <= price * 0.0005:
                 near_sr = True
                 break
     else:
         for level in res_levels:
-            if abs(price - level) <= price * 0.0007:
+            if abs(price - level) <= price * 0.0005:
                 near_sr = True
                 break
 
@@ -3168,7 +3168,7 @@ def analyze_pair_king(pair, timeframe="5m"):
 
     level = get_adaptive_king_level(score, market_type=market_type)
     if level == 0:
-        logger.info(f"🛑 King {pair}: Score={score} < 70")
+        logger.info(f"🛑 King {pair}: Score={score} < 65")
         return None
 
     htf_trend = get_king_htf_trend(pair)
@@ -3960,13 +3960,14 @@ def calculate_adaptive_threshold(trades, market_type="live"):
     return threshold
 
 def get_adaptive_king_level(score, market_type="live"):
-    if score >= 90:
+    threshold = state.adaptive_thresholds.get(market_type, 80)
+    if score >= threshold + 15:
         return 4
-    elif score >= 85:
+    elif score >= threshold + 10:
         return 3
-    elif score >= 80:
+    elif score >= threshold + 5:
         return 2
-    elif score >= 70:
+    elif score >= threshold:
         return 1
     return 0
 
@@ -4393,22 +4394,21 @@ def check_king_candle_quality(candle):
     upper_shadow = candle['High'] - max(candle['Close'], candle['Open'])
     lower_shadow = min(candle['Close'], candle['Open']) - candle['Low']
     shadow_pct = (upper_shadow + lower_shadow) / rng
-    return body_pct >= 0.50 and shadow_pct <= 0.40, body_pct
+    return body_pct >= 0.60 and shadow_pct <= 0.30, body_pct
 
 def calculate_king_score(structure_ok, sweep_ok, trend_ok, momentum_ok,
                          volatility_ok, adx_ok, rsi_ok, stoch_ok, candle_ok):
     with data_lock:
         w = dict(KING_WEIGHTS)
     score = 0
-    if structure_ok: score += w.get('structure', 20)
-    if sweep_ok: score += w.get('sweep', 20)
-    elif adx_ok: score += 10  # partial credit if no sweep but ADX ok
+    if structure_ok: score += w.get('structure', 25)
+    if sweep_ok: score += w.get('sweep', 25)
     if trend_ok: score += w.get('trend', 15)
     if momentum_ok: score += w.get('momentum', 10)
     if volatility_ok: score += w.get('volatility', 10)
     if adx_ok: score += w.get('adx', 10)
-    if rsi_ok: score += w.get('rsi', 5)
-    if stoch_ok: score += w.get('stochastic', 5)
+    if rsi_ok: score += w.get('rsi', 0)
+    if stoch_ok: score += w.get('stochastic', 0)
     if candle_ok: score += w.get('candle', 5)
     return score
 
