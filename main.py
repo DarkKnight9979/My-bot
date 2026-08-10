@@ -3033,16 +3033,8 @@ def analyze_pair_quantum(pair, timeframe="5m"):
         if not add_trade_atomic(new_trade):
             return None
 
-        # تنفيذ صفقة حقيقية على IQ Option
-        exec_result = execute_iq_trade(pair, result['direction'], TRADE_AMOUNT)
-        if exec_result["success"]:
-            new_trade["iq_trade_id"] = exec_result["trade_id"]
-            new_trade["entry_price"] = exec_result["entry_price"]
-            new_trade["real_trade"] = True
-            logger.info(f"🧠 صفقة Quantum منفذة | {pair} | ID: {exec_result['trade_id']} | Entry: {exec_result['entry_price']:.5f}")
-        else:
-            new_trade["real_trade"] = False
-            logger.warning(f"⚠️ فشل تنفيذ صفقة Quantum: {exec_result.get('error')}")
+        new_trade["executed"] = False
+        logger.info(f"🧠 Quantum {pair}: {signal_name_ar} تم التسجيل — ستنفذ عند بداية الشمعة {trade_candle_timestamp}")
 
         htf_data = get_htf_market_regime(pair)
         indicator_counts = get_indicator_counts(pair, df)
@@ -3488,18 +3480,8 @@ def analyze_pair(pair, timeframe="5m"):
             new_trade["timeframe"] = 300
 
             if add_trade_atomic(new_trade):
-                # تنفيذ صفقة حقيقية على IQ Option
-                exec_result = execute_iq_trade(pair, potential_direction, TRADE_AMOUNT)
-                if exec_result["success"]:
-                    new_trade["iq_trade_id"] = exec_result["trade_id"]
-                    new_trade["entry_price"] = exec_result["entry_price"]
-                    new_trade["real_trade"] = True
-                    logger.info(f"✅ صفقة منفذة | {pair} | ID: {exec_result['trade_id']} | Entry: {exec_result['entry_price']:.5f}")
-                else:
-                    new_trade["real_trade"] = False
-                    logger.warning(f"⚠️ فشل تنفيذ الصفقة: {exec_result.get('error')}")
-
-                logger.info(f"✅ {pair}: {signal_name_ar} تم الإرسال (Level={strength} | Score={score})")
+                new_trade["executed"] = False
+                logger.info(f"✅ {pair}: {signal_name_ar} تم التسجيل — ستنفذ عند بداية الشمعة {trade_candle_timestamp}")
                 return final_signal
             else:
                 logger.info(f"🛑 {pair}: مرفوضة (مكررة)")
@@ -3740,16 +3722,8 @@ def analyze_pair_king(pair, timeframe="5m"):
                 logger.info(f"🛑 King {pair}: مكررة")
                 return None
 
-            # تنفيذ صفقة حقيقية على IQ Option
-            exec_result = execute_iq_trade(pair, potential_direction, TRADE_AMOUNT)
-            if exec_result["success"]:
-                new_trade["iq_trade_id"] = exec_result["trade_id"]
-                new_trade["entry_price"] = exec_result["entry_price"]
-                new_trade["real_trade"] = True
-                logger.info(f"👑 صفقة King منفذة | {pair} | ID: {exec_result['trade_id']} | Entry: {exec_result['entry_price']:.5f}")
-            else:
-                new_trade["real_trade"] = False
-                logger.warning(f"⚠️ فشل تنفيذ صفقة King: {exec_result.get('error')}")
+            new_trade["executed"] = False
+            logger.info(f"👑 King {pair}: {signal_name_ar} تم التسجيل — ستنفذ عند بداية الشمعة {trade_candle_timestamp}")
 
             indicator_counts = get_indicator_counts(pair, df)
             indicators_str = f"Score={score}/100 | ADX={adx:.1f} | RSI={rsi:.1f}"
@@ -4078,16 +4052,8 @@ def analyze_pair_smc(pair, timeframe="5m"):
             logger.info(f"🛑 SMC {pair}: مكررة")
             return None
 
-        # تنفيذ صفقة حقيقية على IQ Option
-        exec_result = execute_iq_trade(pair, bias, TRADE_AMOUNT)
-        if exec_result["success"]:
-            new_trade["iq_trade_id"] = exec_result["trade_id"]
-            new_trade["entry_price"] = exec_result["entry_price"]
-            new_trade["real_trade"] = True
-            logger.info(f"🏆 صفقة SMC منفذة | {pair} | ID: {exec_result['trade_id']} | Entry: {exec_result['entry_price']:.5f}")
-        else:
-            new_trade["real_trade"] = False
-            logger.warning(f"⚠️ فشل تنفيذ صفقة SMC: {exec_result.get('error')}")
+        new_trade["executed"] = False
+        logger.info(f"🏆 SMC {pair}: {name} تم التسجيل — ستنفذ عند بداية الشمعة {trade_candle_timestamp}")
 
         conf_str = ', '.join(conf)
         indicator_counts = get_indicator_counts(pair, df)
@@ -4332,16 +4298,8 @@ def analyze_pair_pro(pair, timeframe="5m"):
             logger.info(f"🛑 Pro {pair}: مكررة")
             return None
 
-        # تنفيذ صفقة حقيقية على IQ Option
-        exec_result = execute_iq_trade(pair, direction, TRADE_AMOUNT)
-        if exec_result["success"]:
-            new_trade["iq_trade_id"] = exec_result["trade_id"]
-            new_trade["entry_price"] = exec_result["entry_price"]
-            new_trade["real_trade"] = True
-            logger.info(f"🔥 صفقة Pro منفذة | {pair} | ID: {exec_result['trade_id']} | Entry: {exec_result['entry_price']:.5f}")
-        else:
-            new_trade["real_trade"] = False
-            logger.warning(f"⚠️ فشل تنفيذ صفقة Pro: {exec_result.get('error')}")
+        new_trade["executed"] = False
+        logger.info(f"🔥 Pro {pair}: {name_ar} تم التسجيل — ستنفذ عند بداية الشمعة {trade_candle_timestamp}")
 
         indicator_counts = get_indicator_counts(pair, df)
         factors_str = ' | '.join(factors)
@@ -4806,36 +4764,61 @@ def execute_iq_trade(pair, direction, amount=1.0):
     تنفيذ صفقة حقيقية على IQ Option.
     """
     if not EXECUTE_TRADES:
-        return {"success": False, "error": "Trading disabled"}
+        return {"success": False, "error": "Trading disabled by EXECUTE_TRADES=false"}
+
+    if API is None:
+        return {"success": False, "error": "API not connected"}
 
     try:
-        with api_lock:
-            action = "call" if direction == "CALL" else "put"
+        action = "call" if direction == "CALL" else "put"
 
-            # تنفيذ الصفقة (Binary/Digital)
+        logger.info(f"🚀 جاري تنفيذ صفقة | {pair} | {action.upper()} | ${amount}")
+
+        with api_lock:
+            # جلب السعر الحالى قبل التنفيذ
+            server_ts = int(get_iq_time())
+            tick = API.get_candles(pair, 1, 1, server_ts)
+            entry_price = None
+            if tick and len(tick) > 0:
+                entry_price = float(tick[-1]['close'])
+
+            # تنفيذ الصفقة (Binary option - 5 دقائق)
             result = API.buy(amount, pair, action, 5)
+
+            logger.info(f"📊 API.buy() returned: {result} (type: {type(result)})")
 
             success = False
             trade_id = None
 
-            if isinstance(result, tuple) and len(result) == 2:
-                success, trade_id = result
-            elif result:
+            if isinstance(result, tuple):
+                if len(result) >= 2:
+                    success = bool(result[0])
+                    trade_id = result[1]
+                elif len(result) == 1:
+                    success = bool(result[0])
+            elif isinstance(result, bool):
+                success = result
+            elif result is not None:
                 success = True
                 trade_id = result
 
-            if success and trade_id:
-                time.sleep(0.3)
-                entry_price = get_live_price(pair)
+            if success:
+                if trade_id is None:
+                    trade_id = f"manual_{int(time.time())}"
+                logger.info(f"✅ صفقة منفذة | {pair} | ID: {trade_id} | Entry: {entry_price}")
                 return {
                     "success": True,
-                    "trade_id": trade_id,
+                    "trade_id": str(trade_id),
                     "entry_price": entry_price,
                     "amount": amount
                 }
-            return {"success": False, "error": "Trade rejected by platform"}
+            else:
+                logger.error(f"❌ فشل تنفيذ الصفقة | {pair} | result={result}")
+                return {"success": False, "error": f"API returned: {result}"}
+
     except Exception as e:
         logger.error(f"❌ خطأ تنفيذ صفقة IQ Option: {e}")
+        logger.error(traceback.format_exc())
         return {"success": False, "error": str(e)}
 
 
@@ -4851,7 +4834,6 @@ def get_iq_trade_result(trade_id):
                 if isinstance(msg, dict):
                     result_data = msg.get('result', {})
                     if isinstance(result_data, dict):
-                        # Check closed options
                         closed = result_data.get('closed_options', [])
                         for opt in closed:
                             if isinstance(opt, dict) and str(opt.get('id')) == str(trade_id):
@@ -4866,7 +4848,6 @@ def get_iq_trade_result(trade_id):
                                     "exit_price": float(opt.get('close_price', 0) or 0)
                                 }
 
-                        # Check open options
                         options = result_data.get('options', [])
                         for opt in options:
                             if isinstance(opt, dict) and str(opt.get('id')) == str(trade_id):
@@ -5334,109 +5315,146 @@ def check_trade_results():
         trades_snapshot = list(state.active_trades)
 
     for trade in trades_snapshot:
-        time_left = trade['expire_time'] - current_time
         pair = trade['pair']
         direction = trade['direction']
         strategy = trade.get('strategy', 'unknown')
         is_mg = trade.get('is_martingale', False)
         is_king = trade.get('is_king', False)
+        trade_candle_ts = trade.get("trade_candle_timestamp", 0)
+        executed = trade.get("executed", True)  # True = old trades without flag
+        iq_trade_id = trade.get("iq_trade_id")
 
         try:
-            if time_left <= 0:
-                ep = None
-                fp = None
-                is_win = None
-                is_tie = None
-                result_source = "candle"
-                candle_to = 0
-                candle_from = 0
+            # === المرحلة 1: تنفيذ الصفقة عند بداية الشمعة الجاية ===
+            if not executed and current_time >= trade_candle_ts:
+                logger.info(f"🚀 تنفيذ صفقة | {pair} | الوقت الحالى {current_time} >= بداية الشمعة {trade_candle_ts}")
+                exec_result = execute_iq_trade(pair, direction, TRADE_AMOUNT)
+                if exec_result["success"]:
+                    trade["iq_trade_id"] = exec_result["trade_id"]
+                    trade["entry_price"] = exec_result["entry_price"]
+                    trade["executed"] = True
+                    trade["real_trade"] = True
+                    logger.info(f"✅ صفقة منفذة | {pair} | ID: {exec_result['trade_id']} | Entry: {exec_result['entry_price']:.5f}")
 
-                # الطريقة 1: نتيجة الصفقة الحقيقية من IQ Option
-                iq_trade_id = trade.get("iq_trade_id")
-                if iq_trade_id:
-                    iq_result = get_iq_trade_result(iq_trade_id)
-                    if iq_result.get("found") and iq_result.get("closed"):
-                        ep = iq_result["entry_price"]
-                        fp = iq_result["exit_price"]
-                        is_win = iq_result["win"]
-                        is_tie = iq_result["tie"]
-                        result_source = "iq_option"
-                        trade["entry_price"] = ep
-                        trade["exit_price"] = fp
-                        logger.info(
-                            f"📊 نتيجة حقيقية IQ Option | {pair} | "
-                            f"Entry={ep:.5f} | Exit={fp:.5f} | "
-                            f"Win={is_win} | Tie={is_tie} | "
-                            f"Profit={iq_result.get('profit', 0):.2f}"
-                        )
-                    elif iq_result.get("found") and not iq_result.get("closed"):
-                        logger.info(
-                            f"⏳ {pair}: الصفقة لسه مفتوحة على IQ Option"
-                        )
-                        continue
-
-                # الطريقة 2: شمعة IQ Option (fallback)
-                if ep is None:
-                    candle = get_iq_trade_candle(
-                        pair,
-                        trade["trade_candle_timestamp"],
-                        trade.get("timeframe", 300)
+                    # بعت رسالة تليجرام
+                    da = "صعود (CALL)" if direction == "CALL" else "هبوط (PUT)"
+                    msg = (
+                        f"💰 *صفقة منفذة على IQ Option*
+"
+                        f"الزوج: `{pair}`
+"
+                        f"الاتجاه: *{da}*
+"
+                        f"المبلغ: `${TRADE_AMOUNT}`
+"
+                        f"سعر الدخول: `{exec_result['entry_price']:.5f}`
+"
+                        f"ID: `{exec_result['trade_id']}`"
                     )
+                    send_telegram_message(msg)
+                else:
+                    trade["executed"] = True
+                    trade["real_trade"] = False
+                    logger.error(f"❌ فشل تنفيذ الصفقة | {pair} | {exec_result.get('error')}")
+                    send_telegram_message(f"❌ *فشل تنفيذ صفقة {pair}*
+السبب: `{exec_result.get('error')}`")
+                continue  # نرجع الدورة الجاية نجيب النتيجة
 
-                    if candle is None:
-                        logger.warning(
-                            f"⏳ {pair}: لم تصل بيانات شمعة الصفقة بعد"
-                        )
-                        continue
+            # === المرحلة 2: جلب النتيجة بعد إغلاق الشمعة ===
+            time_left = trade['expire_time'] - current_time
+            if time_left > 0:
+                continue  # لسه الشمعة مفتوحة
 
-                    ep = candle["open"]
-                    fp = candle["close"]
+            # الشمعة قفلت — نجيب النتيجة
+            ep = None
+            fp = None
+            is_win = None
+            is_tie = None
+            result_source = "candle"
+            candle_to = 0
+            candle_from = 0
+
+            # الطريقة 1: نتيجة الصفقة الحقيقية من IQ Option
+            if iq_trade_id:
+                iq_result = get_iq_trade_result(iq_trade_id)
+                if iq_result.get("found") and iq_result.get("closed"):
+                    ep = iq_result["entry_price"]
+                    fp = iq_result["exit_price"]
+                    is_win = iq_result["win"]
+                    is_tie = iq_result["tie"]
+                    result_source = "iq_option"
                     trade["entry_price"] = ep
                     trade["exit_price"] = fp
-                    candle_to = candle["timestamp"] + trade.get("timeframe", 300)
-                    candle_from = candle["timestamp"]
-
                     logger.info(
-                        f"📊 IQ OPTION CANDLE | {pair} | "
-                        f"OPEN={ep:.6f} | "
-                        f"HIGH={candle['high']:.6f} | "
-                        f"LOW={candle['low']:.6f} | "
-                        f"CLOSE={fp:.6f}"
+                        f"📊 نتيجة حقيقية IQ Option | {pair} | "
+                        f"Entry={ep:.5f} | Exit={fp:.5f} | "
+                        f"Win={is_win} | Tie={is_tie} | "
+                        f"Profit={iq_result.get('profit', 0):.2f}"
                     )
+                elif iq_result.get("found") and not iq_result.get("closed"):
+                    logger.info(f"⏳ {pair}: الصفقة لسه مفتوحة على IQ Option")
+                    continue
 
-                # وقت الانتهاء الفعلي المستخدم في التقييم
-                expire_timestamp = trade['expire_time']
-
-                logger.info(
-                    "📊 RESULT DEBUG | "
-                    + str(pair)
-                    + " | Source:" + result_source
-                    + " | Dir:" + str(direction)
-                    + " | EP:" + "{:.5f}".format(ep)
-                    + " | FP:" + "{:.5f}".format(fp)
-                    + " | Expire:" + str(expire_timestamp)
-                    + " | CurrentTime:" + str(current_time)
+            # الطريقة 2: شمعة IQ Option (fallback)
+            if ep is None:
+                candle = get_iq_trade_candle(
+                    pair,
+                    trade["trade_candle_timestamp"],
+                    trade.get("timeframe", 300)
                 )
 
-                if is_win is None:
-                    is_tie = check_tie(ep, fp)
-                    if direction == "CALL":
-                        is_win = fp > ep and not is_tie
-                    else:
-                        is_win = fp < ep and not is_tie
+                if candle is None:
+                    logger.warning(f"⏳ {pair}: لم تصل بيانات شمعة الصفقة بعد")
+                    continue
 
-                diff_pct = abs(fp - ep) / ep * 100 if ep != 0 else 0
+                ep = candle["open"]
+                fp = candle["close"]
+                trade["entry_price"] = ep
+                trade["exit_price"] = fp
+                candle_to = candle["timestamp"] + trade.get("timeframe", 300)
+                candle_from = candle["timestamp"]
 
                 logger.info(
-                    "📊 RESULT | "
-                    + str(pair)
-                    + " | Win:" + str(is_win)
-                    + " | Tie:" + str(is_tie)
-                    + " | Diff:" + "{:.4f}".format(diff_pct)
-                    + "% | Strategy:" + str(strategy)
+                    f"📊 IQ OPTION CANDLE | {pair} | "
+                    f"OPEN={ep:.6f} | "
+                    f"HIGH={candle['high']:.6f} | "
+                    f"LOW={candle['low']:.6f} | "
+                    f"CLOSE={fp:.6f}"
                 )
 
-                ts = get_cairo_time().strftime('%I:%M %p')
+            # وقت الانتهاء الفعلي المستخدم في التقييم
+            expire_timestamp = trade['expire_time']
+
+            logger.info(
+                "📊 RESULT DEBUG | "
+                + str(pair)
+                + " | Source:" + result_source
+                + " | Dir:" + str(direction)
+                + " | EP:" + "{:.5f}".format(ep)
+                + " | FP:" + "{:.5f}".format(fp)
+                + " | Expire:" + str(expire_timestamp)
+                + " | CurrentTime:" + str(current_time)
+            )
+
+            if is_win is None:
+                is_tie = check_tie(ep, fp)
+                if direction == "CALL":
+                    is_win = fp > ep and not is_tie
+                else:
+                    is_win = fp < ep and not is_tie
+
+            diff_pct = abs(fp - ep) / ep * 100 if ep != 0 else 0
+
+            logger.info(
+                "📊 RESULT | "
+                + str(pair)
+                + " | Win:" + str(is_win)
+                + " | Tie:" + str(is_tie)
+                + " | Diff:" + "{:.4f}".format(diff_pct)
+                + "% | Strategy:" + str(strategy)
+            )
+
+            ts = get_cairo_time().strftime('%I:%M %p')
 
                 if strategy == 'quantum':
                     with data_lock:
