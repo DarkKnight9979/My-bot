@@ -203,7 +203,6 @@ def health():
 
 def run_web_server():
     port = int(os.environ.get("PORT", 10000))
-    logging.getLogger('werkzeug').setLevel(logging.ERROR)
     app.run(host="0.0.0.0", port=port)
 
 # ========== LOCKS ==========
@@ -475,20 +474,10 @@ def get_trade_log_file(pair):
 
 def log_trade(trade_data):
     try:
-        def convert_bool(obj):
-            if isinstance(obj, dict):
-                return {k: convert_bool(v) for k, v in obj.items()}
-            elif isinstance(obj, list):
-                return [convert_bool(v) for v in obj]
-            elif isinstance(obj, bool):
-                return int(obj)
-            return obj
-
         log_file = get_trade_log_file(trade_data.get("pair", ""))
-        clean_data = convert_bool(trade_data)
         with data_lock:
             with open(log_file, 'a', encoding='utf-8') as f:
-                f.write(json.dumps(clean_data, ensure_ascii=False) + "\n")
+                f.write(json.dumps(trade_data, ensure_ascii=False) + "\n")
     except Exception as e:
         logger.error(f"خطأ في تسجيل الصفقة: {e}")
 
@@ -2803,14 +2792,14 @@ def evaluate_signal_strength_enhanced(direction, curr, prev, df, price, alma9, a
                                       structure=None, htf_regime=None):
     """
     نظام تقييم محسّن للاستراتيجية الأصلية — 0 إلى 100 نقطة
-    Base Technical: 0-90 | Structure/HTF Bonus: 0-40 | Total: 0-130 → normalized to 100
+    Base Technical: 0-60 | Structure/HTF Bonus: 0-40
     """
     score = 0
     reasons = []
 
-    # ========== BASE TECHNICAL SCORE (0-90) ==========
+    # ========== BASE TECHNICAL SCORE (0-60) ==========
 
-    # 1. ALMA Trend — 20 pts
+    # 1. ALMA Trend — 15 pts
     a9p, a50p = prev['ALMA_9'], prev['ALMA_50']
     a9c, a50c = alma9, alma50
     bullish_cross = (a9p <= a50p) and (a9c > a50c)
@@ -2820,16 +2809,16 @@ def evaluate_signal_strength_enhanced(direction, curr, prev, df, price, alma9, a
     trend_aligned = (direction == "CALL" and price > alma9) or (direction == "PUT" and price < alma9)
 
     if has_cross:
-        score += 20
+        score += 15
         reasons.append("ALMA Cross")
     elif trend_aligned:
-        score += 12
+        score += 10
         reasons.append("ALMA Aligned")
     else:
-        score += 4
+        score += 3
         reasons.append("ALMA Weak")
 
-    # 2. Momentum (Stoch + ROC) — 20 pts
+    # 2. Momentum (Stoch + ROC) — 15 pts
     if direction == "CALL":
         stoch_ok = stoch_k > stoch_d
         roc_ok = roc > 0
@@ -2838,35 +2827,35 @@ def evaluate_signal_strength_enhanced(direction, curr, prev, df, price, alma9, a
         roc_ok = roc < 0
 
     if stoch_ok:
-        score += 10
+        score += 8
         reasons.append("Stoch OK")
     else:
         score += 2
         reasons.append("Stoch Weak")
 
     if roc_ok:
-        score += 10
+        score += 7
         reasons.append("ROC OK")
     else:
-        score += 2
+        score += 1
         reasons.append("ROC Weak")
 
-    # 3. Volume — 15 pts
+    # 3. Volume — 10 pts
     vol_ratio = volume / vol_ma if vol_ma > 0 else 0
     if vol_ratio >= 2.0:
-        score += 15
+        score += 10
         reasons.append("Vol Strong")
     elif vol_ratio >= 1.5:
-        score += 10
+        score += 7
         reasons.append("Vol OK")
     elif vol_ratio >= 1.2:
-        score += 5
+        score += 4
         reasons.append("Vol Weak")
     else:
-        score += 2
+        score += 1
         reasons.append("Vol Low")
 
-    # 4. Candle Quality — 15 pts
+    # 4. Candle Quality — 10 pts
     body = abs(curr['Close'] - curr['Open'])
     rng = curr['High'] - curr['Low']
     if rng > 0:
@@ -2876,32 +2865,32 @@ def evaluate_signal_strength_enhanced(direction, curr, prev, df, price, alma9, a
         shadow_pct = (upper_wick + lower_wick) / rng
 
         if body_pct >= 0.65 and shadow_pct <= 0.25:
-            score += 15
+            score += 10
             reasons.append("Candle Strong")
         elif body_pct >= 0.50 and shadow_pct <= 0.35:
-            score += 10
+            score += 7
             reasons.append("Candle OK")
         elif body_pct >= 0.40:
-            score += 5
+            score += 4
             reasons.append("Candle Weak")
         else:
-            score += 2
+            score += 1
             reasons.append("Candle Poor")
 
-    # 5. Zone (S/R) — 10 pts
+    # 5. Zone (S/R) — 5 pts
     if (direction == "CALL" and near_sup) or (direction == "PUT" and near_res):
-        score += 10
+        score += 5
         reasons.append("Zone")
 
-    # 6. ADX — 10 pts
+    # 6. ADX — 5 pts
     if adx >= 25:
-        score += 10
+        score += 5
         reasons.append("ADX Strong")
     elif adx >= 20:
-        score += 6
+        score += 3
         reasons.append("ADX OK")
     elif adx >= 15:
-        score += 2
+        score += 1
         reasons.append("ADX Weak")
 
     # ========== STRUCTURE / HTF BONUS (0-40) ==========
@@ -2915,16 +2904,16 @@ def evaluate_signal_strength_enhanced(direction, curr, prev, df, price, alma9, a
             score += 5
             reasons.append("Structure Weak")
 
-    # 8. HTF Trend Confirmation — ±15 pts
+    # 8. HTF Trend Confirmation — 15 pts
     if htf_regime:
         if htf_regime.get("trend") == direction:
             score += 15
             reasons.append("HTF Confirm")
         elif htf_regime.get("trend") is not None:
-            score -= 15
-            reasons.append("HTF Opposite (-15)")
+            score += 3
+            reasons.append("HTF Mixed")
 
-    # 9. HTF Structure — ±10 pts
+    # 9. HTF Structure — 10 pts
     if htf_regime:
         htf_struct = htf_regime.get("structure")
         if htf_struct:
@@ -2932,8 +2921,8 @@ def evaluate_signal_strength_enhanced(direction, curr, prev, df, price, alma9, a
                 score += 10
                 reasons.append("HTF Structure")
             else:
-                score -= 10
-                reasons.append("HTF Structure Opposite (-10)")
+                score += 2
+                reasons.append("HTF Structure Weak")
 
     # Hard filters (reduce score but don't reject)
     if atr < price * 0.00015:
@@ -2992,31 +2981,30 @@ def analyze_pair(pair, timeframe="5m"):
     bullish_cross = (a9p <= a50p) and (a9c > a50c)
     bearish_cross = (a9p >= a50p) and (a9c < a50c)
 
-    # تحديد الاتجاه
-    if bullish_cross and stoch_k > stoch_d:
+    # شروط أقوى: أضفنا stoch_k > 50 للـ CALL و < 50 للـ PUT
+    if bullish_cross and stoch_k > stoch_d and stoch_k > 50:
         potential_direction = "CALL"
-    elif bearish_cross and stoch_k < stoch_d:
+    elif bearish_cross and stoch_k < stoch_d and stoch_k < 50:
         potential_direction = "PUT"
-    elif price > alma9 and stoch_k > stoch_d and rsi <= 65:
+    elif price > alma9 and stoch_k > stoch_d and rsi <= 65 and stoch_k > 50:
         potential_direction = "CALL"
-    elif price < alma9 and stoch_k < stoch_d and rsi >= 35:
+    elif price < alma9 and stoch_k < stoch_d and rsi >= 35 and stoch_k < 50:
         potential_direction = "PUT"
 
     if potential_direction is None:
-        logger.info(f"🛑 {pair}: لا يوجد اتجاه محتمل (ALMA/Stoch غير متوافقين)")
         return None
 
-    # HTF Trend/Structure: تحذير فقط — العقوبة فى النقاط مش رفض تام
-    htf_mismatch = False
+    # ========== تحسين 5: HTF Filter أقوى ==========
     if htf_trend is not None and htf_trend != potential_direction:
-        logger.info(f"⚠️ {pair}: HTF Trend عكسى — خصم 15 نقطة")
-        htf_mismatch = True
-
+        logger.info(f"🛑 {pair}: HTF Trend عكسي")
+        return None
+    
+    # Structure عكسي = رفض
     if htf_structure:
         if (potential_direction == "CALL" and htf_structure == "BEARISH") or \
            (potential_direction == "PUT" and htf_structure == "BULLISH"):
-            logger.info(f"⚠️ {pair}: HTF Structure عكسى — خصم 10 نقاط")
-            htf_mismatch = True
+            logger.info(f"🛑 {pair}: HTF Structure عكسي")
+            return None
 
     # ========== تحسين 6: فلاتر صارمة ==========
     atr_avg = atr_series.tail(20).mean()
@@ -3028,8 +3016,8 @@ def analyze_pair(pair, timeframe="5m"):
     if atr > atr_avg * 3.5:
         logger.info(f"⚠️ {pair}: تقلب عالي (ATR > avg*3.5) — مستمر بحذر")
 
-    if curr['Volume'] <= vol_ma * 1.2:
-        logger.info(f"🛑 {pair}: حجم ضعيف (Vol {volume:.0f} < MA {vol_ma:.0f} * 1.2)")
+    if curr['Volume'] <= vol_ma * 1.2:  # رفع من 1.5
+        logger.info(f"🛑 {pair}: حجم ضعيف (Vol < MA*1.8)")
         return None
 
     # ========== تحسين 7: تقييم محسّن ==========
@@ -3435,107 +3423,43 @@ def analyze_pair_wrapper_king(pair):
 
 # ========== SMC STRATEGY - 3-STAGE ARABIC ==========
 
-def detect_fvg(df, min_gap_atr_ratio=0.5):
+def detect_fvg(df):
     fvg_bull, fvg_bear = [], []
-    atr_series = calculate_atr_series(df, 14)
-    atr = atr_series.iloc[-1] if len(atr_series) > 0 else 0
-
-    for i in range(2, len(df) - 1):
-        # Bullish FVG
-        gap_bull = df['Low'].iloc[i] - df['High'].iloc[i-2]
-        if gap_bull > 0 and gap_bull >= atr * min_gap_atr_ratio:
-            # Check if mitigated (price returned and closed the gap)
-            mitigated = False
-            for j in range(i+1, len(df)):
-                if df['Low'].iloc[j] <= df['High'].iloc[i-2] and df['High'].iloc[j] >= df['Low'].iloc[i]:
-                    mitigated = True
-                    break
-            if not mitigated:
-                fvg_bull.append({'top': df['Low'].iloc[i], 'bottom': df['High'].iloc[i-2], 'idx': i})
-
-        # Bearish FVG
-        gap_bear = df['Low'].iloc[i-2] - df['High'].iloc[i]
-        if gap_bear > 0 and gap_bear >= atr * min_gap_atr_ratio:
-            mitigated = False
-            for j in range(i+1, len(df)):
-                if df['High'].iloc[j] >= df['Low'].iloc[i-2] and df['Low'].iloc[j] <= df['High'].iloc[i]:
-                    mitigated = True
-                    break
-            if not mitigated:
-                fvg_bear.append({'top': df['Low'].iloc[i-2], 'bottom': df['High'].iloc[i], 'idx': i})
+    for i in range(2, len(df)):
+        if df['Low'].iloc[i] > df['High'].iloc[i-2]:
+            fvg_bull.append({'top': df['Low'].iloc[i], 'bottom': df['High'].iloc[i-2], 'idx': i})
+        elif df['High'].iloc[i] < df['Low'].iloc[i-2]:
+            fvg_bear.append({'top': df['Low'].iloc[i-2], 'bottom': df['High'].iloc[i], 'idx': i})
     return fvg_bull, fvg_bear
 
 def detect_order_blocks(df, lookback=30):
     obs = {'bull': [], 'bear': []}
-    recent = df.tail(lookback).reset_index(drop=True)
-    for i in range(2, len(recent)):
-        c = recent.iloc[i]
-        p = recent.iloc[i-1]
-
-        # Bullish OB: last bearish candle before strong bullish thrust
-        thrust = c['Close'] > c['Open'] and (c['Close'] - c['Open']) > abs(p['Close'] - p['Open']) * 1.5
-        if thrust and c['Close'] > p['High'] and p['Close'] < p['Open']:
-            age = len(recent) - (i - 1)
-            if age <= 20:
-                obs['bull'].append({'high': p['High'], 'low': p['Low'], 'idx': i-1, 'age': age})
-
-        # Bearish OB: last bullish candle before strong bearish thrust
-        thrust_bear = c['Close'] < c['Open'] and (c['Open'] - c['Close']) > abs(p['Close'] - p['Open']) * 1.5
-        if thrust_bear and c['Close'] < p['Low'] and p['Close'] > p['Open']:
-            age = len(recent) - (i - 1)
-            if age <= 20:
-                obs['bear'].append({'high': p['High'], 'low': p['Low'], 'idx': i-1, 'age': age})
+    recent = df.tail(lookback)
+    for i in range(3, len(recent)):
+        c, p = recent.iloc[i], recent.iloc[i-1]
+        if c['Close'] > c['Open'] and c['Close'] > p['High'] and p['Close'] < p['Open'] and (c['Close']-c['Open']) > abs(p['Close']-p['Open'])*1.5:
+            obs['bull'].append({'high': p['High'], 'low': p['Low'], 'idx': i-1})
+        elif c['Close'] < c['Open'] and c['Close'] < p['Low'] and p['Close'] > p['Open'] and (c['Open']-c['Close']) > abs(p['Close']-p['Open'])*1.5:
+            obs['bear'].append({'high': p['High'], 'low': p['Low'], 'idx': i-1})
     return obs
 
 def detect_breaker_blocks(df, lookback=40):
-    """
-    Detect old Order Blocks that were broken and then retested.
-    """
-    obs = detect_order_blocks(df, lookback=lookback)
+    df = detect_swings(df, window=2)
+    swings = df[df['is_swing_high'] | df['is_swing_low']].tail(lookback)
     breakers = {'bull': [], 'bear': []}
-    recent = df.tail(lookback).reset_index(drop=True)
-
-    for ob in obs['bull']:
-        ob_high = ob['high']
-        ob_low = ob['low']
-        ob_idx = ob['idx']
-        if ob_idx >= len(recent) - 1:
-            continue
-
-        broken = False
-        for i in range(ob_idx + 1, len(recent)):
-            if recent['Low'].iloc[i] < ob_low:
-                broken = True
-            if broken and (ob_low <= recent['Close'].iloc[i] <= ob_high):
-                breakers['bull'].append(ob)
-                break
-
-    for ob in obs['bear']:
-        ob_high = ob['high']
-        ob_low = ob['low']
-        ob_idx = ob['idx']
-        if ob_idx >= len(recent) - 1:
-            continue
-
-        broken = False
-        for i in range(ob_idx + 1, len(recent)):
-            if recent['High'].iloc[i] > ob_high:
-                broken = True
-            if broken and (ob_low <= recent['Close'].iloc[i] <= ob_high):
-                breakers['bear'].append(ob)
-                break
-
+    if len(swings) < 4: return breakers
+    for i in range(3, len(swings)):
+        s = [swings.iloc[j] for j in range(i-3, i+1)]
+        if s[0]['is_swing_low'] and s[1]['is_swing_high'] and s[2]['is_swing_low'] and s[3]['is_swing_high']:
+            if s[2]['Low'] < s[0]['Low'] and s[3]['High'] > s[1]['High']:
+                breakers['bear'].append({'high': s[2]['High'], 'low': s[2]['Low'], 'idx': swings.index[i-2]})
+        elif s[0]['is_swing_high'] and s[1]['is_swing_low'] and s[2]['is_swing_high'] and s[3]['is_swing_low']:
+            if s[2]['High'] > s[0]['High'] and s[3]['Low'] < s[1]['Low']:
+                breakers['bull'].append({'high': s[2]['High'], 'low': s[2]['Low'], 'idx': swings.index[i-2]})
     return breakers
 
 def analyze_pair_smc(pair, timeframe="5m"):
     tf_seconds, duration_text = 300, "5 دقائق"
-
-    # Kill Zone filter
-    now_cairo = get_cairo_time()
-    hour = now_cairo.hour
-    if not ((8 <= hour < 12) or (14 <= hour < 17)):
-        return None
-
     df = get_cached_df_smart(pair, tf_seconds, 100)
     if df is None or len(df) < 80:
         logger.info(f"🛑 SMC {pair}: لا يوجد بيانات")
@@ -3544,10 +3468,24 @@ def analyze_pair_smc(pair, timeframe="5m"):
     regime = detect_market_regime(pair)
 
     htf = get_higher_tf_trend(pair)
-    if htf is None:
-        logger.info(f"🛑 SMC {pair}: لا يوجد HTF Trend")
-        return None
-    bias = htf
+    mtf = get_king_htf_trend(pair)
+    
+    if htf is None and mtf is None:
+        last10 = df.tail(10)
+        avg_close = last10['Close'].mean()
+        last_close = last10['Close'].iloc[-1]
+        bias = "CALL" if last_close > avg_close else "PUT"
+        logger.info(f"ℹ️ SMC {pair}: HTF/MTF None, باستخدام 10 شموع: {bias}")
+    elif htf == mtf and htf is not None:
+        bias = htf
+    else:
+        if htf is not None:
+            bias = htf
+        elif mtf is not None:
+            bias = mtf
+        else:
+            logger.info(f"🛑 SMC {pair}: لا يوجد Bias")
+            return None
 
     df = detect_swings(df, window=2)
     df['ALMA_20'] = calculate_alma(df['Close'], 20, 0.85, 6)
@@ -3557,12 +3495,6 @@ def analyze_pair_smc(pair, timeframe="5m"):
     curr = df.iloc[-2]
     price = curr['Close']
     rsi = curr['RSI']
-
-    # Essential volume filter
-    vol_ma = df['Volume'].tail(20).mean()
-    if curr['Volume'] < vol_ma * 1.2:
-        logger.info(f"🛑 SMC {pair}: حجم ضعيف (Vol < MA*1.2)")
-        return None
 
     fvg_bull, fvg_bear = detect_fvg(df)
     obs = detect_order_blocks(df)
@@ -3602,26 +3534,23 @@ def analyze_pair_smc(pair, timeframe="5m"):
     if (bias == "CALL" and 30 <= rsi <= 50) or (bias == "PUT" and 50 <= rsi <= 70):
         score += 10; conf.append("RSI")
 
-    # Normalize score from 120 scale to 100 scale
-    score = min(int(score * 100 / 120), 100)
-
-    if score < 58:
-        logger.info(f"🛑 SMC {pair}: Score={score} < 58 (normalized)")
+    if score < 70:
+        logger.info(f"🛑 SMC {pair}: Score={score} < 80")
         return None
 
     if not (sweep_ok or ob_hit or bb_hit or fvg_hit):
         logger.info(f"🛑 SMC {pair}: لا يوجد Sweep/OB/Breaker/FVG")
         return None
 
-    if score >= 80:
+    if score >= 95:
         level, name = 4, "SMC Elite 🏆"
-    elif score >= 71:
+    elif score >= 85:
         level, name = 3, "SMC Gold 🥇"
-    elif score >= 67:
+    elif score >= 80:
         level, name = 2, "SMC Silver 🥈"
     else:
         level, name = 1, "SMC Bronze 🥉"
-
+    
     emoji = SMC_EMOJIS[level]
 
     iq_now = get_iq_time()
@@ -3683,7 +3612,7 @@ def analyze_pair_smc(pair, timeframe="5m"):
                 del state.pending_alerts[f"smart_{pair}"]
 
         da = "صعود (CALL)" if bias == "CALL" else "هبوط (PUT)"
-
+        
         new_trade = _build_trade_dict(
             pair=pair,
             direction=bias,
@@ -3705,7 +3634,8 @@ def analyze_pair_smc(pair, timeframe="5m"):
                 'rsi': float(rsi),
                 'score': score,
                 'conf': conf,
-                'htf': htf
+                'htf': htf,
+                'mtf': mtf
             },
             strategy='smart'
         )
@@ -3722,11 +3652,11 @@ def analyze_pair_smc(pair, timeframe="5m"):
             pair, bias, name, score,
             duration_text, indicators_str, 'smart', regime=regime, htf_data=htf_data, indicator_counts=indicator_counts
         )
-
+        
         if final_signal is None:
             logger.info(f"⛔ SMC {pair}: تم إرسالها مسبقاً (منع التكرار)")
             return None
-
+            
         logger.info(f"🏆 SMC {pair}: {name} تم الإرسال")
         return final_signal
     else:
@@ -4207,14 +4137,12 @@ def is_news_for_pair(pair):
     if day_of_week in [5, 6]:
         return False
     update_news()
-    now = datetime.now(UTC_TZ)
     with data_lock:
         if state.news_fetch_failed:
-            if now - datetime.fromtimestamp(state.last_news_update, tz=UTC_TZ) < timedelta(hours=1):
-                return False
             logger.warning("⚠️ الأخبار غير متاحة، الإشارات مستمرة")
             return False
         news_snapshot = state.news_data.copy()
+    now = datetime.now(UTC_TZ)
     for ev in news_snapshot:
         try:
             impact = str(ev.get('impact','')).upper()
