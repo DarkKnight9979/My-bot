@@ -4759,99 +4759,131 @@ def get_iq_trade_candle(pair, candle_timestamp, timeframe=300):
 
 
 
+def _buy_with_timeout(api, amount, pair, action, exp, timeout=10):
+    """Wrapper for API buy with timeout to prevent hanging."""
+    result_holder = [None]
+
+    def _try_buy():
+        # محاولة 1: الـ raw API مباشرة (أسرع و مبيحاولش يجيب digital options)
+        try:
+            raw_api = api.api if hasattr(api, 'api') else api
+            result_holder[0] = raw_api.buy(amount, pair, action, exp)
+            logger.info(f"📊 raw_api.buy() returned: {repr(result_holder[0])}")
+            return
+        except Exception as e1:
+            logger.warning(f"⚠️ raw_api.buy() failed: {e1}")
+
+        # محاولة 2: buyv3()
+        if hasattr(api, 'buyv3'):
+            try:
+                result_holder[0] = api.buyv3(amount, pair, action, exp)
+                logger.info(f"📊 buyv3() returned: {repr(result_holder[0])}")
+                return
+            except Exception as e2:
+                logger.warning(f"⚠️ buyv3() failed: {e2}")
+
+        # محاولة 3: buy() العادى
+        try:
+            result_holder[0] = api.buy(amount, pair, action, exp)
+            logger.info(f"📊 buy() returned: {repr(result_holder[0])}")
+        except Exception as e3:
+            logger.warning(f"⚠️ buy() failed: {e3}")
+            result_holder[0] = (False, str(e3))
+
+    t = threading.Thread(target=_try_buy)
+    t.daemon = True
+    t.start()
+    t.join(timeout)
+    if t.is_alive():
+        logger.warning(f"⚠️ API.buy() timed out after {timeout}s")
+        return (False, f"Timeout after {timeout}s")
+    return result_holder[0]
+
+
 def execute_iq_trade(pair, direction, amount=1.0):
     """
     تنفيذ صفقة حقيقية على IQ Option.
     """
     if not EXECUTE_TRADES:
-        return {"success": False, "error": "Trading disabled by EXECUTE_TRADES=false"}
+        return {"success": False, "error": "Trading disabled"}
 
     if API is None:
         return {"success": False, "error": "API not connected"}
 
+    action = "call" if direction == "CALL" else "put"
+    logger.info(f"🚀 EXECUTE | {pair} | {action.upper()} | ${amount}")
+
+    # فحص الاتصال
     try:
-        action = "call" if direction == "CALL" else "put"
+        connected = API.check_connect()
+        logger.info(f"📊 API.check_connect() = {connected}")
+    except Exception as e:
+        logger.warning(f"⚠️ check_connect failed: {e}")
 
-        logger.info(f"🚀 جاري تنفيذ صفقة | {pair} | {action.upper()} | ${amount}")
+    # جلب السعر
+    entry_price = get_live_price(pair)
+    logger.info(f"📊 Entry price = {entry_price}")
 
-        with api_lock:
-            # === فحص 1: هل الأصل متاح للتداول؟ ===
-            try:
-                open_time = API.get_all_open_time()
-                if open_time and isinstance(open_time, dict):
-                    # البحث عن الأصل في binary أو turbo
-                    found = False
-                    is_open = False
-                    for market_type, assets in open_time.items():
-                        if isinstance(assets, dict) and pair in assets:
-                            found = True
-                            asset_info = assets[pair]
-                            if isinstance(asset_info, dict):
-                                is_open = asset_info.get('open', False)
-                            break
+    for attempt in range(3):
+        try:
+            logger.info(f"📊 ATTEMPT {attempt+1} | API.buy({amount}, {pair}, {action}, 5)")
 
-                    if found and not is_open:
-                        logger.warning(f"⚠️ {pair}: الأصل مغلق حالياً — لا يمكن التداول")
-                        return {"success": False, "error": f"Asset {pair} is closed"}
-                    elif not found:
-                        logger.warning(f"⚠️ {pair}: الأصل غير موجود في قائمة الأصول المتاحة")
-            except Exception as e:
-                logger.warning(f"⚠️ فشل فحص حالة الأصل {pair}: {e}")
+            # === بدون api_lock + timeout عشان ميعلقش ===
+            result = _buy_with_timeout(API, amount, pair, action, 5, timeout=10)
 
-            # === فحص 2: هل نقدر نجلب شمعة من الأصل؟ ===
-            try:
-                server_ts = int(get_iq_time())
-                tick = API.get_candles(pair, 1, 1, server_ts)
-                if not tick or len(tick) == 0:
-                    logger.warning(f"⚠️ {pair}: لا يوجد بيانات شموع — الأصل غير متاح")
-                    return {"success": False, "error": f"No candle data for {pair}"}
-                entry_price = float(tick[-1]['close'])
-            except Exception as e:
-                logger.warning(f"⚠️ {pair}: فشل جلب شمعة — {e}")
-                return {"success": False, "error": f"Cannot get price for {pair}: {e}"}
+            logger.info(f"📊 RESULT type={type(result)} value={repr(result)}")
 
-            # === تنفيذ الصفقة (Binary option - 5 دقائق) ===
-            result = API.buy(amount, pair, action, 5)
-
-            logger.info(f"📊 API.buy() returned: {result} (type: {type(result)})")
-
-            success = False
-            trade_id = None
-            error_msg = None
+            if result is None:
+                logger.warning(f"⚠️ {pair}: result is None")
+                if attempt < 2:
+                    time.sleep(2)
+                    continue
+                return {"success": False, "error": "API returned None"}
 
             if isinstance(result, tuple):
+                logger.info(f"📊 TUPLE len={len(result)} items={[repr(x) for x in result]}")
                 if len(result) >= 2:
-                    success = bool(result[0])
-                    trade_id = result[1]
-                    if not success and isinstance(trade_id, str):
-                        error_msg = trade_id
-                elif len(result) == 1:
-                    success = bool(result[0])
-            elif isinstance(result, bool):
-                success = result
-            elif result is not None:
-                success = True
-                trade_id = result
+                    flag, tid = result[0], result[1]
+                    logger.info(f"📊 flag={repr(flag)} tid={repr(tid)}")
 
-            if success and trade_id and not isinstance(trade_id, str) or (isinstance(trade_id, str) and not trade_id.startswith('Cannot')):
-                if trade_id is None or (isinstance(trade_id, str) and 'Cannot' in trade_id):
-                    trade_id = f"manual_{int(time.time())}"
-                logger.info(f"✅ صفقة منفذة | {pair} | ID: {trade_id} | Entry: {entry_price}")
-                return {
-                    "success": True,
-                    "trade_id": str(trade_id),
-                    "entry_price": entry_price,
-                    "amount": amount
-                }
+                    if flag is True and tid and str(tid) not in ('', 'None'):
+                        if isinstance(tid, str) and any(x in tid.lower() for x in ['cannot', 'not available', 'error']):
+                            logger.warning(f"⚠️ {pair}: asset unavailable — {tid}")
+                            return {"success": False, "error": tid}
+                        logger.info(f"✅ SUCCESS | {pair} | ID={tid}")
+                        return {"success": True, "trade_id": str(tid), "entry_price": entry_price, "amount": amount}
+                    else:
+                        err = str(tid) if tid else f"flag={flag}"
+                        logger.warning(f"⚠️ {pair}: attempt {attempt+1} failed — {err}")
+                        if attempt < 2:
+                            time.sleep(2)
+                            continue
+                        return {"success": False, "error": err}
+                else:
+                    logger.warning(f"⚠️ {pair}: tuple too short: {result}")
+            elif result is True:
+                tid = f"manual_{int(time.time())}"
+                logger.info(f"✅ SUCCESS (bool) | {pair} | ID={tid}")
+                return {"success": True, "trade_id": tid, "entry_price": entry_price, "amount": amount}
+            elif result is False:
+                logger.warning(f"⚠️ {pair}: API returned False")
             else:
-                err = error_msg or f"API returned: {result}"
-                logger.error(f"❌ فشل تنفيذ الصفقة | {pair} | {err}")
-                return {"success": False, "error": err}
+                logger.info(f"📊 UNEXPECTED result={repr(result)} type={type(result)}")
+                if result:
+                    return {"success": True, "trade_id": str(result), "entry_price": entry_price, "amount": amount}
 
-    except Exception as e:
-        logger.error(f"❌ خطأ تنفيذ صفقة IQ Option: {e}")
-        logger.error(traceback.format_exc())
-        return {"success": False, "error": str(e)}
+            if attempt < 2:
+                time.sleep(2)
+                continue
+
+        except Exception as e:
+            logger.error(f"❌ EXCEPTION attempt {attempt+1}: {e}")
+            if attempt < 2:
+                time.sleep(2)
+                continue
+
+    logger.error(f"❌ FAILED | {pair} after 3 attempts")
+    return {"success": False, "error": "Failed after 3 attempts"}
 
 
 def get_iq_trade_result(trade_id):
@@ -5572,6 +5604,20 @@ def connect_iqoption():
         if check:
             logger.info("✅ تم الاتصال!")
             api.change_balance(ACCOUNT_TYPE)
+            # انتظر شوية عشان الـ websocket يستقر
+            time.sleep(3)
+            # جلب البروفايل عشان يتأكد الاتصال كامل
+            try:
+                profile = api.get_profile()
+                logger.info(f"📊 Profile loaded: {profile.get('name', 'N/A')}")
+            except Exception as e:
+                logger.warning(f"⚠️ Could not load profile: {e}")
+            # جلب الرصيد
+            try:
+                balance = api.get_balance()
+                logger.info(f"💰 Balance: ${balance}")
+            except Exception as e:
+                logger.warning(f"⚠️ Could not load balance: {e}")
             sync_server_time(api)
             return api
         logger.error(f"❌ فشل الاتصال ({attempt+1}/7): {reason}")
