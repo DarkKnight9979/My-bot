@@ -10,7 +10,7 @@ import pytz
 import traceback
 import json
 import queue
-from datetime import datetime, timedelta
+from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from flask import Flask
 from iqoptionapi.stable_api import IQ_Option
@@ -52,25 +52,6 @@ ADAPTIVE_THRESHOLD_MIN = 65
 ADAPTIVE_THRESHOLD_MAX = 100
 SETTINGS_CACHE_TTL = 300
 
-# ========== SCORE CONFIGURATION ==========
-MIN_SCORE_ALL_STRATEGIES = 80
-
-SCORE_LEVELS = {
-    1: (80, 84),
-    2: (85, 89),
-    3: (90, 94),
-    4: (95, 100)
-}
-
-# ========== REGIME ASSIGNMENT ==========
-STRATEGY_REGIMES = {
-    'original': ['trending', 'high_vol'],
-    'king': ['trending', 'high_vol'],
-    'quantum': ['trending', 'high_vol'],
-    'smart': ['high_vol'],
-    'pro': ['ranging', 'mixed']
-}
-
 # ========== HTF & PAIR-SPECIFIC CONFIGURATION ==========
 TIMEFRAME_4H = 14400
 HTF_REGIME_CACHE_TTL = 900
@@ -110,8 +91,8 @@ def get_pair_thresholds(pair):
 
 # ========== QUANTUM CONFIGURATION ==========
 QUANTUM_CONFIG = {
-    "min_score_live": 70,
-    "min_score_otc": 65,
+    "min_score_live": 75,
+    "min_score_otc": 70,
     "cooldown": 300,
     "weights": {
         "structure": 20,
@@ -138,7 +119,7 @@ QUANTUM_CONFIG = {
         "ideal_high": 0.005,
         "score_bonus": 5,
         "score_penalty": 10,
-        "reject_low": 0.00005,
+        "reject_low": 0.0001,
         "reject_high": 0.012
     }
 }
@@ -168,22 +149,13 @@ if not TELEGRAM_TOKEN or not CHAT_ID:
     raise ValueError("❌ TELEGRAM_TOKEN and CHAT_ID required!")
 
 # ========== LOGGING ==========
-class CairoFormatter(logging.Formatter):
-    def formatTime(self, record, datefmt=None):
-        ct = datetime.fromtimestamp(record.created, pytz.utc) + timedelta(hours=3)
-        if datefmt:
-            return ct.strftime(datefmt)
-        return ct.strftime('%Y-%m-%d %H:%M:%S')
-
-formatter = CairoFormatter('%(asctime)s - %(levelname)s - %(message)s')
-file_handler = logging.FileHandler("bot.log", encoding='utf-8')
-file_handler.setFormatter(formatter)
-stream_handler = logging.StreamHandler()
-stream_handler.setFormatter(formatter)
-
 logging.basicConfig(
     level=logging.INFO,
-    handlers=[file_handler, stream_handler]
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("bot.log", encoding='utf-8'),
+        logging.StreamHandler()
+    ]
 )
 logger = logging.getLogger(__name__)
 logging.getLogger('iqoptionapi').setLevel(logging.WARNING)
@@ -262,7 +234,7 @@ class BotState:
         self.pa_alerted_pairs = {}
         self.disabled_pairs = {}
         self.regime_cache = {}
-        self.adaptive_thresholds = {"live": 70, "otc": 70}
+        self.adaptive_thresholds = {"live": 80, "otc": 80}
         self.strategy_scores = {}
         self.stats = defaultdict(lambda: {"win": 0, "loss": 0, "total": 0})
         self.king_stats = defaultdict(lambda: {"win": 0, "loss": 0, "total": 0})
@@ -303,7 +275,7 @@ API = None
 
 # ========== TIME FUNCTIONS ==========
 def get_cairo_time():
-    return datetime.now(pytz.utc) + timedelta(hours=3)
+    return datetime.now(CAIRO_TZ)
 
 def get_iq_time():
     with data_lock:
@@ -324,9 +296,9 @@ FILES = {
     "settings_live.json": {},
     "settings_otc.json": {},
     "king_weights.json": {
-        "structure": 20, "sweep": 20, "trend": 15,
+        "structure": 25, "sweep": 25, "trend": 15,
         "momentum": 10, "volatility": 10, "adx": 10,
-        "rsi": 5, "stochastic": 5, "candle": 5
+        "rsi": 0, "stochastic": 0, "candle": 5
     },
     "optimization_proposal.json": {},
     "walk_forward_state.json": {},
@@ -370,9 +342,9 @@ def init_log_files():
 
 # ========== KING WEIGHTS ==========
 DEFAULT_KING_WEIGHTS = {
-    "structure": 20, "sweep": 20, "trend": 15,
+    "structure": 25, "sweep": 25, "trend": 15,
     "momentum": 10, "volatility": 10, "adx": 10,
-    "rsi": 5, "stochastic": 5, "candle": 5
+    "rsi": 0, "stochastic": 0, "candle": 5
 }
 
 WEIGHTS_FILE = "king_weights.json"
@@ -653,15 +625,30 @@ def get_kalman(pair):
         kalman_instances[pair] = KalmanFilter(q=0.001, r=0.05)
     return kalman_instances[pair]
 
-def get_regime_badge(strategy_name, regime, htf_data=None, indicator_counts=None):
+def get_regime_badge(strategy_name, regime, htf_data=None):
     """
-    إرجاع شارة حالة السوق مع عرض المؤشرات المحسّنة (Supertrend + MACD + EMA + ALMA)
+    إرجاع شارة حالة السوق مع عرض المؤشرات المحسّنة (Supertrend + MACD + EMA)
     """
+    # بناء نص المؤشرات المحسّنة لو متاحة
     enhancers = ""
-    if indicator_counts and isinstance(indicator_counts, dict):
-        htf = indicator_counts.get("1H", {})
-        ltf = indicator_counts.get("5m", {})
-        enhancers = f"\n📊 [1H]: {htf.get('CALL',0)}↑ / {htf.get('PUT',0)}↓ / {htf.get('NEUTRAL',0)}! / [5m]: {ltf.get('CALL',0)}↑ / {ltf.get('PUT',0)}↓ / {ltf.get('NEUTRAL',0)}!"
+    if htf_data and isinstance(htf_data, dict):
+        st = htf_data.get("supertrend")
+        macd = htf_data.get("macd")
+        ema = htf_data.get("ema_alignment")
+        strength = htf_data.get("trend_strength", "")
+
+        parts = []
+        if st:
+            parts.append(f"ST:{st}")
+        if macd:
+            parts.append(f"MACD:{macd}")
+        if ema:
+            parts.append(f"EMA:{ema}")
+        if strength:
+            parts.append(f"قوة:{strength}")
+
+        if parts:
+            enhancers = " (" + " | ".join(parts) + ")"
 
     badges = {
         'original': {
@@ -720,19 +707,6 @@ CURRENCY_PAIRS = {
 
 # ========== FUNCIONES DE ALERTAS EN ÁRABE ==========
 
-def get_signal_level(score):
-    """تقسيم موحد للمستويات"""
-    if score >= 95: return 4
-    elif score >= 90: return 3
-    elif score >= 85: return 2
-    elif score >= 80: return 1
-    return 0
-
-def check_regime_for_strategy(strategy_name, regime):
-    """كل استراتيجية تشتغل في سوقها بس"""
-    allowed = STRATEGY_REGIMES.get(strategy_name, ['trending'])
-    return regime in allowed
-
 def get_time_quality(strategy_name):
     now = get_cairo_time()
     hour = now.hour
@@ -774,11 +748,10 @@ def get_time_quality(strategy_name):
     
     return "⏳ وقت عادي"
 
-# ====== تم التعديل هنا: إضافة htf_data=None ======
-def send_early_alert(pair, direction, signal_name, score, strategy_name, regime="unknown", htf_data=None, indicator_counts=None):
+def send_early_alert(pair, direction, signal_name, score, strategy_name, regime="unknown"):
     da = "صعود (CALL)" if direction == "CALL" else "هبوط (PUT)"
     time_quality = get_time_quality(strategy_name)
-    regime_badge = get_regime_badge(strategy_name, regime, htf_data, indicator_counts)
+    regime_badge = get_regime_badge(strategy_name, regime)
     msg = (
         f"⚠️ *تنبيه مبكر — {signal_name}*\n"
         f"الزوج: `{pair}` [5 دقائق]\n"
@@ -803,10 +776,10 @@ def send_cancelled_alert(pair, direction, reason, strategy_name):
     )
     send_telegram_message(msg)
 
-def send_final_signal(pair, direction, signal_name, score, duration_text, indicators, strategy_name, regime="unknown", signal_level=None, htf_data=None, indicator_counts=None):
+def send_final_signal(pair, direction, signal_name, score, duration_text, indicators, strategy_name, regime="unknown", signal_level=None, htf_data=None):
     da = "صعود (CALL)" if direction == "CALL" else "هبوط (PUT)"
     time_quality = get_time_quality(strategy_name)
-    regime_badge = get_regime_badge(strategy_name, regime, htf_data, indicator_counts)
+    regime_badge = get_regime_badge(strategy_name, regime, htf_data)
     
     msg_hash = f"{pair}_{direction}_{strategy_name}_{int(get_iq_time()) // 300}"
     with data_lock:
@@ -2555,9 +2528,8 @@ def analyze_pair_quantum(pair, timeframe="5m"):
                     'strategy': 'quantum'
                 }
 
-                indicator_counts = get_indicator_counts(pair, df)
                 time_quality = get_time_quality('quantum')
-                regime_badge = get_regime_badge('quantum', regime, None, indicator_counts)
+                regime_badge = get_regime_badge('quantum', regime)
                 vol_emoji = vol_filter.get('emoji', '📊')
                 vol_status = vol_filter['reason']
 
@@ -2611,9 +2583,8 @@ def analyze_pair_quantum(pair, timeframe="5m"):
             if pending_key in state.pending_alerts:
                 del state.pending_alerts[pending_key]
 
-        indicator_counts = get_indicator_counts(pair, df)
         time_quality = get_time_quality('quantum')
-        regime_badge = get_regime_badge('quantum', regime, None, indicator_counts)
+        regime_badge = get_regime_badge('quantum', regime)
         
         kalman_info = f"Kalman: {smoothed_price:.5f}"
         vol_emoji = vol_filter.get('emoji', '📊')
@@ -2665,7 +2636,7 @@ def analyze_pair_quantum(pair, timeframe="5m"):
         htf_data = get_htf_market_regime(pair)
         final_signal = send_final_signal(
             pair, result['direction'], signal_name_ar, final_score,
-            duration_text, indicators_str, 'quantum', regime=regime, signal_level=level, htf_data=htf_data, indicator_counts=indicator_counts
+            duration_text, indicators_str, 'quantum', regime=regime, signal_level=level, htf_data=htf_data
         )
         
         if final_signal is None:
@@ -2793,7 +2764,7 @@ def evaluate_signal_strength_enhanced(direction, curr, prev, df, price, alma9, a
     elif adx >= 20:
         score += w["adx"] * 0.5
         reasons.append("ADX OK")
-    elif adx < 12:
+    elif adx < 15:
         return 0, []  # رفض مباشر
     
     # فلاتر إضافية صارمة
@@ -2933,9 +2904,8 @@ def analyze_pair(pair, timeframe="5m"):
                     'alert_time': iq_now,
                     'strategy': 'original'
                 }
-                indicator_counts = get_indicator_counts(pair, df)
                 htf_data = get_htf_market_regime(pair)
-                send_early_alert(pair, potential_direction, signal_name_ar, strength * 16, 'original', regime=regime, htf_data=htf_data, indicator_counts=indicator_counts)
+                send_early_alert(pair, potential_direction, signal_name_ar, strength * 16, 'original', regime=regime, htf_data=htf_data)
                 state.alerted_pairs[pair] = (potential_direction, iq_now)
         return None
 
@@ -2968,7 +2938,7 @@ def analyze_pair(pair, timeframe="5m"):
         if rng == 0:
             return None
         body_pct = body / rng
-        if body_pct < 0.45:
+        if body_pct < 0.50:
             if pending:
                 send_cancelled_alert(pair, potential_direction, f"شمعة ضعيفة ({body_pct:.1%})", 'original')
             with data_lock:
@@ -2997,11 +2967,10 @@ def analyze_pair(pair, timeframe="5m"):
                     del state.pending_alerts[pair]
 
             indicators_str = f"ADX={adx:.1f} | BBW={bbw:.4f} | RSI={rsi:.1f} | Reasons: {', '.join(reasons[:3])}"
-            indicator_counts = get_indicator_counts(pair, df)
             htf_data = get_htf_market_regime(pair)
             final_signal = send_final_signal(
                 pair, potential_direction, signal_name_ar, strength * 16,
-                duration_text, indicators_str, 'original', regime=regime, signal_level=strength, htf_data=htf_data, indicator_counts=indicator_counts
+                duration_text, indicators_str, 'original', regime=regime, signal_level=strength, htf_data=htf_data
             )
 
             if final_signal is None:
@@ -3021,7 +2990,7 @@ def analyze_pair(pair, timeframe="5m"):
                     'stoch_aligned': stoch_k > stoch_d if potential_direction == "CALL" else stoch_k < stoch_d,
                     'rsi_zone': (28 <= rsi <= 65) if potential_direction == "CALL" else (35 <= rsi <= 72),
                     'near_sr': near_sup if potential_direction == "CALL" else near_res,
-                    'volume_ok': volume >= vol_ma * 1.5,
+                    'volume_ok': volume >= vol_ma * 1.8,
                     'adx_ok': adx >= 20,
                     'bbw_ok': bbw >= 0.001,
                     'atr_ok': atr >= (price * 0.00025),
@@ -3082,11 +3051,11 @@ def analyze_pair_king(pair, timeframe="5m"):
     
     if structure == "NEUTRAL":
         adx_check, _, _ = calculate_adx(df, 14)
-        if adx_check < 10:
-            logger.info(f"🛑 King {pair}: NEUTRAL و ADX={adx_check:.1f} < 10")
+        if adx_check < 15:
+            logger.info(f"🛑 King {pair}: NEUTRAL و ADX={adx_check:.1f} < 20")
             return None
         else:
-            logger.info(f"ℹ️ King {pair}: NEUTRAL لكن ADX={adx_check:.1f} >= 10")
+            logger.info(f"ℹ️ King {pair}: NEUTRAL لكن ADX={adx_check:.1f} >= 20")
 
     potential_direction = "CALL" if structure == "BULLISH" else "PUT"
 
@@ -3115,47 +3084,47 @@ def analyze_pair_king(pair, timeframe="5m"):
 
     sweep_ok, sweep_level = detect_liquidity_sweep(df, potential_direction, sweep_threshold=sweep_threshold)
     if not sweep_ok:
-        if adx < 12:
-            logger.info(f"🛑 King {pair}: لا يوجد Sweep و ADX={adx:.1f} < 12")
+        if adx < 15:
+            logger.info(f"🛑 King {pair}: لا يوجد Sweep و ADX={adx:.1f} < 20")
             return None
         else:
-            logger.info(f"ℹ️ King {pair}: لا يوجد Sweep لكن ADX={adx:.1f} >= 12 — مستمر (+10pts)")
+            logger.info(f"ℹ️ King {pair}: لا يوجد Sweep لكن ADX={adx:.1f} >= 20")
 
     trend_ok = (potential_direction == "CALL" and alma20 > alma80) or (potential_direction == "PUT" and alma20 < alma80)
-    momentum_ok = (potential_direction == "CALL" and roc > -0.3) or (potential_direction == "PUT" and roc < 0.3)
-    volatility_ok = (atr_avg * 0.5 <= atr <= atr_avg * 3.0) if atr_avg > 0 else True
+    momentum_ok = (potential_direction == "CALL" and roc > 0) or (potential_direction == "PUT" and roc < 0)
+    volatility_ok = (atr_avg * 0.8 <= atr <= atr_avg * 2.0) if atr_avg > 0 else False
     
-    min_atr = price * 0.0001
+    min_atr = price * 0.0003
     if atr < min_atr:
         logger.info(f"🛑 King {pair}: ATR={atr:.5f} < {min_atr:.5f}")
         return None
 
-    adx_ok = adx >= 15
+    adx_ok = adx >= adx_threshold
 
     if potential_direction == "CALL":
-        rsi_ok = 25 <= rsi <= 55
+        rsi_ok = rsi_low_call <= rsi <= rsi_high_call
     else:
-        rsi_ok = 45 <= rsi <= 75
+        rsi_ok = rsi_low_put <= rsi <= rsi_high_put
 
     if potential_direction == "CALL":
-        stoch_ok = stoch_k >= stoch_d
+        stoch_ok = stoch_k > stoch_d
     else:
-        stoch_ok = stoch_k <= stoch_d
+        stoch_ok = stoch_k < stoch_d
 
     candle_ok, body_pct = check_king_candle_quality(curr)
-    if body_pct < 0.45:
+    if body_pct < 0.50:
         logger.info(f"🛑 King {pair}: body_pct < 0.45")
         return None
 
     near_sr = False
     if potential_direction == "CALL":
         for level in sup_levels:
-            if abs(price - level) <= price * 0.0007:
+            if abs(price - level) <= price * 0.0005:
                 near_sr = True
                 break
     else:
         for level in res_levels:
-            if abs(price - level) <= price * 0.0007:
+            if abs(price - level) <= price * 0.0005:
                 near_sr = True
                 break
 
@@ -3168,7 +3137,7 @@ def analyze_pair_king(pair, timeframe="5m"):
 
     level = get_adaptive_king_level(score, market_type=market_type)
     if level == 0:
-        logger.info(f"🛑 King {pair}: Score={score} < 70")
+        logger.info(f"🛑 King {pair}: Score={score} < 65")
         return None
 
     htf_trend = get_king_htf_trend(pair)
@@ -3198,9 +3167,8 @@ def analyze_pair_king(pair, timeframe="5m"):
                     'alert_time': iq_now,
                     'strategy': 'king'
                 }
-                indicator_counts = get_indicator_counts(pair, df)
                 htf_data = get_htf_market_regime(pair)
-                send_early_alert(pair, potential_direction, signal_name_ar, score, 'king', regime=regime, htf_data=htf_data, indicator_counts=indicator_counts)
+                send_early_alert(pair, potential_direction, signal_name_ar, score, 'king', regime=regime, htf_data=htf_data)
                 state.king_alerted_pairs[pair_key] = (potential_direction, iq_now)
         return None
 
@@ -3263,12 +3231,11 @@ def analyze_pair_king(pair, timeframe="5m"):
                 logger.info(f"🛑 King {pair}: مكررة")
                 return None
 
-            indicator_counts = get_indicator_counts(pair, df)
             indicators_str = f"Score={score}/100 | ADX={adx:.1f} | RSI={rsi:.1f}"
             htf_data = get_htf_market_regime(pair)
             final_signal = send_final_signal(
                 pair, potential_direction, signal_name_ar, score,
-                duration_text, indicators_str, 'king', regime=regime, htf_data=htf_data, indicator_counts=indicator_counts
+                duration_text, indicators_str, 'king', regime=regime, htf_data=htf_data
             )
             
             if final_signal is None:
@@ -3437,9 +3404,8 @@ def analyze_pair_smc(pair, timeframe="5m"):
                     'alert_time': iq_now,
                     'strategy': 'smart'
                 }
-                indicator_counts = get_indicator_counts(pair, df)
                 htf_data = get_htf_market_regime(pair)
-                send_early_alert(pair, bias, name, score, 'smart', regime=regime, htf_data=htf_data, indicator_counts=indicator_counts)
+                send_early_alert(pair, bias, name, score, 'smart', regime=regime, htf_data=htf_data)
                 state.smart_alerted_pairs[pair_key] = iq_now
         return None
 
@@ -3514,12 +3480,11 @@ def analyze_pair_smc(pair, timeframe="5m"):
             return None
 
         conf_str = ', '.join(conf)
-        indicator_counts = get_indicator_counts(pair, df)
         indicators_str = f"Score={score}/100 | Factors: {conf_str}"
         htf_data = get_htf_market_regime(pair)
         final_signal = send_final_signal(
             pair, bias, name, score,
-            duration_text, indicators_str, 'smart', regime=regime, htf_data=htf_data, indicator_counts=indicator_counts
+            duration_text, indicators_str, 'smart', regime=regime, htf_data=htf_data
         )
         
         if final_signal is None:
@@ -3661,9 +3626,8 @@ def analyze_pair_pro(pair, timeframe="5m"):
                     'alert_time': iq_now,
                     'strategy': 'pro'
                 }
-                indicator_counts = get_indicator_counts(pair, df)
                 htf_data = get_htf_market_regime(pair)
-                send_early_alert(pair, direction, name_ar, score, 'pro', regime=regime, htf_data=htf_data, indicator_counts=indicator_counts)
+                send_early_alert(pair, direction, name_ar, score, 'pro', regime=regime, htf_data=htf_data)
                 state.pa_alerted_pairs[pair] = iq_now
         return None
     
@@ -3731,13 +3695,12 @@ def analyze_pair_pro(pair, timeframe="5m"):
             logger.info(f"🛑 Pro {pair}: مكررة")
             return None
     
-        indicator_counts = get_indicator_counts(pair, df)
         factors_str = ' | '.join(factors)
         indicators_str = f"Score={score}/100 | {factors_str}"
         htf_data = get_htf_market_regime(pair)
         final_signal = send_final_signal(
             pair, direction, name_ar, score,
-            duration_text, indicators_str, 'pro', regime=regime, htf_data=htf_data, indicator_counts=indicator_counts
+            duration_text, indicators_str, 'pro', regime=regime, htf_data=htf_data
         )
         
         if final_signal is None:
@@ -3960,13 +3923,14 @@ def calculate_adaptive_threshold(trades, market_type="live"):
     return threshold
 
 def get_adaptive_king_level(score, market_type="live"):
-    if score >= 90:
+    threshold = state.adaptive_thresholds.get(market_type, 80)
+    if score >= threshold + 15:
         return 4
-    elif score >= 85:
+    elif score >= threshold + 10:
         return 3
-    elif score >= 80:
+    elif score >= threshold + 5:
         return 2
-    elif score >= 70:
+    elif score >= threshold:
         return 1
     return 0
 
@@ -4133,6 +4097,18 @@ def calculate_supertrend(df, period=10, multiplier=3):
     st = pd.Series(0.0, index=df.index)
     st_dir = pd.Series(1, index=df.index)  # 1 = صاعد, -1 = هابط
 
+    for i in range(1, len(df)):
+        if df['Close'].iloc[i] > st.iloc[i-1]:
+            st.iloc[i] = max(lower_band.iloc[i], st.iloc[i-1] if st.iloc[i-1] != 0 else lower_band.iloc[i])
+            st_dir.iloc[i] = 1
+        else:
+            st.iloc[i] = min(upper_band.iloc[i], st.iloc[i-1] if st.iloc[i-1] != 0 else upper_band.iloc[i])
+            st_dir.iloc[i] = -1
+
+    # إعادة حساب أكثر دقة
+    st = pd.Series(0.0, index=df.index)
+    st_dir = pd.Series(1, index=df.index)
+
     for i in range(period, len(df)):
         if df['Close'].iloc[i] > upper_band.iloc[i-1]:
             st_dir.iloc[i] = 1
@@ -4187,103 +4163,6 @@ def get_ema_alignment(df):
         return "PUT", 0.6
     else:
         return None, 0.0
-
-def calculate_indicator_votes_for_df(df):
-    """حساب أصوات المؤشرات الأربعة: Supertrend, MACD, EMA, ALMA"""
-    votes = {"CALL": 0, "PUT": 0, "NEUTRAL": 0}
-    if df is None or len(df) < 10:
-        return votes
-
-    curr = df.iloc[-1]
-    prev = df.iloc[-2] if len(df) > 1 else curr
-
-    # 1. Supertrend
-    try:
-        st_line, st_dir = calculate_supertrend(df, period=10, multiplier=3)
-        if st_dir.iloc[-1] == 1:
-            votes["CALL"] += 1
-        elif st_dir.iloc[-1] == -1:
-            votes["PUT"] += 1
-        else:
-            votes["NEUTRAL"] += 1
-    except Exception:
-        votes["NEUTRAL"] += 1
-
-    # 2. MACD
-    try:
-        macd_line, signal_line, histogram = calculate_macd(df['Close'])
-        if macd_line.iloc[-1] > signal_line.iloc[-1]:
-            votes["CALL"] += 1
-        else:
-            votes["PUT"] += 1
-    except Exception:
-        votes["NEUTRAL"] += 1
-
-    # 3. EMA Alignment
-    try:
-        ema_trend, _ = get_ema_alignment(df)
-        if ema_trend == "CALL":
-            votes["CALL"] += 1
-        elif ema_trend == "PUT":
-            votes["PUT"] += 1
-        else:
-            votes["NEUTRAL"] += 1
-    except Exception:
-        votes["NEUTRAL"] += 1
-
-    # 4. ALMA Trend
-    try:
-        if 'ALMA_9' not in df.columns:
-            df['ALMA_9'] = calculate_alma(df['Close'], 9, 0.85, 6)
-        if 'ALMA_50' not in df.columns:
-            df['ALMA_50'] = calculate_alma(df['Close'], 50, 0.85, 6)
-        a9c = df['ALMA_9'].iloc[-1]
-        a50c = df['ALMA_50'].iloc[-1]
-        a9p = df['ALMA_9'].iloc[-2] if len(df) > 1 else a9c
-        a50p = df['ALMA_50'].iloc[-2] if len(df) > 1 else a50c
-
-        if a9c > a50c and a9p > a50p:
-            votes["CALL"] += 1
-        elif a9c < a50c and a9p < a50p:
-            votes["PUT"] += 1
-        else:
-            votes["NEUTRAL"] += 1
-    except Exception:
-        votes["NEUTRAL"] += 1
-
-    return votes
-
-
-def get_indicator_counts(pair, df_5m=None):
-    """جمع أصوات المؤشرات من 1H و 5m"""
-    counts = {"1H": {"CALL": 0, "PUT": 0, "NEUTRAL": 0}, "5m": {"CALL": 0, "PUT": 0, "NEUTRAL": 0}}
-
-    # 1H
-    try:
-        candles_1h = get_cached_candles(pair, TIMEFRAME_1H, 80, max_age=300)
-        if candles_1h and len(candles_1h) >= 50:
-            df_h = pd.DataFrame(candles_1h)
-            df_h.rename(columns={'open':'Open','max':'High','min':'Low','close':'Close','volume':'Volume'}, inplace=True)
-            counts["1H"] = calculate_indicator_votes_for_df(df_h)
-    except Exception:
-        pass
-
-    # 5m
-    try:
-        if df_5m is not None and len(df_5m) >= 10:
-            counts["5m"] = calculate_indicator_votes_for_df(df_5m.copy())
-        else:
-            candles_5m = get_cached_candles(pair, TIMEFRAME_5M, 80, max_age=300)
-            if candles_5m and len(candles_5m) >= 50:
-                df_5m_new = pd.DataFrame(candles_5m)
-                df_5m_new.rename(columns={'open':'Open','max':'High','min':'Low','close':'Close','volume':'Volume'}, inplace=True)
-                counts["5m"] = calculate_indicator_votes_for_df(df_5m_new)
-    except Exception:
-        pass
-
-    return counts
-
-
 
 def detect_swings(df, window=2):
     df = df.copy()
@@ -4381,22 +4260,21 @@ def check_king_candle_quality(candle):
     upper_shadow = candle['High'] - max(candle['Close'], candle['Open'])
     lower_shadow = min(candle['Close'], candle['Open']) - candle['Low']
     shadow_pct = (upper_shadow + lower_shadow) / rng
-    return body_pct >= 0.50 and shadow_pct <= 0.40, body_pct
+    return body_pct >= 0.60 and shadow_pct <= 0.30, body_pct
 
 def calculate_king_score(structure_ok, sweep_ok, trend_ok, momentum_ok,
                          volatility_ok, adx_ok, rsi_ok, stoch_ok, candle_ok):
     with data_lock:
         w = dict(KING_WEIGHTS)
     score = 0
-    if structure_ok: score += w.get('structure', 20)
-    if sweep_ok: score += w.get('sweep', 20)
-    elif adx_ok: score += 10  # partial credit if no sweep but ADX ok
+    if structure_ok: score += w.get('structure', 25)
+    if sweep_ok: score += w.get('sweep', 25)
     if trend_ok: score += w.get('trend', 15)
     if momentum_ok: score += w.get('momentum', 10)
     if volatility_ok: score += w.get('volatility', 10)
     if adx_ok: score += w.get('adx', 10)
-    if rsi_ok: score += w.get('rsi', 5)
-    if stoch_ok: score += w.get('stochastic', 5)
+    if rsi_ok: score += w.get('rsi', 0)
+    if stoch_ok: score += w.get('stochastic', 0)
     if candle_ok: score += w.get('candle', 5)
     return score
 
